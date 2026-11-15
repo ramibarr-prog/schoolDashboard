@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>לוח בקרה פדגוגי – בגרות ושיבוצים</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Rubik', 'sans-serif'] } } } };</script>
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    html, body { font-family: 'Rubik', sans-serif; }
+    body { background: #e8eef5; color: #0f172a; }
+    .card { background: #fff; border: 1px solid #cbd5e1; border-radius: .875rem; box-shadow: 0 4px 12px -2px rgba(15, 23, 42, .08), 0 2px 4px -2px rgba(15, 23, 42, .04); }
+    .btn { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .9rem; border-radius: .6rem; font-size: .875rem; font-weight: 500; transition: background .15s, box-shadow .15s; cursor: pointer; }
+    .btn:focus-visible, .inp:focus-visible, .tab-btn:focus-visible, .chip:focus-visible, .gstat:focus-visible, [data-act="gPick"]:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary { background: #4338ca; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #3730a3; }
+    .btn-ghost { background: #f8fafc; color: #1e293b; border: 1px solid #94a3b8; }
+    .btn-ghost:hover:not(:disabled) { background: #e0e7ff; }
+    .btn-danger { background: #fee2e2; color: #b91c1c; }
+    .btn-danger:hover:not(:disabled) { background: #fecaca; }
+    .btn-sm { padding: .25rem .6rem; font-size: .8rem; }
+    .inp { border: 1px solid #94a3b8; border-radius: .55rem; padding: .35rem .6rem; background: #fff; color: #0f172a; font-size: .875rem; font-weight: 600; min-width: 0; box-shadow: 0 1px 3px rgba(15, 23, 42, .1); }
+    .inp:focus { border-color: #4f46e5; }
+    .inp::placeholder { color: #64748b; font-weight: 400; }
+    .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .75rem; border-radius: 999px; font-size: .8rem; background: #fff; border: 1px solid #cbd5e1; cursor: pointer; }
+    .chip[aria-pressed="true"] { background: #4338ca; color: #fff; border-color: #4338ca; }
+    .tab-btn { display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .8rem; font-size: .9rem; font-weight: 500; color: #cbd5e1; border-bottom: 3px solid transparent; white-space: nowrap; }
+    .tab-btn:hover { color: #fff; }
+    .tab-btn[aria-selected="true"] { color: #fff; border-bottom-color: #38bdf8; }
+    .tbl-wrap { overflow: auto; border-radius: .75rem; border: 1px solid #cbd5e1; background: #fff; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    table.grid { display: table; width: 100%; border-collapse: collapse; font-size: .85rem; }
+    table th, table td { text-align: right; }
+    table.table-fixed { table-layout: fixed; }
+    table.table-fixed th { white-space: normal; }
+    .tz-col { white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; min-width: 95px; }
+    table.table-fixed th.tz-col { white-space: nowrap; }
+    table.grid thead th { position: sticky; top: 0; background: #1e293b; padding: .55rem .75rem; font-size: .75rem; letter-spacing: .025em; font-weight: 600; color: #f8fafc; border-bottom: 2px solid #0f172a; white-space: nowrap; }
+    table.grid td { padding: .5rem .75rem; border-bottom: 1px solid #e2e8f0; vertical-align: middle; overflow-wrap: anywhere; }
+    table.grid tr.room-divider td { background: #e0e7ff; color: #1e1b4b; font-weight: 700; border-block: 1px solid #a5b4fc; }
+    .fresh-compact { max-width: 10.5rem; }
+    .card .chip { padding: .15rem .55rem; font-size: .75rem; }
+    .fresh-compact .fresh-bar span { overflow: hidden; text-overflow: ellipsis; }
+    .fresh-compact .fresh-bar { padding: .15rem .6rem; font-size: .78rem; border-radius: 999px; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    table.grid tbody tr:hover { background: #f8fafc; }
+    .dropzone { border: 2px dashed #cbd5e1; border-radius: .75rem; padding: 1.25rem; text-align: center; transition: background .15s, border-color .15s; }
+    .dropzone.over { background: #e0f2fe; border-color: #0284c7; }
+    .badge { display: inline-flex; align-items: center; gap: .25rem; padding: .1rem .55rem; border: 1px solid transparent; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+    .badge.hidden { display: none; }
+    .tier-0, .gate-off { background: #e2e8f0; color: #1e293b; border-color: #94a3b8; }
+    .tier-1, .gate-ok { background: #d1fae5; color: #064e3b; border-color: #34d399; }
+    .tier-2 { background: #ecfccb; color: #365314; border-color: #84cc16; }
+    .tier-3, .gate-warn { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
+    .tier-4, .tier-5, .gate-bad { background: #ffe4e6; color: #881337; border-color: #fb7185; }
+    .badge-exc { background: #ede9fe; color: #4c1d95; border-color: #a78bfa; }
+    .fresh-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .85rem; border-radius: .7rem; font-size: .85rem; border: 1px solid; }
+    .fresh-emerald { background: #d1fae5; color: #064e3b; border-color: #34d399; }
+    .fresh-amber { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
+    .fresh-red { background: #ffe4e6; color: #881337; border-color: #fb7185; }
+    .fresh-slate { background: #f1f5f9; color: #1e293b; border-color: #94a3b8; }
+    .badge.bg-sky-100 { border-color: #38bdf8; color: #0c4a6e; }
+    .panel[hidden] { display: none; }
+    /* גיליון שליטה ויזואלי (לשונית בגרות) */
+    table.mx { font-size: .8rem; }
+    table.mx th { text-align: center; padding: .45rem .4rem; z-index: 3; }
+    table.mx td { padding: .3rem .4rem; text-align: center; overflow-wrap: normal; }
+    table.mx th:first-child, table.mx tbody tr:not(.room-divider) td:first-child { position: sticky; right: 0; text-align: right; background: #fff; z-index: 2; min-width: 8.5rem; }
+    table.mx thead th:first-child { background: #1e293b; z-index: 4; }
+    table.mx tbody tr:not(.room-divider):hover td:first-child { background: #f8fafc; }
+    table.mx td.mx-cell { cursor: pointer; min-width: 3.6rem; }
+    table.mx td.mx-cell:hover, table.mx td.mx-cell:focus-visible { outline: 2px solid #0284c7; outline-offset: -2px; }
+    table.mx td.mx-focus, table.mx th.mx-focus { text-align: right; min-width: 13rem; }
+    .pill-t0, .pill-t5 { background: #e2e8f0; color: #1e293b; border-color: #94a3b8; }
+    .pill-t1 { background: #d1fae5; color: #064e3b; border-color: #34d399; } .pill-t2 { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
+    .pill-t3 { background: #ffedd5; color: #7c2d12; border-color: #fb923c; } .pill-t4 { background: #ffe4e6; color: #881337; border-color: #fb7185; }
+    #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(15, 23, 42, .3); text-align: right; pointer-events: none; }
+    #mxPop .h { font-weight: 700; color: #7dd3fc; margin-bottom: .15rem; }
+    #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(15,23,42,.3); pointer-events: none; white-space: pre-line; }
+    table.sadin-sheet th, table.sadin-sheet td { text-align: center; }
+    table.sadin-sheet th:first-child, table.sadin-sheet tbody tr:not(.room-divider) td:first-child { position: sticky; right: 0; z-index: 2; background: #fff; text-align: right; min-width: 10rem; }
+    table.sadin-sheet thead th:first-child { background: #1e293b; z-index: 4; }
+    table.sadin-sheet tbody tr:not(.room-divider):hover td:first-child { background: #f8fafc; }
+    .score-alert { display: inline-block; padding: .125rem .375rem; border-radius: .25rem; background: rgba(255, 241, 242, .8); color: #e11d48; font-weight: 700; white-space: nowrap; }
+    .seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 999px; overflow: hidden; background: #fff; }
+    .gstat { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border-radius: .5rem; border: 1px solid #cbd5e1; border-right-width: 4px; background: #fff; color: #0f172a; text-align: right; box-shadow: 0 4px 12px -2px rgba(15,23,42,.08); }
+    button.gstat { cursor: pointer; } button.gstat:hover { filter: brightness(.96); }
+    button.gstat[aria-pressed="true"] { box-shadow: 0 0 0 2px #4f46e5, 0 4px 12px -2px rgba(15,23,42,.12); }
+    .gstat-ok { border-right-color: #059669; } .gstat-bad { border-right-color: #e11d48; }
+    .gstat-violet { border-right-color: #7c3aed; } .gstat-amber { border-right-color: #f59e0b; }
+    .panel .text-slate-400, .panel .text-slate-500, #modal-root .text-slate-400, #modal-root .text-slate-500 { color: #475569; }
+    #globalFilterBar .inp { height: 2rem; padding: .2rem .5rem; font-size: .75rem; }
+    #globalFilterBar .chip, #globalFilterBar .btn { padding: .25rem .5rem; font-size: .75rem; white-space: nowrap; }
+    #globalFilterBar #sadinSubjectSelect, #globalFilterBar #sadinTeacherSelect { max-width: 6rem; }
+    #globalFilterBar #sadinFilterSelect { max-width: 9rem; }
+    #globalFilterBar #bagrutStatusSelect { max-width: 11rem; }
+    @media (min-width: 1024px) {
+      body.sadin-active #globalFilterBar > div { column-gap: .25rem; }
+      body.sadin-active #globalSearch { width: 6.5rem; }
+      #globalFilterBar #sadinTeacherSelect { max-width: 5rem; }
+    }
+    #globalFilterBar #sadinActions .chip, #globalFilterBar #sadinActions .btn { padding: .25rem .35rem; }
+    #groups-detail table.grid td { padding: .125rem .75rem; font-size: .75rem; line-height: 1rem; }
+    #groups-detail table.grid tr.room-divider td { padding: .125rem .75rem; }
+    #groups-detail table.grid thead th { padding: .3rem .75rem; }
+    #bagrut-table table.grid td, #sadin-table table.grid td { padding: .2rem .5rem; font-size: .75rem; line-height: 1rem; }
+    #bagrut-table table.grid td.mx-focus { white-space: nowrap; }
+    #sadin-table table.grid th, #bagrut-table table.grid th { padding: .35rem .5rem; }
+    #bagrut-table table.grid tr.room-divider td, #sadin-table table.grid tr.room-divider td { padding: .375rem 1rem; text-align: right; background: rgba(238, 242, 255, .9); color: #1e1b4b; border-block: 1px solid #c7d2fe; font-weight: 700; font-size: .75rem; }
+    #profile-academic table.grid { min-width: 860px; }
+    #profile-academic table.grid th, #profile-academic table.grid td { padding: .2rem .45rem; font-size: .75rem; line-height: 1.1rem; }
+    #profile-academic table.grid tr.room-divider td { padding: .15rem .45rem; }
+    #profile-academic table.grid td, #profile-more table.grid td { white-space: nowrap; }
+    #profile-more table.grid th, #profile-more table.grid td { padding: .2rem .5rem; font-size: .75rem; line-height: 1rem; }
+    @media (min-width: 1024px) {
+      body.group-explorer main { display: flex; flex-direction: column; overflow: hidden; }
+      body.group-explorer #panel-groups:not([hidden]) { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: .5rem; }
+      body.group-explorer #groups-explorer:not(.hidden) { flex: 1; min-height: 0; }
+    }
+    .seg button { padding: .2rem .8rem; font-size: .78rem; color: #475569; }
+    .seg button[aria-pressed="true"] { background: #4338ca; color: #fff; }
+    details > summary { cursor: pointer; }
+    #rulesDrawer { transition: max-height .25s ease; }
+    /* מצב צפייה (viewer): הסתרת כל בקרי העריכה */
+    body.viewer [data-admin-only], body.viewer [data-upload], body.viewer .dropzone,
+    body.viewer [data-act="remap"], body.viewer [data-act="clearPanel"], body.viewer [data-act="clearSadinGrade"],
+    body.viewer [data-act="loadMock"], body.viewer [data-act="excModal"], body.viewer [data-act="ovSave"],
+    body.viewer [data-act="ovRemove"], body.viewer [data-act="ovClearAll"], body.viewer [data-act="deleteRoster"],
+    body.viewer [data-act="toggleDrawer"], body.viewer #excTrack, body.viewer #excNote, body.viewer #rosterOverridesCard,
+    body.viewer #btnClearData, body.viewer #btnResetConfig, body.viewer #fileImportConfig, body.viewer label:has(#fileImportConfig),
+    body.viewer #nicknamesCard, body.viewer #qCalibCard, body.viewer #backupImportLabel { display: none !important; }
+    body.viewer #btnRulesToggle, body.viewer #rulesDrawer { display: none !important; }
+    #toast-root { position: fixed; bottom: 1rem; right: 1rem; z-index: 70; display: flex; flex-direction: column; gap: .5rem; }
+    ::-webkit-scrollbar { height: 10px; width: 10px; } ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col lg:h-screen lg:overflow-hidden">
+
+  <!-- כותרת ראשית וניווט -->
+  <header class="bg-slate-900 text-white sticky top-0 z-40 shadow shrink-0">
+    <div class="max-w-[1600px] mx-auto px-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <div class="flex items-center gap-3">
+          <i data-lucide="graduation-cap" class="w-8 h-8 text-sky-400" aria-hidden="true"></i>
+          <div>
+            <h1 class="text-lg font-semibold leading-tight">לוח בקרה פדגוגי – בגרות ושיבוצים</h1>
+            <p class="text-xs text-slate-400">נתוני בית הספר · סנכרון ענן ותפקידי צפייה / עריכה</p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="syncStatus" class="text-xs text-slate-300" role="status" aria-live="polite"></span>
+          <button type="button" id="btnPublish" class="btn btn-primary btn-sm hidden" data-act="cloudPublish">☁️ פרסם לצוות</button>
+          <button type="button" id="roleBtn" class="btn btn-ghost btn-sm !text-white border border-slate-600" data-act="roleOpen" title="החלפת מצב צפייה / עריכה">👁️ מצב צפייה</button>
+          <div id="statusLine" class="text-xs text-slate-300" role="status" aria-live="polite">0 חניכים במצבת</div>
+        </div>
+      </div>
+      <nav id="tabs" class="flex gap-1 overflow-x-auto" role="tablist" aria-label="תצוגות ראשיות">
+        <button class="tab-btn" role="tab" id="tab-bagrut" data-tab="bagrut" aria-controls="panel-bagrut" aria-selected="true"><i data-lucide="award" class="w-4 h-4" aria-hidden="true"></i>צפי זכאות לבגרות</button>
+        <button class="tab-btn" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="false"><i data-lucide="users" class="w-4 h-4" aria-hidden="true"></i>בקרת קבוצות ושיבוצים</button>
+        <button class="tab-btn" role="tab" id="tab-sadin" data-tab="sadin" aria-controls="panel-sadin" aria-selected="false"><i data-lucide="line-chart" class="w-4 h-4" aria-hidden="true"></i>מוניטור ציונים שוטפים</button>
+        <button class="tab-btn" role="tab" id="tab-profile" data-tab="profile" aria-controls="panel-profile" aria-selected="false"><i data-lucide="user-round" class="w-4 h-4" aria-hidden="true"></i>כרטיס חניך 360°</button>
+        <button class="tab-btn" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false"><i data-lucide="settings" class="w-4 h-4" aria-hidden="true"></i>הגדרות ומצבת חניכים <span id="tabOverridesBadge" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500"></span></button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- סרגל סינון גלובלי -->
+  <div id="globalFilterBar" class="bg-white border-b border-slate-200 sticky z-30 shrink-0" style="top: var(--hdr-h, 92px)">
+    <div class="max-w-[1600px] mx-auto px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+      <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
+        <select id="fGrade" class="inp">
+          <option value="all">הכל</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option>
+        </select></label>
+      <label class="flex items-center gap-1"><span class="text-slate-600">כיתת אם</span>
+        <select id="fHomeroom" class="inp"><option value="all">כל הכיתות</option></select></label>
+      <label class="flex items-center gap-1"><span class="text-slate-600">מסלול</span>
+        <select id="fTrack" class="inp">
+          <option value="all">הכל</option><option value="רגילה">רגילה</option><option value="אתגר">אתגר</option><option value="מב&quot;ר">מב"ר</option><option value="חנ&quot;מ">חנ"מ</option>
+        </select></label>
+      <span data-groups-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
+      <div data-groups-only class="hidden">
+        <div id="gctl-explorer" class="flex flex-wrap items-center gap-2">
+          <select id="groupSubjectSelect" class="inp font-bold max-w-[10rem]" aria-label="מקצוע"><option value="all">כל המקצועות</option></select>
+          <select id="groupTeacherSelect" class="inp font-bold max-w-[10rem]" aria-label="מורה"><option value="all">כל המורים</option></select>
+        </div>
+        <div id="gctl-anomalies" class="hidden">
+          <select id="groupsSubject" class="inp max-w-[10rem]" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option></select>
+        </div>
+      </div>
+      <span data-sadin-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
+      <div data-sadin-only class="hidden">
+        <select id="sadinSubjectSelect" class="inp font-bold max-w-[10rem]" aria-label="מקצוע בסדין"><option value="all">כל המקצועות</option></select>
+        <select id="sadinTeacherSelect" class="inp font-bold max-w-[10rem]" aria-label="מורה בסדין"><option value="all">כל המורים</option></select>
+        <select id="sadinFilterSelect" class="inp" aria-label="סינון ציונים שוטפים"><option value="all">כל החניכים</option></select>
+      </div>
+      <span data-bagrut-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
+      <select id="bagrutStatusSelect" data-bagrut-only class="hidden inp" aria-label="סינון צפי זכאות"><option value="all">כל הסטטוסים</option></select>
+      <select id="bagrutSubjectDrillSelect" data-bagrut-only class="hidden inp max-w-[12rem]" aria-label="מבט לפי מקצוע"><option value="all">📊 מבט על – כל המקצועות</option></select>
+      <label class="flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
+        <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
+        <input id="globalSearch" type="search" class="inp w-44 lg:w-52" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off"></label>
+      <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
+      <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1 mr-auto">
+        <details class="relative" id="bagrutSimulation">
+          <summary class="btn btn-ghost btn-sm">⚙️ סימולציית מה-אם</summary>
+          <div class="absolute left-0 top-full z-50 w-96 max-w-[90vw] rounded-lg border border-slate-300 bg-white p-3 shadow-xl text-sm">
+            <div id="bagrut-whatif" class="space-y-2"></div>
+            <div id="bagrut-cohort" class="text-xs text-slate-600 mt-3"></div>
+          </div>
+        </details>
+        <details class="relative">
+          <summary class="btn btn-ghost btn-sm" title="מצב קובץ הבגרות ופעולות נוספות" aria-label="מצב קובץ הבגרות">ℹ️</summary>
+          <div class="absolute left-0 top-full z-50 w-80 max-w-[90vw] rounded-lg border border-slate-300 bg-white p-3 shadow-xl space-y-2">
+            <div data-fresh-bar="bagrutData" role="status" aria-live="polite"></div>
+            <div data-coverage="bagrutData" class="flex flex-wrap gap-1"></div>
+            <div id="unknown-bagrutData" class="hidden"></div>
+          </div>
+        </details>
+        <button type="button" class="btn btn-ghost btn-sm" data-upload="bagrutData" title="טען קובץ ציוני בגרות" aria-label="טען קובץ ציוני בגרות">📤</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="bagrutData" title="מיפוי עמודות" aria-label="מיפוי עמודות בגרות">🔧</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="exportBagrut" title="ייצוא לאקסל" aria-label="ייצוא בגרות לאקסל">📥</button>
+        <button type="button" id="btnRulesToggle" class="btn btn-ghost btn-sm" aria-expanded="false" aria-controls="rulesDrawer" title="כללי זכאות ומשקלים" aria-label="כללי זכאות ומשקלים">📐</button>
+        <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
+      </div>
+      <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1 mr-auto" role="group" aria-label="בחירת חניך">
+        <button type="button" id="profPrev" class="btn btn-ghost btn-sm" aria-label="החניך הקודם">הקודם</button>
+        <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
+        <button type="button" id="profNext" class="btn btn-ghost btn-sm" aria-label="החניך הבא">הבא</button>
+      </div>
+      <div id="groupActions" data-groups-only class="hidden flex-wrap items-center gap-1 mr-auto">
+        <div class="flex items-center gap-1" role="group" aria-label="תצוגת קבוצות">
+          <button type="button" class="chip" data-gview="explorer" aria-pressed="true" title="קבוצות ורשימות שמיות">📋 קבוצות</button>
+          <button type="button" class="chip" data-gview="anomalies" aria-pressed="false" title="טבלת חריגי שיבוץ לכלל המקצועות">🚨 חריגים</button>
+        </div>
+        <span id="groupsLoadedInfo" class="text-xs text-slate-600" role="status"></span>
+        <button type="button" class="btn btn-ghost btn-sm" data-upload="groupsData" title="עדכן קובץ קבוצות" aria-label="עדכן קובץ קבוצות">📤</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="groupsData" title="מיפוי עמודות" aria-label="מיפוי עמודות">🔧</button>
+        <button type="button" id="exportGroups" class="btn btn-ghost btn-sm" title="ייצוא לאקסל" aria-label="ייצוא לאקסל">📥</button>
+        <input type="file" class="hidden" id="file-groupsData" data-file-input="groupsData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ קבוצות ושיבוצים">
+      </div>
+      <div id="sadinActions" data-sadin-only class="hidden flex-wrap items-center gap-1 mr-auto">
+        <div class="flex items-center gap-1" role="group" aria-label="תצוגת סדין">
+          <button type="button" class="chip" data-sview="sheet" aria-pressed="true" title="סדין חניכים" aria-label="סדין חניכים">📊 סדין</button>
+          <button type="button" class="chip" data-sview="flat" aria-pressed="false" title="פירוט שורות" aria-label="פירוט שורות">📋 פירוט</button>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="sadinAlerts">🔔 התראות</button>
+        <span id="sadinLoadedInfo" class="text-xs text-slate-600" role="status"></span>
+        <details id="sadinRemoveMenu" class="relative">
+          <summary class="btn btn-ghost btn-sm" title="הסרת נתוני סדין לפי שכבה או ניקוי הכל" aria-label="הסרת נתוני סדין">×</summary>
+          <div class="absolute left-0 top-full z-50 min-w-[12rem] rounded-lg border border-slate-300 bg-white p-2 shadow-xl">
+            <div id="unknown-sadinData" class="hidden"></div>
+            <div id="sadinRemoveOptions"></div>
+          </div>
+        </details>
+        <button type="button" class="btn btn-ghost btn-sm" data-upload="sadinData" title="טען סדין" aria-label="טען סדין">📤</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="sadinData" title="מיפוי עמודות" aria-label="מיפוי עמודות">🔧</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="exportSadin" title="ייצוא לאקסל" aria-label="ייצוא סדין לאקסל">📥</button>
+        <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
+      </div>
+    </div>
+  </div>
+
+  <main id="mainContent" class="w-full max-w-[1600px] mx-auto px-4 py-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain">
+
+    <!-- 1. צפי זכאות לבגרות -->
+    <section id="panel-bagrut" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-bagrut">
+      <div id="stale-bagrutData" class="hidden card p-5 text-center" data-stale-overlay="bagrutData"></div>
+
+      <!-- מגירת עריכת כללי זכאות ומשקלים -->
+      <div id="rulesDrawer" class="card p-4 hidden" aria-label="עריכת כללי זכאות ומשקלים">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div class="font-semibold flex items-center gap-2"><i data-lucide="scale" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>כללי זכאות ומשקלים</div>
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-ghost btn-sm" id="rulesReset">שחזור ברירות מחדל</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="rulesClose">סגירה</button>
+          </div>
+        </div>
+        <div id="rulesWarnings" class="text-sm text-amber-700 mb-3" role="status" aria-live="polite"></div>
+
+        <div id="rulesTabs" class="flex flex-wrap gap-2 mb-3" role="tablist" aria-label="לשוניות כללי זכאות"></div>
+
+        <div data-rules-pane="core">
+          <div id="rulesCore" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
+        </div>
+        <div data-rules-pane="major" hidden>
+          <div id="rulesMajor" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="major">+ הוספת מגמה</button>
+        </div>
+        <div data-rules-pane="internal" hidden>
+          <div id="rulesInternal" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="internal">+ הוספת יחידה פנימית</button>
+        </div>
+        <div data-rules-pane="params" hidden>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="card p-3 bg-slate-50">
+              <div class="text-sm font-medium mb-2">חוק קיזוז</div>
+              <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="ruleCompEnabled" class="w-4 h-4">פעיל: ציון בודד 45–54 מזכה ללא סכום נקודות, למעט עברית ומעורבות חברתית</label>
+              <label class="flex items-center gap-2 text-sm mb-2" title="מקצוע אחד בציון 5–44 (לא עברית) מפוצה בשני מקצועות עוברים של 3+ יח&quot;ל לפי סקאלת סכום הנקודות של חוזר המנכ&quot;ל"><input type="checkbox" id="ruleCompPoints" class="w-4 h-4">פיצוי נקודות לציון 5–44 (חוזר מנכ"ל)</label>
+              <div class="grid grid-cols-3 gap-2 text-xs">
+                <label class="flex flex-col gap-1">מינימום<input type="number" id="ruleCompMin" class="inp" min="0" max="100"></label>
+                <label class="flex flex-col gap-1">מקסימום<input type="number" id="ruleCompMax" class="inp" min="0" max="100"></label>
+                <label class="flex flex-col gap-1">מכסה<input type="number" id="ruleCompCount" class="inp" min="0" max="20"></label>
+              </div>
+              <label class="flex flex-col gap-1 text-xs mt-2">מקצועות מוחרגים מקיזוז (מופרדים בפסיק)<input type="text" id="ruleCompExcluded" class="inp"></label>
+            </div>
+            <div class="card p-3 bg-slate-50">
+              <div class="text-sm font-medium mb-2">פרמטרים כלליים</div>
+              <div class="grid grid-cols-3 gap-2 text-xs">
+                <label class="flex flex-col gap-1">ציון עובר<input type="number" id="ruleParamPass" class="inp" min="0" max="100"></label>
+                <label class="flex flex-col gap-1">תחילת גבולי<input type="number" id="ruleParamBorderline" class="inp" min="0" max="100"></label>
+                <label class="flex flex-col gap-1">תוספת בסימולציה<input type="number" id="ruleParamBonus" class="inp" min="0" max="100"></label>
+                <label class="flex flex-col gap-1" title="משקל ציון ההגשה (מגן) בחישוב ציון שאלון מהגשה ובחינה; הבחינה מקבלת את השאר">משקל מגן (%)<input type="number" id="ruleParamMagen" class="inp" min="0" max="100"></label>
+              </div>
+              <div class="mt-3 space-y-1 text-sm" id="rulesGates"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="bagrut-table" class="tbl-wrap w-full"></div>
+      <div id="mxPop" class="hidden" role="tooltip"></div>
+    </section>
+
+    <!-- 2. סייר קבוצות (קריאה בלבד) -->
+    <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
+      <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
+      <div id="groups-kpis" class="hidden flex-wrap items-center gap-1.5 mb-2"></div>
+      <div id="groups-strip" class="hidden" aria-label="סינון חריגים למקצוע"></div>
+      <div id="groups-explorer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0" aria-label="סייר קבוצות">
+        <div id="groups-master" class="lg:col-span-4 lg:h-full lg:min-h-0 lg:overflow-y-auto overscroll-contain lg:pl-1 space-y-1.5" aria-label="רשימת קבוצות"></div>
+        <div id="groups-detail" class="lg:col-span-8 min-w-0 lg:h-full lg:min-h-0" aria-live="polite"></div>
+      </div>
+      <div id="groups-table" class="tbl-wrap hidden"></div>
+    </section>
+
+    <!-- 3. מוניטור ציונים שוטפים -->
+    <section id="panel-sadin" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-sadin" hidden>
+      <div id="stale-sadinData" class="hidden card p-5 text-center" data-stale-overlay="sadinData"></div>
+      <div id="sadin-table" class="tbl-wrap"></div>
+      <div id="sadinPop" class="hidden" role="tooltip"></div>
+    </section>
+
+    <!-- 4. כרטיס חניך 360° -->
+    <section id="panel-profile" class="panel space-y-3" role="tabpanel" aria-labelledby="tab-profile" hidden>
+      <div class="card px-4 py-3">
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div class="min-w-0">
+            <div id="profName" class="text-lg font-extrabold">—</div>
+            <div id="profMeta" class="text-sm text-slate-500"></div>
+          </div>
+          <div id="profBadges" class="flex flex-wrap items-center gap-2"></div>
+          <div class="flex flex-wrap items-center gap-2 mr-auto">
+            <select id="excTrack" class="inp" aria-label="מסלול"></select>
+            <input id="excNote" type="text" class="inp w-44" placeholder="הערת מרכזת" maxlength="500" aria-label="הערת מרכזת">
+            <button type="button" id="excOpen" class="btn btn-ghost btn-sm" data-act="excModal" data-tz="">⚡ הגדר מצב חריג</button>
+          </div>
+        </div>
+      </div>
+      <div id="profBody" class="space-y-3"></div>
+    </section>
+
+    <!-- 5. הגדרות ומצבת חניכים -->
+    <section id="panel-settings" class="panel space-y-4" role="tabpanel" aria-labelledby="tab-settings" hidden>
+      <h2 class="text-xl font-semibold">הגדרות ומצבת חניכים</h2>
+      <div class="grid xl:grid-cols-2 gap-4">
+        <div class="card p-4 space-y-3">
+          <div class="font-semibold flex items-center gap-2"><i data-lucide="clipboard-list" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>מצבת חניכים עליונה</div>
+          <p class="text-xs text-slate-500">המצבת קובעת מי חניך פעיל, באיזו שכבה ובאיזו כיתת אם. קובצי המשנה אינם יכולים לדרוס שדות אלה. המצבת נשמרת עד לטעינת מצבת חדשה.
+            עמודות נדרשות: ת.ז, שם פרטי, שם משפחה, שכבה, כיתת אם; אופציונלי: מסלול.</p>
+          <div class="dropzone" data-drop="masterRoster">
+            <i data-lucide="upload-cloud" class="w-8 h-8 mx-auto text-slate-400" aria-hidden="true"></i>
+            <div class="text-sm mt-1">גררו לכאן קובץ Excel (אפשר גיליון לכל שכבה)</div>
+            <button type="button" class="btn btn-primary mt-2" data-upload="masterRoster">טען קובץ מצבת חניכים עליון</button>
+            <button type="button" class="btn btn-ghost btn-sm mt-2" data-act="remap" data-key="masterRoster" title="מיפוי ידני מחדש של עמודות הקובץ האחרון">🔧 מיפוי עמודות</button>
+            <input type="file" class="hidden" id="file-masterRoster" data-file-input="masterRoster" accept=".xlsx,.xls,.csv" aria-label="קובץ מצבת חניכים">
+          </div>
+          <div data-fresh-bar="masterRoster" role="status" aria-live="polite"></div>
+          <div id="rosterSummary" class="text-sm text-slate-600"></div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2" id="rosterOverridesCard">
+          <div class="font-semibold flex items-center gap-2"><i data-lucide="shuffle" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>🔀 דריסת שיוך שכבה וכיתת אם (Roster Overrides)</div>
+          <p class="text-xs text-slate-500">תיקון שיוך חניך בלי לגעת בקובץ המצבת: הדריסה נשמרת בנפרד ומונחת מעל הנתונים שבקובץ, ואפשר לבטל אותה בכל עת. חניך מוסתר (עזב / לא פעיל) אינו מופיע בפאנלים אך נשמר כאן לשחזור.</p>
+
+          <div id="ovConflicts"></div>
+
+          <form id="ovForm" class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end text-sm" autocomplete="off">
+            <div class="relative flex flex-col gap-1 md:col-span-2" id="ovSearchWrap">
+              <label for="overrideTraineeSearch">חניך (חיפוש לפי שם או ת.ז)</label>
+              <input id="overrideTraineeSearch" class="inp" placeholder="התחילו להקליד שם או ת.ז" aria-label="בחירת חניך לדריסה" aria-controls="ovResults" aria-expanded="false" autocomplete="off">
+              <div id="ovResults" class="hidden absolute top-full inset-x-0 max-h-60 overflow-y-auto bg-white border border-slate-300 rounded-lg shadow-xl z-50" aria-label="תוצאות חיפוש חניכים"></div>
+            </div>
+            <div id="ovInfo" class="md:col-span-4 text-xs text-slate-600 pb-2" role="status">בחרו חניך כדי לראות את השיוך המקורי בקובץ.</div>
+            <label class="flex flex-col gap-1">שכבה חדשה
+              <select id="ovGrade" class="inp"><option value="">ללא שינוי</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option></select></label>
+            <label class="flex flex-col gap-1">כיתת אם חדשה
+              <select id="ovHomeroom" class="inp" aria-label="כיתת אם חדשה"></select>
+              <input id="ovOtherHomeroom" class="inp hidden" placeholder="למשל יא3" aria-label="כיתת אם אחרת"></label>
+            <label class="flex flex-col gap-1">מסלול
+              <select id="ovTrack" class="inp"><option value="">ללא שינוי</option></select></label>
+            <label class="flex flex-col gap-1 md:col-span-2">הערה
+              <input id="ovNote" class="inp" maxlength="200" placeholder="אופציונלי"></label>
+            <label id="ovNameWrap" class="flex flex-col gap-1 hidden">שם החניך (לחניך שאינו במצבת)
+              <input id="ovName" class="inp" maxlength="80"></label>
+            <label class="flex items-center gap-2 md:col-span-3 cursor-pointer"><input type="checkbox" id="ovHidden" class="w-4 h-4">הסתר חניך מהמערכת (עזב / לא פעיל)</label>
+            <div class="md:col-span-3 flex justify-end"><button type="button" class="btn btn-primary" data-act="ovSave">שמור דריסה</button></div>
+          </form>
+
+          <div id="ovTableSection" tabindex="-1">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-1"><div class="text-sm font-medium">דריסות פעילות <span id="ovCount" class="text-slate-600 font-normal"></span></div>
+              <button type="button" id="ovClearAll" class="btn btn-danger btn-sm" data-act="ovClearAll"></button></div>
+            <div id="ovTable" class="tbl-wrap"></div>
+          </div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2" id="nicknamesCard">
+          <div class="font-semibold">🏫 הגדרת כיתות חינוך מיוחד (חנ"מ)</div>
+          <p class="text-xs text-slate-500">שמות הכיתות נלקחים מהמצבת. סימון חנ"מ מגדיר את מסלול חניכי הכיתה, אלא אם הוגדר לחניך מסלול ידני בדריסת המצבת או בכרטיס שלו; הזיהוי אוטומטי כששם הכיתה כולל "חנמ" או "מרחב".</p>
+          <div id="nicknames" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4"></div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
+          <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
+          <div id="cloudBody" class="space-y-3 text-sm"></div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2" id="qCalibCard">
+          <div class="font-semibold">🎯 ניהול וכיול סמלי שאלונים</div>
+          <div id="qCalib" class="space-y-3 text-sm"></div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2">
+          <div class="font-semibold flex items-center gap-2"><i data-lucide="save" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>גיבוי ושחזור (config.json)</div>
+          <p class="text-xs text-slate-500">כולל: מצבת חניכים, דריסות שיוך, כללי זכאות ומשקלים, חריגים לפי ת.ז, הגדרות כיתות ופרופילי מיפוי עמודות. קובצי המשנה אינם נכללים בגיבוי.</p>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" id="btnExportConfig" class="btn btn-primary"><i data-lucide="download" class="w-4 h-4" aria-hidden="true"></i>ייצוא config.json</button>
+            <label class="btn btn-ghost cursor-pointer"><i data-lucide="upload" class="w-4 h-4" aria-hidden="true"></i>ייבוא config.json
+              <input type="file" id="fileImportConfig" class="hidden" accept=".json,application/json"></label>
+            <button type="button" id="btnClearData" class="btn btn-danger"><i data-lucide="trash-2" class="w-4 h-4" aria-hidden="true"></i>ניקוי קובצי משנה</button>
+            <button type="button" id="btnResetConfig" class="btn btn-danger"><i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i>איפוס הגדרות</button>
+          </div>
+          <div id="configSummary" class="text-xs text-slate-400"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- חלון מיפוי עמודות (לשימוש חוזר בכל טעינת קובץ) -->
+  <div id="mappingModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 overflow-auto p-4" role="dialog" aria-modal="true" aria-labelledby="mappingTitle">
+    <div class="card w-full max-w-4xl mx-auto mt-8 p-5">
+      <div class="flex items-center justify-between mb-2">
+        <h3 id="mappingTitle" class="text-lg font-semibold">מיפוי עמודות</h3>
+        <button type="button" id="mappingClose" class="btn btn-ghost btn-sm" aria-label="סגירה">✕</button>
+      </div>
+      <p id="mappingHint" class="text-sm text-slate-500 mb-3">כותרות הקובץ לא זוהו במלואן. יש לשייך כל שדה לעמודה המתאימה. המיפוי יישמר לטעינות הבאות.</p>
+      <div id="mappingFields" class="grid sm:grid-cols-2 gap-3"></div>
+      <div class="font-medium text-sm mt-4 mb-1">תצוגה מקדימה (5 שורות ראשונות)</div>
+      <div id="mappingPreview" class="tbl-wrap" style="max-height:220px"></div>
+      <div id="mappingError" class="text-sm text-red-600 mt-2" role="alert"></div>
+      <div class="flex gap-2 mt-4">
+        <button type="button" id="mappingConfirm" class="btn btn-primary">שמירת מיפוי וייבוא</button>
+        <button type="button" id="mappingCancel" class="btn btn-ghost">ביטול</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" role="status" aria-live="polite"></div>
+
+  <!-- מעטפת ממשק: גרירת קבצים וסגירת חלון המיפוי (טאבים, מגירה ובוחר קבצים מנוהלים ב-app.js) -->
+  <script>
+    (function () {
+      document.querySelectorAll('[data-drop]').forEach(function (z) {
+        ['dragover', 'dragleave', 'drop'].forEach(function (evt) {
+          z.addEventListener(evt, function (e) {
+            e.preventDefault();
+            z.classList.toggle('over', evt === 'dragover');
+            if (evt === 'drop' && e.dataTransfer.files[0]) {
+              window.dispatchEvent(new CustomEvent('sd:file-selected', { detail: { key: z.dataset.drop, file: e.dataTransfer.files[0] } }));
+            }
+          });
+        });
+      });
+      var mappingModal = document.getElementById('mappingModal');
+      var header = document.querySelector('header');
+      /* גובה הכותרת (גם כשהיא נשברת לשתי שורות) קובע את היסט סרגל הסינון הצמוד */
+      function syncHeaderHeight() { document.documentElement.style.setProperty('--hdr-h', header.offsetHeight + 'px'); }
+      syncHeaderHeight();
+      if (window.ResizeObserver) new ResizeObserver(syncHeaderHeight).observe(header); else window.addEventListener('resize', syncHeaderHeight);
+      function closeMapping() { mappingModal.classList.add('hidden'); }
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMapping(); });
+      document.getElementById('mappingClose').addEventListener('click', closeMapping);
+      document.getElementById('mappingCancel').addEventListener('click', closeMapping);
+
+      window.addEventListener('DOMContentLoaded', function () { if (window.lucide) window.lucide.createIcons(); });
+    })();
+  </script>
+
+  <script src="js/config.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/mockData.js"></script>
+  <script src="js/parser.js"></script>
+  <script src="js/bagrutEngine.js"></script>
+  <script src="js/groupAnalyzer.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
