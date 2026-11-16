@@ -16,10 +16,6 @@ const setChecked = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
 const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
 const TABS = ['bagrut', 'groups', 'sadin', 'profile', 'settings'];
-/* פעולות שינוי: חסומות במצב צפייה גם אם הכפתור הוסתר ב-CSS */
-const ADMIN_ACTS = new Set(['ovSave', 'ovAdopt', 'ovKeep', 'ovRemove', 'ovClearAll', 'clearPanel', 'clearSadinGrade', 'remap', 'loadMock',
-  'deleteRoster', 'excModal', 'excModalSave', 'excModalClear', 'ruleRemove', 'compAdd', 'compRemove', 'qRemove',
-  'calibAdd', 'calibEdit', 'calibDelete', 'calibAssign', 'cloudImport']);
 const GATE_TITLE = { pass: 'עומד', partial: 'חסר חלקי', fail: 'לא עומד', off: 'כבוי בכללים', nodata: 'אין נתונים' };
 
 /* סוג קובץ בממשק ← מפתח אחסון */
@@ -56,13 +52,13 @@ const App = {
      ------------------------------------------------------------------ */
   async init() {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
-    this.applyRole();
+    this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
     let seeded = false;
     if (CloudSync.url()) {
       try {
         const r = await CloudSync.pullCloudState();
-        if (r === 'kept-local') this.toast('בענן קיימת גרסה חדשה יותר, אך יש שינויים מקומיים שלא פורסמו – נשמרה הגרסה המקומית. ניתן למשוך מהענן בהגדרות.', 'warn');
+        if (r === 'kept-local') this.toast('נשמרו שינויים מקומיים הממתינים לסנכרון; הם יישלחו לענן אוטומטית.', 'info');
       } catch (e) { console.warn('cloud pull', e); this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
     }
     try { if (!CloudSync.url() && typeof initMockDataIfEmpty === 'function') seeded = await initMockDataIfEmpty(); }
@@ -378,7 +374,6 @@ const App = {
    * כך שקובץ של שכבה אחת אינו מוחק את שאר השכבות; הרינדור מחדש מתבצע פעם אחת בסוף.
    */
   async handleFiles(key, files, opts = {}) {
-    if (!CloudSync.isAdmin()) return;
     const list = [...(files || [])].filter(Boolean);
     if (!list.length || this.busy) return;
     this.busy = true;
@@ -1584,7 +1579,6 @@ const App = {
   scrollToTop() { $('mainContent').scrollTop = 0; window.scrollTo({ top: 0 }); },
 
   saveProfileField(patch) {
-    if (!CloudSync.isAdmin()) return;
     const tz = this.state.profileTz;
     if (!tz) return;
     const res = Config.setException(tz, patch);
@@ -1794,8 +1788,8 @@ const App = {
       const tab = e.target.closest('[data-tab]');
       if (tab) { e.stopPropagation(); this.showTab(tab.dataset.tab); return; }
       const up = e.target.closest('[data-upload]');
-      if (up) { e.stopPropagation(); e.preventDefault(); if (CloudSync.isAdmin()) this.pickFile(up.dataset.upload); return; }
-      if (e.target.closest('#btnRulesToggle')) { e.stopPropagation(); if (CloudSync.isAdmin()) this.toggleDrawer(); return; }
+      if (up) { e.stopPropagation(); e.preventDefault(); this.pickFile(up.dataset.upload); return; }
+      if (e.target.closest('#btnRulesToggle')) { e.stopPropagation(); this.toggleDrawer(); return; }
       if (e.target.closest('#rulesClose')) { e.stopPropagation(); this.toggleDrawer(false); }
     }, true);
     document.addEventListener('change', e => {
@@ -1936,7 +1930,6 @@ const App = {
     on('ovForm', 'submit', e => { e.preventDefault(); this.acts.ovSave.call(this); });
     on('btnExportConfig', 'click', () => Config.exportJSON());
     on('fileImportConfig', 'change', async e => {
-      if (!CloudSync.isAdmin()) return;
       const f = e.target.files[0];
       e.target.value = '';
       if (!f) return;
@@ -1944,7 +1937,6 @@ const App = {
       catch (err) { this.toast(err.message || 'קובץ config.json לא תקין', 'error'); }
     });
     on('btnClearData', 'click', async () => {
-      if (!CloudSync.isAdmin()) return;
       if (!confirm('למחוק את קובצי הבגרות, הקבוצות והציונים השוטפים? המצבת וההגדרות יישמרו.')) return;
       try {
         await Config.clearAllData();
@@ -1956,7 +1948,6 @@ const App = {
       }
     });
     on('btnResetConfig', 'click', () => {
-      if (!CloudSync.isAdmin()) return;
       if (!confirm('לאפס את כללי הזכאות, החריגים, הכינויים ופרופילי המיפוי? המצבת תישאר.')) return;
       Config.reset({ silent: true });
       this.afterDataChange();
@@ -1996,7 +1987,6 @@ const App = {
       }
       const el = e.target.closest('[data-act]');
       const fn = el && this.acts[el.dataset.act];
-      if (fn && !CloudSync.isAdmin() && ADMIN_ACTS.has(el.dataset.act)) return;
       if (fn) fn.call(this, el, e);
     });
     document.addEventListener('change', e => {
@@ -2008,7 +1998,6 @@ const App = {
       }
       const el = e.target.closest && e.target.closest('[data-chg]');
       const fn = el && this.chgs[el.dataset.chg];
-      if (fn && !CloudSync.isAdmin() && el.dataset.chg !== 'sim') return;
       if (fn) fn.call(this, el, e);
     });
   },
@@ -2023,80 +2012,41 @@ const App = {
   },
 
   /* ==================================================================
-     תפקידים (צפייה / עריכה) וסנכרון ענן
+     סנכרון ענן
      ================================================================== */
-  applyRole(rerender = false) {
-    const admin = CloudSync.isAdmin();
-    document.body.classList.toggle('viewer', !admin);
-    const btn = $('roleBtn');
-    if (btn) btn.textContent = admin ? '✏️ מצב עריכה' : '👁️ מצב צפייה';
-    const pub = $('btnPublish');
-    if (pub) pub.classList.toggle('hidden', !admin || !CloudSync.url());
-    this.renderSync();
-    if (rerender) {
-      ['profile', 'settings', 'bagrut'].forEach(t => this.dirty.add(t));
-      this.renderTab(this.state.tab);
-      this.renderCloudCard();
-    }
-  },
-
   renderSync() {
     const el = $('syncStatus');
     if (!el) return;
-    const s = CloudSync.status, url = CloudSync.url(), admin = CloudSync.isAdmin();
-    const fmt = ts => { const d = new Date(ts); const p = n => String(n).padStart(2, '0'); return `${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+    const s = CloudSync.status, url = CloudSync.url();
     let t;
     if (!url) t = '💾 נתונים מקומיים (ללא סנכרון ענן)';
     else if (s.text) t = s.text;
-    else { const ts = s.updatedAt || CloudSync.meta().syncedAt; t = ts ? `☁️ מסונכרן (עודכן: ${fmt(ts)})` : '☁️ טרם סונכרן'; }
-    if (url && admin && CloudSync.hasUnpublished()) t += ' · ⚠️ שינויים שלא פורסמו';
+    else if (CloudSync.hasUnpublished()) t = '☁️ מסנכרן...';
+    else t = (s.updatedAt || CloudSync.meta().syncedAt) ? '☁️ מסונכרן' : '☁️ טרם סונכרן';
     el.textContent = t;
-    const pub = $('btnPublish');
-    if (pub) pub.classList.toggle('hidden', !admin || !url);
+    el.title = s.kind === 'error' ? s.error || t : '';
   },
 
   renderCloudCard() {
     const body = $('cloudBody');
     if (!body) return;
-    const admin = CloudSync.isAdmin();
     body.innerHTML = `
-      <p class="text-xs text-slate-500">הרכזת הפדגוגית מפרסמת את הנתונים לענן (Google Apps Script – ראו cloud/Code.gs); מנהל ורכזי שכבות פותחים את האפליקציה במצב צפייה וטוענים אוטומטית את אותו מצב. קוד בית-ספר מצפין את הנתונים לפני שהם יוצאים מהדפדפן.</p>
+      <p class="text-xs text-slate-500">כל שינוי נשמר לענן אוטומטית, והנתונים העדכניים נטענים בפתיחת האפליקציה בכל מחשב. יש להשתמש באותה כתובת בכל המחשבים. קוד בית-ספר אופציונלי מצפין את הנתונים ודורש אותו קוד בכל מחשב.</p>
+      <p class="text-xs text-amber-700">כל מי שמחזיק בכתובת יכול לקרוא ולכתוב בענן ללא סיסמת מרכזת. אין לשתף את הכתובת מחוץ לצוות.</p>
       <div class="grid md:grid-cols-2 gap-3">
         <label class="flex flex-col gap-1">כתובת Web App של Google Apps Script
           <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(CloudSync.url())}"></label>
         <label class="flex flex-col gap-1">קוד בית-ספר (הצפנה, אופציונלי)
           <input id="cloudPass" type="password" class="inp" autocomplete="off" value="${E(CloudSync.passcode())}"></label>
-        ${admin ? `<label class="flex items-center gap-2 md:col-span-2 cursor-pointer"><input type="checkbox" id="cloudAuto" class="w-4 h-4" ${CloudSync.autoPublish() ? 'checked' : ''}>פרסום אוטומטי לענן אחרי העלאת קובץ או שינוי (דורש סיסמת מרכזת)</label>` : ''}
       </div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSave">שמירת הגדרות</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">⬇️ משיכה מהענן</button>
-        ${admin ? '<button type="button" class="btn btn-primary btn-sm" data-act="cloudPublish">☁️ פרסם לצוות</button>' : ''}
+        <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">☁️ סנכרן לענן כעת</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="backupExport">💾 ייצוא קובץ גיבוי (.json)</button>
         <label id="backupImportLabel" class="btn btn-ghost btn-sm cursor-pointer">💾 ייבוא קובץ גיבוי (.json)
           <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
       </div>`;
-  },
-
-  openRoleModal() {
-    const admin = CloudSync.isAdmin();
-    this.openModal(`
-      <h3 class="text-lg font-semibold mb-1">${admin ? '✏️ מצב עריכה – מרכזת פדגוגית' : '👁️ מצב צפייה'}</h3>
-      <p class="text-xs text-slate-500 mb-3">${admin ? 'אפשר לחזור למצב צפייה בכל עת.' : 'להזנת סיסמת מרכזת ולפתיחת כלי העריכה, ההעלאה והפרסום.'}</p>
-      <div class="grid gap-3 text-sm">
-        <label class="flex flex-col gap-1">כתובת סנכרון ענן (Google Apps Script)
-          <input id="roleUrl" class="inp" dir="ltr" value="${E(CloudSync.url())}" placeholder="https://script.google.com/macros/s/…/exec"></label>
-        <label class="flex flex-col gap-1">קוד בית-ספר (אופציונלי)
-          <input id="rolePass" type="password" class="inp" autocomplete="off" value="${E(CloudSync.passcode())}"></label>
-        ${admin ? '' : `<label class="flex flex-col gap-1">סיסמת מרכזת (adminToken)
-          <input id="roleToken" type="password" class="inp" autocomplete="off" value="${E(CloudSync.adminToken())}"></label>`}
-      </div>
-      <div id="roleErr" class="text-sm text-red-600 mt-2" role="alert"></div>
-      <div class="flex flex-wrap gap-2 mt-4">
-        ${admin ? '<button type="button" class="btn btn-primary" data-act="roleLock">חזרה למצב צפייה</button>' : '<button type="button" class="btn btn-primary" data-act="roleUnlock">פתיחת מצב עריכה</button>'}
-        <button type="button" class="btn btn-ghost" data-act="roleSaveCloud">שמירת הגדרות ענן וסנכרון</button>
-        <button type="button" class="btn btn-ghost" data-act="closeModal">סגירה</button>
-      </div>`);
   },
 
   /** מחילה תמונת מצב חדשה על כל התצוגות */
@@ -2105,9 +2055,10 @@ const App = {
       const r = await fn();
       this.rosterReport = null;
       if (r === 'applied') this.afterDataChange();
-      this.applyRole(true);
+      this.renderSync();
+      this.renderCloudCard();
       return r;
-    } catch (e) { this.applyRole(true); this.toast(e.message || 'הפעולה נכשלה', 'error'); return null; }
+    } catch (e) { this.renderSync(); this.toast(e.message || 'הפעולה נכשלה', 'error'); return null; }
   },
 
   /* ==================================================================
@@ -2168,7 +2119,6 @@ const App = {
   renderCalibration() {
     const host = $('qCalib');
     if (!host) return;
-    if (!CloudSync.isAdmin()) { host.innerHTML = ''; return; }
     const rows = this.calibModel();
     this._calibRows = rows;
     const unk = this.unrecognizedCodes(rows);
@@ -2293,45 +2243,28 @@ const App = {
   },
 
   acts: {
-    roleOpen() { this.openRoleModal(); },
-    roleLock() { CloudSync.setRole(false); this.closeModal(); this.applyRole(true); this.toast('עברתם למצב צפייה', 'info'); },
-    async roleUnlock() {
-      const err = m => setText('roleErr', m);
-      CloudSync.saveSettings({ url: $('roleUrl').value, passcode: $('rolePass').value });
-      const token = $('roleToken').value;
-      err('');
-      if (CloudSync.url()) {
-        if (!token) return err('יש להזין סיסמת מרכזת');
-        try { await CloudSync.verifyAdmin(token); } catch (e) { return err(e.message || 'אימות נכשל'); }
-      }
-      CloudSync.saveSettings({ adminToken: token });
-      CloudSync.setRole(true);
-      this.closeModal();
-      this.applyRole(true);
-      this.toast('מצב עריכה פעיל', 'ok');
-    },
-    async roleSaveCloud() {
-      CloudSync.saveSettings({ url: $('roleUrl').value, passcode: $('rolePass').value });
-      this.closeModal();
-      if (!CloudSync.url()) { this.applyRole(true); return; }
-      const r = await this.cloudRefresh(() => CloudSync.pullCloudState({ force: true }));
-      if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
-    },
-    cloudSave() {
-      CloudSync.saveSettings({ url: $('cloudUrl').value, passcode: $('cloudPass').value, auto: $('cloudAuto') ? $('cloudAuto').checked : undefined });
-      this.applyRole(true);
+    async cloudSave() {
+      CloudSync.saveSettings({ url: $('cloudUrl').value, passcode: $('cloudPass').value });
+      this.renderSync();
       this.toast('הגדרות הענן נשמרו', 'ok');
+      if (CloudSync.url()) await this.cloudRefresh(() => CloudSync.pullCloudState());
     },
     async cloudPull() {
       if (!CloudSync.url()) return this.toast('לא הוגדרה כתובת סנכרון ענן', 'warn');
-      if (CloudSync.isAdmin() && CloudSync.hasUnpublished() && !confirm('יש שינויים שלא פורסמו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
+      if (CloudSync.hasUnpublished() && !confirm('יש שינויים שלא סונכרנו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
       const r = await this.cloudRefresh(() => CloudSync.pullCloudState({ force: true }));
-      if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
+      if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו ויישלחו לענן אוטומטית.', 'info');
+      else if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
     },
-    async cloudPublish() {
+    async cloudSync() {
+      CloudSync.saveSettings({ url: $('cloudUrl').value, passcode: $('cloudPass').value });
       if (!CloudSync.url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
-      try { await CloudSync.pushCloudState(); this.toast('הנתונים פורסמו לצוות', 'ok'); }
-      catch (e) { this.toast(`הפרסום נכשל: ${e.message}`, 'error'); }
+      try {
+        const r = await this.cloudRefresh(() => CloudSync.pullCloudState());
+        if (!r) return;
+        await CloudSync.pushCloudState();
+        this.toast('הנתונים סונכרנו לענן', 'ok');
+      } catch (e) { this.toast(`הסנכרון נכשל: ${e.message}`, 'error'); }
       this.renderSync();
     },
     backupExport() { CloudSync.exportBackup(); },

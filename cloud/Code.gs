@@ -3,12 +3,12 @@
  *
  * הגדרה:
  *  1. script.google.com ← פרויקט חדש ← הדביקו קובץ זה.
- *  2. Project Settings ← Script Properties ← הוסיפו ADMIN_TOKEN = סיסמת המרכזת.
- *  3. Deploy ← New deployment ← Web app: Execute as "Me", Who has access "Anyone".
- *  4. העתיקו את כתובת ה-Web App להגדרות ← סנכרון ענן באפליקציה.
+ *  2. Deploy ← New deployment ← Web app: Execute as "Me", Who has access "Anyone".
+ *  3. העתיקו את כתובת ה-Web App להגדרות ← סנכרון ענן באפליקציה.
+ *  בעדכון פרויקט קיים: Deploy ← Manage deployments ← Edit ← New version ← Deploy.
  *
- * קריאה (GET ?action=pull) פתוחה לכל מי שמחזיק בכתובת; הנתונים מוצפנים בצד הלקוח בקוד בית-ספר.
- * כתיבה (POST action=push) מחייבת ADMIN_TOKEN.
+ * קריאה (GET ?action=pull) וכתיבה (POST action=push) פתוחות לכל מי שמחזיק בכתובת, ללא סיסמה.
+ * הנתונים מוצפנים בצד הלקוח רק אם הוגדר קוד בית-ספר. אין לשתף את הכתובת מחוץ לצוות.
  */
 var FILE_NAME = 'school-dashboard-snapshot.json';
 
@@ -34,9 +34,6 @@ function doGet(e) {
 function doPost(e) {
   try {
     var body = JSON.parse(e.postData.contents);
-    var token = PropertiesService.getScriptProperties().getProperty('ADMIN_TOKEN');
-    if (!token || body.adminToken !== token) return json_({ ok: false, error: 'סיסמת מרכזת שגויה' });
-    if (body.action === 'verify') return json_({ ok: true });
     if (body.action !== 'push') return json_({ ok: false, error: 'פעולה לא מוכרת' });
     var updatedAt = Number(body.updatedAt) || Date.now();
     snapshotFile_(true).setContent(JSON.stringify({ updatedAt: updatedAt, payload: body.payload }));

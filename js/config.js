@@ -307,7 +307,9 @@ const Config = {
   },
 
   save() {
-    return this._write(this.KEYS.config, this.data);
+    const result = this._write(this.KEYS.config, this.data);
+    if (result.ok) this.emit('config-changed');
+    return result;
   },
 
   reset(opts = {}) {

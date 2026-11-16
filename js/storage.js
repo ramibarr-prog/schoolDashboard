@@ -1,43 +1,54 @@
 /* =====================================================================
-   storage.js – סנכרון ענן (Google Apps Script) ותפקידי משתמש.
-   viewer (ברירת מחדל): צפייה בלבד. admin (מרכזת פדגוגית): עריכה + פרסום לצוות.
+   storage.js – סנכרון ענן אוטומטי (Google Apps Script), ללא סיסמת עריכה.
    כל מצב היישום מתכנס ל-JSON אחד (buildState) שנדחף / נמשך מהענן, ומוצפן אופציונלית בקוד בית-ספר.
    ===================================================================== */
 const CloudSync = {
-  LS: { url: 'sd.cloud.url', pass: 'sd.cloud.passcode', token: 'sd.cloud.adminToken', auto: 'sd.cloud.autoPublish', meta: 'sd.cloud.meta', role: 'pedagogical_role' },
+  LS: { url: 'sd.cloud.url', pass: 'sd.cloud.passcode', meta: 'sd.cloud.meta' },
   status: { kind: 'none', text: '', updatedAt: 0 },
   _suppress: 0,
-  _dirty: false,
   _timer: null,
+  _revision: 0,
+  _ready: false,
+  _queue: Promise.resolve(),
 
-  /* ---------- הגדרות ותפקיד ---------- */
+  /* ---------- הגדרות ---------- */
   _get(k) { try { return localStorage.getItem(this.LS[k]) || ''; } catch (e) { return ''; } },
   _set(k, v) { try { if (v) localStorage.setItem(this.LS[k], v); else localStorage.removeItem(this.LS[k]); } catch (e) { /* noop */ } },
   url() { return (this._get('url') || Config.CLOUD_SYNC_URL || '').trim(); },
   passcode() { return this._get('pass'); },
-  adminToken() { return this._get('token'); },
-  autoPublish() { return this._get('auto') === '1'; },
-  isAdmin() { return this._get('role') === 'admin'; },
-  setRole(admin) { this._set('role', admin ? 'admin' : ''); },
-  saveSettings({ url, passcode, adminToken, auto }) {
+  saveSettings({ url, passcode }) {
+    const previousUrl = this.url(), previousPass = this.passcode();
     if (url !== undefined) this._set('url', String(url).trim());
     if (passcode !== undefined) this._set('pass', passcode);
-    if (adminToken !== undefined) this._set('token', adminToken);
-    if (auto !== undefined) this._set('auto', auto ? '1' : '');
+    if (this.url() !== previousUrl || this.passcode() !== previousPass) {
+      clearTimeout(this._timer);
+      this._ready = false;
+      this._setMeta({ syncedAt: 0 });
+      this.emitStatus({ kind: 'none', text: '', updatedAt: 0 });
+    }
   },
   meta() { try { return JSON.parse(localStorage.getItem(this.LS.meta)) || {}; } catch (e) { return {}; } },
   _setMeta(m) { try { localStorage.setItem(this.LS.meta, JSON.stringify({ ...this.meta(), ...m })); } catch (e) { /* noop */ } },
   hasUnpublished() { return !!this.meta().dirty; },
 
-  /** שינויים מקומיים של מרכזת (אחרי טעינה / עריכה) מסומנים כלא-מפורסמים; ניתן לפרסום אוטומטי */
+  /** כל שמירה מקומית מתזמנת תמונת מצב מלאה; טעינה מהענן אינה יוצרת העלאה חוזרת. */
   markDirty() {
-    if (this._suppress || !this.isAdmin()) return;
+    if (this._suppress) return;
+    this._revision++;
     this._setMeta({ dirty: true });
     this.emitStatus();
-    if (this.autoPublish() && this.url() && this.adminToken()) {
+    this._schedulePush();
+  },
+  _schedulePush() {
+    if (this.url() && this.hasUnpublished()) {
       clearTimeout(this._timer);
-      this._timer = setTimeout(() => this.pushCloudState({ silent: true }).catch(() => {}), 3000);
+      this._timer = setTimeout(() => this.pushCloudState().catch(e => console.error('cloud push', e)), 1000);
     }
+  },
+  _enqueue(fn) {
+    const operation = this._queue.then(fn);
+    this._queue = operation.catch(e => console.error('cloud sync', e));
+    return operation;
   },
   emitStatus(patch) {
     if (patch) this.status = { ...this.status, ...patch };
@@ -87,6 +98,9 @@ const CloudSync = {
         if (!w.ok) throw new Error(w.error);
         Config._cache.masterRoster = s.rosterData;
         Config.setRosterCleared(false);
+      } else if (s.rosterData === null) {
+        Config.clearRoster();
+        Config.setRosterCleared(true);
       }
       for (const key of Config.DATASET_KEYS) {
         const e = s[key];
@@ -95,7 +109,7 @@ const CloudSync = {
           if (!r.ok) throw new Error(r.error);
           Config._cache[key] = e;
         } else if (e === null) {
-          try { await Config._storeDelete(key); } catch (err) { /* noop */ }
+          await Config._storeDelete(key);
           Config._cache[key] = null;
         }
       }
@@ -154,40 +168,56 @@ const CloudSync = {
     return json;
   },
 
-  /** אימות סיסמת מרכזת מול השרת */
-  async verifyAdmin(token) {
-    if (!this.url()) return true;
-    await this._post({ action: 'verify', adminToken: token });
-    return true;
+  pushCloudState() {
+    return this._enqueue(async () => {
+      await Config.ready;
+      // Read before the first write, including retries after a failed startup pull.
+      if (!this._ready) {
+        await this._pullCloudState();
+        this._ready = true;
+      }
+      return this._pushCloudState();
+    });
   },
 
-  async pushCloudState(opts = {}) {
-    if (!this.isAdmin()) throw new Error('פרסום זמין רק במצב עריכה');
+  async _pushCloudState() {
+    clearTimeout(this._timer);
+    const revision = this._revision;
     const state = this.buildState();
-    this.emitStatus({ kind: 'busy', text: '☁️ מפרסם…' });
+    this.emitStatus({ kind: 'busy', text: '☁️ מסנכרן...' });
     try {
       const payload = await this.seal(state);
       const bodyData = {
-        action: 'push', // נדרש ע"י doPost ב-cloud/Code.gs
-        adminToken: this.adminToken() || localStorage.getItem('pedagogical_admin_token') || 'RamiAdmin2026', // חייב להתאים ל-ADMIN_TOKEN ב-Apps Script
-        updatedBy: 'רכזת פדגוגית',
+        action: 'push',
         updatedAt: state.updatedAt,
         payload // תמונת המצב המלאה (מוצפנת אם הוגדר קוד בית-ספר)
       };
       const r = await this._post(bodyData);
-      this._setMeta({ dirty: false, syncedAt: r.updatedAt || state.updatedAt });
+      this._setMeta({ dirty: revision !== this._revision, syncedAt: r.updatedAt || state.updatedAt });
       this.emitStatus({ kind: 'ok', updatedAt: r.updatedAt || state.updatedAt, text: '' });
+      this._schedulePush();
       return r;
     } catch (e) {
-      this.emitStatus({ kind: 'error', text: `☁️ הפרסום נכשל` });
+      this.emitStatus({ kind: 'error', text: '☁️ הסנכרון נכשל', error: e.message });
       throw e;
     }
   },
 
   /** מושך את תמונת המצב האחרונה; force מתעלם מהשוואת updatedAt. מחזיר 'applied' | 'current' | 'kept-local' | 'empty' */
-  async pullCloudState(opts = {}) {
-    this.emitStatus({ kind: 'busy', text: '☁️ מסנכרן…' });
+  pullCloudState(opts = {}) {
+    return this._enqueue(async () => {
+      await Config.ready;
+      const result = await this._pullCloudState(opts);
+      this._ready = true;
+      this._schedulePush();
+      return result;
+    });
+  },
+  async _pullCloudState(opts = {}) {
+    const revision = this._revision;
+    this.emitStatus({ kind: 'busy', text: '☁️ מסנכרן...' });
     try {
+      if (!this.url()) throw new Error('לא הוגדרה כתובת סנכרון ענן');
       const res = await fetch(`${this.url()}${this.url().includes('?') ? '&' : '?'}action=pull`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`שגיאת שרת ${res.status}`);
       const json = await res.json();
@@ -198,16 +228,17 @@ const CloudSync = {
         this.emitStatus({ kind: 'ok', updatedAt: meta.syncedAt, text: '' });
         return 'current';
       }
-      if (!opts.force && this.isAdmin() && meta.dirty) {
-        this.emitStatus({ kind: 'warn', updatedAt: meta.syncedAt || 0, text: '☁️ יש שינויים שלא פורסמו' });
+      const state = await this.open(json.payload);
+      if (this._revision !== revision || (!opts.force && this.hasUnpublished())) {
+        this.emitStatus({ kind: 'warn', updatedAt: meta.syncedAt || 0, text: '☁️ שינויים ממתינים לסנכרון' });
         return 'kept-local';
       }
-      await this.applyState(await this.open(json.payload));
+      await this.applyState(state);
       this._setMeta({ dirty: false, syncedAt: json.updatedAt || Date.now() });
       this.emitStatus({ kind: 'ok', updatedAt: json.updatedAt || Date.now(), text: '' });
       return 'applied';
     } catch (e) {
-      this.emitStatus({ kind: 'error', text: '☁️ הסנכרון נכשל' });
+      this.emitStatus({ kind: 'error', text: '☁️ הסנכרון נכשל', error: e.message });
       throw e;
     }
   },
@@ -225,11 +256,11 @@ const CloudSync = {
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
     await this.applyState(s);
-    this._setMeta({ dirty: true });
+    this.markDirty();
   },
 
   init() {
-    ['dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
+    ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
   }
 };
 CloudSync.init();

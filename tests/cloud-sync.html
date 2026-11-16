@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Cloud sync regression tests</title>
+<pre id="results">Running...</pre>
+<script src="../js/config.js"></script>
+<script src="../js/storage.js"></script>
+<script>
+(async () => {
+  const results = document.getElementById('results');
+  const nativeFetch = window.fetch;
+  const passed = [];
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const waitFor = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error('Timed out waiting for background sync');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
+  let remote = null, posts = [], failPull = false, failPush = false, holdPost = null, holdPull = null;
+  window.fetch = async (url, options = {}) => {
+    if (!String(url).startsWith('https://cloud-sync.test/')) return nativeFetch(url, options);
+    if (options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      posts.push(body);
+      if (holdPost) await holdPost;
+      if (failPush) return { ok: true, json: async () => ({ ok: false, error: 'Test write failure' }) };
+      remote = { ok: true, updatedAt: body.updatedAt, payload: body.payload };
+      return { ok: true, json: async () => ({ ok: true, updatedAt: body.updatedAt }) };
+    }
+    if (failPull) throw new Error('Test offline');
+    const snapshot = structuredClone(remote || { ok: true, payload: null });
+    if (holdPull) await holdPull;
+    return { ok: true, json: async () => snapshot };
+  };
+  try {
+    await Config.ready;
+    CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', passcode: '' });
+    await CloudSync.pullCloudState();
+    const tz = '123456782';
+    const roster = [{ tz, firstName: 'Test', lastName: 'Student', grade: 'י', homeroom: 'י1', track: 'רגילה' }];
+    assert(Config.setRoster(roster, 'roster.csv').ok, 'Roster save failed');
+    for (const key of Config.DATASET_KEYS) {
+      assert((await Config.setDataset(key, [{ tz, gradeKey: 'י', score: 80 }], key + '.csv')).ok, 'Dataset save failed');
+    }
+    assert(Config.setRosterOverride(tz, { homeroom: 'י2' }).ok, 'Override save failed');
+    assert(Config.setSpecialEdClass('י2', true).ok, 'HNM save failed');
+    assert(Config.setException(tz, { note: 'Test note' }).ok, 'Note save failed');
+    await waitFor(() => posts.length === 1 && !CloudSync.hasUnpublished());
+    const state = JSON.parse(remote.payload.data);
+    assert(state.rosterData.data[0].tz === tz, 'Missing roster');
+    for (const key of Config.DATASET_KEYS) assert(state[key].data[0].score === 80, 'Missing ' + key);
+    assert(state.rosterOverrides[tz].homeroom === 'י2', 'Missing override');
+    assert(state.specialEdClasses['י2'] === true, 'Missing HNM class');
+    assert(state.studentMeta[tz].note === 'Test note', 'Missing note');
+    assert(!('adminToken' in posts[0]), 'Push still sends a token');
+    passed.push('Debounced full-state background upload without roles or tokens');
+
+    Config.setException(tz, { note: 'Note-only change' });
+    await waitFor(() => posts.length === 2 && !CloudSync.hasUnpublished());
+    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Note-only change', 'Note-only save did not sync');
+    Config.setSpecialEdClass('י2', false);
+    await waitFor(() => posts.length === 3 && !CloudSync.hasUnpublished());
+    assert(!JSON.parse(remote.payload.data).specialEdClasses['י2'], 'HNM removal did not sync');
+    Config.removeRosterOverride(tz);
+    await waitFor(() => posts.length === 4 && !CloudSync.hasUnpublished());
+    assert(!JSON.parse(remote.payload.data).rosterOverrides[tz], 'Override removal did not sync');
+    passed.push('Independent note-only, HNM removal, and override deletion autosync');
+
+    let releasePost;
+    holdPost = new Promise(resolve => { releasePost = resolve; });
+    Config.setException(tz, { note: 'First upload' });
+    const firstPush = CloudSync.pushCloudState();
+    await waitFor(() => posts.length === 5);
+    Config.setException(tz, { note: 'Edited during upload' });
+    releasePost();
+    await firstPush;
+    holdPost = null;
+    assert(CloudSync.hasUnpublished(), 'Older upload cleared newer local changes');
+    await waitFor(() => posts.length === 6 && !CloudSync.hasUnpublished());
+    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Edited during upload', 'Follow-up upload missing');
+    passed.push('Changes during an upload remain pending and upload afterward');
+
+    failPush = true;
+    Config.setException(tz, { note: 'Retry me' });
+    let failed = false;
+    try { await CloudSync.pushCloudState(); } catch (e) { failed = e.message === 'Test write failure'; }
+    clearTimeout(CloudSync._timer);
+    assert(failed && CloudSync.hasUnpublished() && CloudSync.status.kind === 'error', 'Write failure was hidden or lost pending data');
+    failPush = false;
+    await CloudSync.pushCloudState();
+    assert(!CloudSync.hasUnpublished(), 'Retry did not clear pending data');
+    passed.push('Failed writes expose errors, preserve pending data, and allow retry');
+
+    const snapshot = structuredClone(remote);
+    CloudSync._suppress++;
+    Config.clearRoster();
+    await Config.clearAllData();
+    Config.data = Config.defaults();
+    Config.save();
+    CloudSync._suppress--;
+    CloudSync._setMeta({ syncedAt: 0, dirty: false });
+    const beforePull = posts.length;
+    assert(await CloudSync.pullCloudState() === 'applied', 'Fresh computer did not apply cloud state');
+    assert(Config.getRosterEntry().data[0].tz === tz && Config.getException(tz).note === 'Retry me', 'Full state was not restored');
+    for (const key of Config.DATASET_KEYS) assert(Config.getDataset(key).data.length === 1, 'Pull lost ' + key);
+    assert(posts.length === beforePull && !CloudSync.hasUnpublished(), 'Pull triggered an upload loop');
+    passed.push('Fresh-computer pull restores full state without re-uploading');
+
+    let releasePull;
+    holdPull = new Promise(resolve => { releasePull = resolve; });
+    const pulling = CloudSync.pullCloudState({ force: true });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    Config.setException(tz, { note: 'Edited during pull' });
+    releasePull();
+    assert(await pulling === 'kept-local', 'Pull overwrote a concurrent edit');
+    holdPull = null;
+    clearTimeout(CloudSync._timer);
+    assert(Config.getException(tz).note === 'Edited during pull', 'Concurrent note lost');
+    passed.push('Even a forced pull preserves edits made while downloading');
+
+    CloudSync._ready = false;
+    failPull = true;
+    failed = false;
+    const beforeOffline = posts.length;
+    try { await CloudSync.pushCloudState(); } catch (e) { failed = e.message === 'Test offline'; }
+    assert(failed && posts.length === beforeOffline, 'Upload proceeded after a failed initial pull');
+    failPull = false;
+    Config.setException(tz, { note: 'Reconnect' });
+    await waitFor(() => posts.length > beforeOffline && !CloudSync.hasUnpublished());
+    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Reconnect', 'New edit did not retry startup sync');
+    passed.push('Initial read failure blocks unsafe writes; the next edit retries sync');
+
+    const cleared = { ...JSON.parse(snapshot.payload.data), rosterData: null, bagrutData: null, groupsData: null, sadinData: null };
+    remote = { ok: true, updatedAt: Date.now() + 1000, payload: { enc: 'none', data: JSON.stringify(cleared) } };
+    await CloudSync.pullCloudState({ force: true });
+    assert(Config.getRosterEntry() === null && Config.isRosterCleared(), 'Roster deletion was not applied');
+    for (const key of Config.DATASET_KEYS) assert(Config.getDataset(key) === null, 'Dataset deletion was not applied');
+    passed.push('Cloud roster and dataset deletions remove stale local files');
+
+    const serverSource = await (await nativeFetch('../cloud/Code.gs')).text();
+    let stored = '';
+    const file = { setContent: text => { stored = text; }, getBlob: () => ({ getDataAsString: () => stored }) };
+    const server = new Function('DriveApp', 'ContentService', 'MimeType', serverSource + '\nreturn { doPost, doGet };')(
+      { getFilesByName: () => ({ hasNext: () => !!stored, next: () => file }), createFile: () => file },
+      { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
+      { PLAIN_TEXT: 'text' }
+    );
+    const response = server.doPost({ postData: { contents: JSON.stringify({ action: 'push', updatedAt: 123, payload: snapshot.payload }) } });
+    assert(response.ok && response.updatedAt === 123, 'Password-free Apps Script push rejected');
+    assert(server.doGet({}).payload.data === snapshot.payload.data, 'Apps Script pull changed payload');
+    assert(!server.doPost({ postData: { contents: '{"action":"invalid"}' } }).ok, 'Unknown action accepted');
+    passed.push('Apps Script accepts token-free pushes and round-trips the snapshot');
+    results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
+    document.title = 'PASS - Cloud sync regression tests';
+  } catch (e) {
+    results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nFAIL ' + e.stack;
+    document.title = 'FAIL - Cloud sync regression tests';
+    console.error(e);
+  } finally {
+    clearTimeout(CloudSync._timer);
+    window.fetch = nativeFetch;
+  }
+})();
+</script>
+</html>
