@@ -36,6 +36,32 @@
   };
   try {
     await Config.ready;
+    const storageSource = await (await nativeFetch('../js/storage.js')).text();
+    for (const [savedUrl, migrate] of [
+      ['https://script.google.com/macros/s/old-deployment/exec', true],
+      [Config.CLOUD_SYNC_URL, false],
+      ['', false],
+      ['https://cloud-sync.test/exec', false],
+      ['https://script.google.com.example.test/exec', false]
+    ]) {
+      const values = new Map([
+        ['sd.cloud.url', savedUrl],
+        ['sd.cloud.meta', JSON.stringify({ syncedAt: 999, dirty: true })]
+      ]);
+      const isolatedStorage = {
+        getItem: key => values.get(key) || null,
+        setItem: (key, value) => values.set(key, value),
+        removeItem: key => values.delete(key)
+      };
+      const sync = new Function('Config', 'localStorage', 'window', storageSource + '\nreturn CloudSync;')(
+        Config, isolatedStorage, { addEventListener() {}, dispatchEvent() {} }
+      );
+      assert(values.get('sd.cloud.url') === (migrate ? Config.CLOUD_SYNC_URL : savedUrl), 'Startup URL migration incorrect: ' + savedUrl);
+      assert(sync.url() === (migrate || !savedUrl ? Config.CLOUD_SYNC_URL : savedUrl), 'Effective URL incorrect');
+      assert(sync.meta().syncedAt === (migrate ? 0 : 999) && sync.hasUnpublished(), 'Migration lost pending edits or retained an old timestamp');
+    }
+    passed.push('Startup migrates old Google URLs, resets sync timestamps, and preserves custom URLs and pending edits');
+
     CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', passcode: '' });
     await CloudSync.pullCloudState();
     const tz = '123456782';

@@ -132,7 +132,7 @@ const Util = {
    סמלי השאלונים והמשקלים ניתנים לעריכה במגירת "כללי זכאות ומשקלים".
    ===================================================================== */
 /** כתובת ברירת המחדל של Web App בענן (נדרסת ע"י הגדרות ← סנכרון ענן) */
-const DEFAULT_CLOUD_URL = 'https://script.google.com/macros/s/AKfycbyyg7AthxMzMvFgVzAJn2tqh1_rRVVnP50rzcesieq_iFEPeTW1IJGFP7-7qLDk3ZSj/exec';
+const DEFAULT_CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxlDpyyPhmfIuewoTwyrkEZ6O_m2YGr8sQG3tzibipI5ssKPvJwDnyus5pz2GM9OWUeRw/exec';
 
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
 const RULES_VERSION = 3;

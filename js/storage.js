@@ -260,6 +260,10 @@ const CloudSync = {
   },
 
   init() {
+    const savedUrl = this._get('url').trim();
+    if (savedUrl !== Config.CLOUD_SYNC_URL && /^https?:\/\/script\.google\.com(?::\d+)?(?:[/?#]|$)/i.test(savedUrl)) {
+      this.saveSettings({ url: Config.CLOUD_SYNC_URL });
+    }
     ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
   }
 };
