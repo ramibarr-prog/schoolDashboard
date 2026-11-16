@@ -105,9 +105,9 @@
       #globalFilterBar #sadinTeacherSelect { max-width: 5rem; }
     }
     #globalFilterBar #sadinActions .chip, #globalFilterBar #sadinActions .btn { padding: .25rem .35rem; }
-    #groups-detail table.grid td { padding: .125rem .75rem; font-size: .75rem; line-height: 1rem; }
+    #groups-detail table.grid td, #groups-table table.grid td { padding: .125rem .75rem; font-size: .75rem; line-height: 1rem; }
     #groups-detail table.grid tr.room-divider td { padding: .125rem .75rem; }
-    #groups-detail table.grid thead th { padding: .3rem .75rem; }
+    #groups-detail table.grid thead th, #groups-table table.grid thead th { padding: .3rem .75rem; }
     #bagrut-table table.grid td, #sadin-table table.grid td { padding: .2rem .5rem; font-size: .75rem; line-height: 1rem; }
     #bagrut-table table.grid td.mx-focus { white-space: nowrap; }
     #sadin-table table.grid th, #bagrut-table table.grid th { padding: .35rem .5rem; }
@@ -319,13 +319,13 @@
     <!-- 2. סייר קבוצות (קריאה בלבד) -->
     <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
       <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
-      <div id="groups-kpis" class="hidden flex-wrap items-center gap-1.5 mb-2"></div>
+      <div id="groups-kpis" class="hidden grid-cols-2 lg:grid-cols-5 gap-2 mb-2"></div>
       <div id="groups-strip" class="hidden" aria-label="סינון חריגים למקצוע"></div>
       <div id="groups-explorer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0" aria-label="סייר קבוצות">
         <div id="groups-master" class="lg:col-span-4 lg:h-full lg:min-h-0 lg:overflow-y-auto overscroll-contain lg:pl-1 space-y-1.5" aria-label="רשימת קבוצות"></div>
         <div id="groups-detail" class="lg:col-span-8 min-w-0 lg:h-full lg:min-h-0" aria-live="polite"></div>
       </div>
-      <div id="groups-table" class="tbl-wrap hidden"></div>
+      <div id="groups-table" class="card overflow-hidden min-w-0 hidden"></div>
     </section>
 
     <!-- 3. מוניטור ציונים שוטפים -->

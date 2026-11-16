@@ -929,7 +929,7 @@ const App = {
     show('groups-explorer', explorer); show('gctl-explorer', explorer);
     show('groups-table', !explorer); show('gctl-anomalies', !explorer);
     show('groups-kpis', !explorer);
-    $('groups-kpis').classList.toggle('flex', !explorer);
+    $('groups-kpis').classList.toggle('grid', !explorer);
     if (!explorer) show('groups-strip', false);
     if (explorer) return this.renderGroupsExplorer();
 
@@ -937,10 +937,11 @@ const App = {
     const opt = (v, l, cur) => `<option value="${E(v)}" ${v === cur ? 'selected' : ''}>${E(l)}</option>`;
     const analysis = GroupAnalyzer.analyzeGroupAnomalies(list, st.subject);
     const c = analysis.counts;
-    const chip = (k, label, n) => `<button type="button" class="chip" data-act="anKind" data-kind="${k}" aria-pressed="${st.kind === k}">${label} (${n})</button>`;
+    const stat = (k, cls, label, n) => `<button type="button" class="gstat ${cls}" data-act="anKind" data-kind="${k}" aria-pressed="${st.kind === k}" title="${E(label)}">
+      <span class="text-xs font-bold text-slate-700 truncate">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100 whitespace-nowrap">${n}</span></button>`;
     setHtml('groups-kpis',
-      chip('all', 'הכל', analysis.traineeCount) + chip('none', 'חוסר', c.none) + chip('dup', 'כפילות', c.dup) +
-      chip('nomajor', 'ללא מגמה', c.nomajor) + chip('unmatched', 'לא במצבת', c.unmatched));
+      stat('all', 'gstat-ok', 'הכל', analysis.traineeCount) + stat('none', 'gstat-bad', 'חוסר', c.none) + stat('dup', 'gstat-violet', 'כפילות', c.dup) +
+      stat('nomajor', 'gstat-bad', 'ללא מגמה', c.nomajor) + stat('unmatched', 'gstat-amber', 'לא במצבת', c.unmatched));
     setHtml('groupsSubject', opt('all', 'כל מקצועות החובה + מגמה', st.subject) +
       GroupAnalyzer.coreSubjects().map(s => opt(s.id, s.name, st.subject)).join('') + opt('major', 'מגמה 5 יח"ל בלבד', st.subject));
     setHtml('groups-table', this.anomaliesTable(analysis, list));
@@ -1096,11 +1097,15 @@ const App = {
     const st = this.state.groups;
     const byTz = new Map(list.map(t => [t.tz, t]));
     const KIND = { none: ['חוסר', 'tier-4'], dup: ['כפילות', 'tier-3'], nomajor: ['ללא', 'tier-5'] };
+    const card = (table, count) => `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
+      <h3 class="text-lg font-bold">${st.kind === 'unmatched' ? '⚠️ רשומות שאינן במצבת' : '🚨 חריגי שיבוץ'}</h3>
+      <span class="badge bg-indigo-500 text-white border-indigo-300">${count} ${st.kind === 'unmatched' ? 'רשומות' : 'חניכים'}</span>
+      </header><div class="overflow-x-auto overscroll-contain">${table}</div>`;
 
     if (st.kind === 'unmatched') {
-      return `<table class="grid w-full">      <thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם בקובץ</th><th class="text-right">מופיעה ב</th></tr></thead><tbody>${
-              analysis.unmatched.map(u => `<tr><td class="tz-col text-right">${E(u.tz)}</td><td class="text-right">${E(u.name || '—')}</td><td class="text-right">${E(u.sources.join(', '))}</td></tr>`).join('') ||
-        '<tr><td colspan="3" class="text-center text-emerald-600 py-8">כל הת.ז בקובצי המשנה נמצאות במצבת 🎉</td></tr>'}</tbody></table>`;
+      return card(`<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם בקובץ</th><th class="text-right">מופיעה ב</th></tr></thead><tbody>${
+              analysis.unmatched.map(u => `<tr><td class="tz-col text-right">${E(u.tz)}</td><td class="text-right font-semibold text-slate-800">${E(u.name || '—')}</td><td class="text-right"><div class="flex flex-wrap gap-1">${u.sources.map(source => `<span class="badge fresh-slate whitespace-nowrap">${E(source)}</span>`).join(' ')}</div></td></tr>`).join('') ||
+        '<tr><td colspan="3" class="text-center text-emerald-800 py-8">כל הת.ז בקובצי המשנה נמצאות במצבת 🎉</td></tr>'}</tbody></table>`, analysis.unmatched.length);
     }
     /* שורה אחת לחניך: כל הממצאים שלו כתגיות בתא אחד */
     const byTrainee = new Map();
@@ -1112,14 +1117,14 @@ const App = {
       const t = byTz.get(tz);
       const badges = found.map(a => {
         const detail = a.groups.length ? ` (${a.groups.map(g => `[${g.groupId}] ${g.teacher || 'ללא מורה'}`).join(', ')})` : '';
-        return `<span class="badge ${KIND[a.kind][1]}" title="${E(a.subject + detail)}">${KIND[a.kind][0]}: ${E(a.subject)}</span>`;
+        return `<span class="badge ${KIND[a.kind][1]} whitespace-nowrap" title="${E(a.subject + detail)}">${KIND[a.kind][0]}: ${E(a.subject)}</span>`;
       }).join('');
-      return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${tz}"><td class="tz-col min-w-[95px] whitespace-nowrap text-right">${tz}</td><td class="text-right font-medium">${E(t.name)}</td>
+      return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${tz}"><td class="tz-col min-w-[95px] whitespace-nowrap text-right">${tz}</td><td class="text-right"><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openProfile" data-tz="${E(tz)}">${E(t.name)}</button></td>
         <td class="text-right">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td><td class="text-right"><div class="flex flex-wrap gap-1">${badges}</div></td></tr>`;
     }).join('');
-    return `<table class="grid w-full"><colgroup><col style="width:12%"><col style="width:20%"><col style="width:12%"><col style="width:56%"></colgroup>
+    return card(`<table class="grid w-full"><colgroup><col style="width:12%"><col style="width:20%"><col style="width:12%"><col style="width:56%"></colgroup>
       <thead><tr><th class="tz-col min-w-[95px] whitespace-nowrap text-right">ת.ז</th><th class="text-right">שם</th><th class="text-right">כיתה</th><th class="text-right">ממצאי שיבוץ</th></tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-emerald-600 py-8">לא נמצאו חריגות 🎉</td></tr>'}</tbody></table>`;
+      <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-emerald-800 py-8">לא נמצאו חריגות 🎉</td></tr>'}</tbody></table>`, byTrainee.size);
   },
 
   exportGroups() {
@@ -1151,6 +1156,7 @@ const App = {
   renderSadinPanel() {
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
+    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap';
     document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sview === st.view)));
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
@@ -1189,11 +1195,11 @@ const App = {
     else this.renderSadinSheet(rows, st.subject !== 'all' || st.teacher !== 'all');
   },
 
-  sadinScore(value, missed = false) {
+  sadinScore(value, missed = false, pill = false) {
     const text = value == null ? (missed ? '⚠️ חסר' : '—') : `${Util.fmt(value, 0)}${missed ? ' ⚠️' : ''}`;
     return missed || (value != null && value < 55)
-      ? `<span class="score-alert">${text}</span>`
-      : `<span class="${value == null ? 'text-slate-400' : 'text-slate-800 font-normal'}">${text}</span>`;
+      ? `<span class="${pill ? 'badge tier-4 whitespace-nowrap' : 'score-alert'}">${text}</span>`
+      : `<span class="${pill ? 'badge fresh-slate whitespace-nowrap' : value == null ? 'text-slate-400' : 'text-slate-800 font-normal'}">${text}</span>`;
   },
 
   sadinTip(subject) {
@@ -1245,19 +1251,22 @@ const App = {
           const text = ev && ev.score == null && ev.scoreRaw ? String(ev.scoreRaw) : '';
           exportRow[col.header] = val != null ? val : text || (missed ? 'חסר' : '');
           const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : '—')}`;
-          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : E(text || '—')}</td>`;
+          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed, true) : E(text || '—')}</td>`;
         }
         exportRow[col.header] = s.avg == null ? '' : +s.avg.toFixed(1);
-        return `<td><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td>`;
+        return `<td><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0, true)}</button></td>`;
       }).join('');
       out.push(exportRow);
       return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
-        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall)}</td>
-        <td class="whitespace-nowrap">${r.failing ? `<span class="badge tier-4">${r.failing}</span>` : !r.missed ? '<span class="text-emerald-700 font-medium">✓ תקין</span>' : ''}${r.missed ? ` <span class="badge tier-3">⚠️ ${r.missed} חסר</span>` : ''}</td>${cells}</tr>`;
+        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false, true)}</td>
+        <td class="whitespace-nowrap">${r.failing ? `<span class="badge tier-4">${r.failing}</span>` : !r.missed ? '<span class="badge gate-ok">✓ תקין</span>' : ''}${r.missed ? ` <span class="badge tier-3">⚠️ ${r.missed} חסר</span>` : ''}</td>${cells}</tr>`;
     });
     this._sadinExportRows = out;
-    setHtml('sadin-table', `<table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th>שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
-      <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table>`);
+    setHtml('sadin-table', `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
+      <h3 class="text-lg font-bold">📊 סדין ציונים שוטפים</h3>
+      <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${rows.length} חניכים</span><span class="badge bg-white/15 text-white border-white/30">${names.length} מקצועות</span></div>
+      </header><div class="overflow-x-auto overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th>שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
+      <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
   },
 
   renderSadinFlat(rows) {
