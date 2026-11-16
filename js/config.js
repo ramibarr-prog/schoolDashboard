@@ -460,6 +460,57 @@ const Config = {
    * דריסה שזהה למקור (או ריקה לגמרי) נמחקת. חניך שאינו בקובץ המצבת דורש שכבה וכיתה (ושם).
    */
   setRosterOverride(tz, patch) {
+    const c = this._composeOverride(tz, patch);
+    if (!c.ok) return c;
+    const { id, entry, empty } = c;
+    const previous = this.data.rosterOverrides[id], dismissed = this.data.rosterMismatchDismissed[id];
+    if (empty) delete this.data.rosterOverrides[id]; else this.data.rosterOverrides[id] = entry;
+    delete this.data.rosterMismatchDismissed[id];
+    this._invalidateRoster();
+    const res = this.save();
+    if (res.ok === false) {
+      if (previous) this.data.rosterOverrides[id] = previous; else delete this.data.rosterOverrides[id];
+      if (dismissed !== undefined) this.data.rosterMismatchDismissed[id] = dismissed;
+      this._invalidateRoster();
+      return res;
+    }
+    this.emit('roster-changed');
+    return { ok: true, removed: empty };
+  },
+
+  /**
+   * עדכון קבוצתי של דריסות בשמירה אחת: items = [{ tz, patch }]. פריט לא תקין מדולג ונספר ב-failed (עם הודעת השגיאה הראשונה),
+   * וכישלון שמירה מחזיר את כל הדריסות למצבן הקודם.
+   */
+  setRosterOverridesBatch(items) {
+    const prevOv = this.data.rosterOverrides, prevDismissed = this.data.rosterMismatchDismissed;
+    this.data.rosterOverrides = { ...prevOv };
+    this.data.rosterMismatchDismissed = { ...prevDismissed };
+    let applied = 0, failed = 0, error = '';
+    items.forEach(({ tz, patch }) => {
+      const c = this._composeOverride(tz, patch);
+      if (!c.ok) { failed++; error = error || c.error; return; }
+      if (c.empty) delete this.data.rosterOverrides[c.id]; else this.data.rosterOverrides[c.id] = c.entry;
+      delete this.data.rosterMismatchDismissed[c.id];
+      applied++;
+      this._invalidateRoster();
+    });
+    if (!applied) {
+      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed;
+      this._invalidateRoster();
+      return { ok: true, applied, failed, error };
+    }
+    const res = this.save();
+    if (res.ok === false) {
+      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed;
+      this._invalidateRoster();
+      return res;
+    }
+    this.emit('roster-changed');
+    return { ok: true, applied, failed, error };
+  },
+
+  _composeOverride(tz, patch) {
     const id = Util.normId(tz);
     if (!id) return { ok: false, error: 'ת.ז לא תקינה' };
     const rawRow = (this.getRosterEntry() ? this.getRosterEntry().data : []).find(r => r.tz === id && !Util.isJunior(r.grade)) || null;
@@ -483,19 +534,7 @@ const Config = {
     const entry = { tz: id, grade, homeroom, track, hidden: !!next.hidden, note: String(next.note || '').trim().slice(0, 200), updatedAt: Date.now() };
     if (!rawRow) entry.name = String(next.name || '').trim();
     const empty = !entry.grade && !entry.homeroom && !entry.track && !entry.hidden && !entry.note;
-    const previous = this.data.rosterOverrides[id], dismissed = this.data.rosterMismatchDismissed[id];
-    if (empty) delete this.data.rosterOverrides[id]; else this.data.rosterOverrides[id] = entry;
-    delete this.data.rosterMismatchDismissed[id];
-    this._invalidateRoster();
-    const res = this.save();
-    if (res.ok === false) {
-      if (previous) this.data.rosterOverrides[id] = previous; else delete this.data.rosterOverrides[id];
-      if (dismissed !== undefined) this.data.rosterMismatchDismissed[id] = dismissed;
-      this._invalidateRoster();
-      return res;
-    }
-    this.emit('roster-changed');
-    return { ok: true, removed: empty };
+    return { ok: true, id, entry, empty };
   },
   removeRosterOverride(tz) {
     const id = Util.normId(tz);

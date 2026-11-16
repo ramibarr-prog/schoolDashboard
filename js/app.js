@@ -1611,7 +1611,7 @@ const App = {
       const classes = [...byClass.keys()].sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || natural(a, b));
       const rep = this.rosterReport;
       html = `<div class="font-medium mb-1">${roster.length} חניכים פעילים · ${classes.length} כיתות אם</div>
-        <div class="flex flex-wrap gap-1 mb-2">${classes.map(c => `<span class="badge fresh-slate border">${E(Config.classLabel(c))}: ${byClass.get(c)}</span>`).join('')}</div>
+        <div class="flex flex-wrap gap-1 mb-2">${classes.map(c => `<button type="button" class="class-pill" data-act="classRoster" data-class="${E(c)}" title="הצגת חניכי הכיתה ושיוך מהיר" aria-haspopup="dialog">${E(Config.classLabel(c))}: ${byClass.get(c)}</button>`).join('')}</div>
         ${rep ? `<div class="text-xs text-slate-500">נקלטו ${rep.sheets.length} גיליונות${rep.skipped ? ` · ${rep.skipped} שורות דולגו` : ''}${rep.duplicates ? ` · ${rep.duplicates} כפילויות אוחדו` : ''}${rep.ignored ? ` · ${rep.ignored} חניכי ז'-ט' לא נקלטו` : ''}</div>
           ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">⚠️ ${E(w)}</div>`).join('')}` : ''}
         <div class="flex gap-2 mt-3"><button type="button" class="btn btn-danger btn-sm" data-act="deleteRoster">מחיקת המצבת</button></div>`;
@@ -1701,9 +1701,14 @@ const App = {
 
     const mm = Config.detectRosterMismatches();
     const srcName = { groups: 'קבוצות', bagrut: 'בגרות' };
+    const adoptable = mm.filter(m => m.adopt), unnamed = adoptable.filter(m => this.isUnnamedClass(m.homeroom));
     setHtml('ovConflicts', mm.length ? `
-      <div class="rounded-lg border border-amber-300 bg-amber-50 p-3">
+      <div class="rounded-lg bg-amber-50 p-3">
         <div class="font-medium text-amber-800 mb-2">⚠️ סתירות שיוך בין המצבת לקובצי המשוב (${mm.length})</div>
+        <div class="flex flex-wrap items-center gap-2 mb-3" role="group" aria-label="פעולות קבוצתיות לסתירות שיוך">
+          <button type="button" class="btn btn-primary btn-sm" data-act="ovAdoptAll" data-scope="unnamed" ${unnamed.length ? '' : 'disabled'}>העבר את כל החניכים מקבוצות ללא שם לכיתה הנכונה (${unnamed.length})</button>
+          <button type="button" class="btn btn-sm bg-white text-slate-800 hover:bg-indigo-100" data-act="ovAdoptAll" data-scope="all" ${adoptable.length ? '' : 'disabled'}>אמץ שיוך משו"ב לכל הסתירות (${adoptable.length})</button>
+        </div>
         <div class="tbl-wrap"><table class="grid w-full bg-white">
           <thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">חניך</th><th class="text-right">במצבת</th><th class="text-right">במשו"ב</th><th class="text-right">פעולה</th></tr></thead>
           <tbody>${mm.slice(0, 300).map(m => `<tr>
@@ -1766,6 +1771,47 @@ const App = {
     setVal('ovTrack', c.rec ? ((o && o.track) || Config.defaultTrack(c.rec.rawTrack || c.rec.track, c.rec.homeroom)) : '');
     setChecked('ovHidden', o && o.hidden);
     setVal('ovNote', (o && o.note) || '');
+  },
+
+  /** כיתה ללא שם: אין לה שם במצבת ואין לה כינוי */
+  isUnnamedClass(classKey) { return !classKey || !(Config.rosterClassNames()[classKey] || Config.nickname(classKey)); },
+
+  /** חלון שיוך מהיר: חניכי כיתת אם אחת, עם שינוי כיתה / מסלול מיידי */
+  openClassRoster(classKey) {
+    const members = Config.getRoster().filter(r => r.homeroom === classKey)
+      .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`, 'he'));
+    const prev = document.querySelector('#modal-root [data-act="modalBackdrop"]');
+    const scroll = prev ? prev.scrollTop : 0;
+    if (!members.length) return this.closeModal();
+    const classes = [...new Set(Config.getRoster().map(r => r.homeroom))].sort(natural);
+    const homeOptions = current => Util.GRADE_KEYS.map(g => {
+      const rooms = classes.filter(c => Util.parseClass('', c).gradeKey === g);
+      return rooms.length ? `<optgroup label="שכבה ${E(Util.gl(g))}">${rooms.map(c => `<option value="${E(c)}" ${c === current ? 'selected' : ''}>${E(Config.classLabel(c))}</option>`).join('')}</optgroup>` : '';
+    }).join('') + '<option value="other">אחר (הקלד כיתה חדשה)...</option>';
+    const rows = members.map(r => {
+      const name = `${r.firstName} ${r.lastName}`.trim() || r.tz;
+      const track = Config.trackFor(r.tz, r.track, r.homeroom);
+      return `<tr><td class="tz-col">${E(r.tz)}</td><td class="font-medium">${E(name)}${this.overrideBadge(r.tz)}</td>
+        <td><select class="flat-sel" data-chg="classTrack" data-tz="${E(r.tz)}" data-class="${E(classKey)}" aria-label="${E(`מסלול של ${name}`)}">${Config.TRACKS.map(t => `<option value="${E(t)}" ${t === track ? 'selected' : ''}>${E(t)}</option>`).join('')}</select></td>
+        <td><select class="flat-sel" data-chg="classMove" data-tz="${E(r.tz)}" data-class="${E(classKey)}" aria-label="${E(`כיתת אם של ${name}`)}">${homeOptions(r.homeroom)}</select></td></tr>`;
+    }).join('');
+    this.openModal(`
+      <div class="flex items-center justify-between gap-2 mb-1"><h3 class="text-lg font-semibold">כיתה <bdi dir="rtl">${E(Config.classLabel(classKey))}</bdi> · ${members.length} חניכים</h3>
+        <button type="button" class="btn btn-sm bg-slate-100 text-slate-800 hover:bg-indigo-100" data-act="closeModal">סגירה</button></div>
+      <p class="text-xs text-slate-500 mb-3">שינוי כיתה או מסלול נשמר מיד כדריסה (קובץ המצבת אינו משתנה)       וניתן לביטול בטבלת הדריסות.</p>
+      <div class="max-h-[60vh] overflow-auto rounded-lg"><table class="grid flat-tbl w-full"><thead><tr><th class="tz-col">ת.ז</th><th>שם חניך</th><th>מסלול</th><th>כיתת אם</th></tr></thead><tbody>${rows}</tbody></table></div>`, true);
+    const dialog = document.querySelector('#modal-root [role="dialog"]');
+    if (dialog) dialog.classList.add('flat-modal');
+    const backdrop = document.querySelector('#modal-root [data-act="modalBackdrop"]');
+    if (backdrop) backdrop.scrollTop = scroll;
+  },
+
+  /** שמירת שינוי שיוך מהחלון המהיר ורענון הרשימה (חניך שעבר כיתה נעלם מהרשימה) */
+  classRosterApply(tz, classKey, patch, message) {
+    const res = Config.setRosterOverride(tz, patch);
+    if (res.ok === false) this.toast(res.error || 'שמירת השינוי נכשלה', 'error');
+    else { this.toast(message, 'ok'); this.afterDataChange(); }
+    this.openClassRoster(classKey);
   },
 
   async loadMock() {
@@ -2337,6 +2383,18 @@ const App = {
       this.toast(`${m.name}: אומץ השיוך ${m.adopt.homeroom} לפי המשו"ב`, 'ok');
       this.afterDataChange();
     },
+    ovAdoptAll(el) {
+      const unnamedOnly = el.dataset.scope === 'unnamed';
+      const items = Config.detectRosterMismatches().filter(m => m.adopt && (!unnamedOnly || this.isUnnamedClass(m.homeroom)));
+      if (!items.length) return;
+      const what = unnamedOnly ? 'מקבוצות ללא שם לכיתה שלפי המשו"ב' : 'לשיוך לפי המשו"ב';
+      if (!confirm(`להעביר ${items.length} חניכים ${what}? הפעולה נשמרת כדריסות וניתנת לביטול.`)) return;
+      const res = Config.setRosterOverridesBatch(items.map(m => ({ tz: m.tz, patch: { grade: m.adopt.grade, homeroom: m.adopt.homeroom } })));
+      if (res.ok === false) return this.toast(res.error || 'ההעברה הקבוצתית נכשלה', 'error');
+      this.toast(res.failed ? `הועברו ${res.applied} חניכים; ${res.failed} דולגו (${res.error})` : `הועברו ${res.applied} חניכים לכיתה הנכונה`, res.failed ? 'warn' : 'ok');
+      this.afterDataChange();
+    },
+    classRoster(el) { this.openClassRoster(el.dataset.class); },
     ovKeep(el) {
       const m = Config.detectRosterMismatches().find(x => x.tz === el.dataset.tz);
       if (!m) return;
@@ -2553,6 +2611,16 @@ const App = {
       if (res.ok === false) { this.afterClassSettingChange(); return this.toast(res.error || 'שמירת ההגדרה נכשלה', 'error'); }
       this.afterClassSettingChange();
       this.toast(el.checked ? `כיתה ${el.dataset.class}: חניכיה במסלול חנ"מ` : `כיתה ${el.dataset.class}: הוסרה ממסלול חנ"מ`, 'ok');
+    },
+    classMove(el) {
+      let home = el.value;
+      if (home === 'other') home = (prompt('הקלידו כיתת אם חדשה (למשל יא3)') || '').trim();
+      if (!home) return this.openClassRoster(el.dataset.class);
+      const patch = { grade: Util.parseClass('', home).gradeKey, homeroom: home };
+      this.classRosterApply(el.dataset.tz, el.dataset.class, patch, `החניך הועבר לכיתה ${home}`);
+    },
+    classTrack(el) {
+      this.classRosterApply(el.dataset.tz, el.dataset.class, { track: el.value }, `המסלול עודכן: ${el.value}`);
     }
   }
 };

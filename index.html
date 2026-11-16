@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
@@ -66,6 +66,18 @@
     .fresh-red { background: #ffe4e6; color: #881337; border-color: #fb7185; }
     .fresh-slate { background: #f1f5f9; color: #1e293b; border-color: #94a3b8; }
     .badge.bg-sky-100 { border-color: #38bdf8; color: #0c4a6e; }
+    /* כפתורי כיתה וחלון שיוך מהיר: שטוחים וללא מסגרות */
+    .class-pill { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .7rem; border: 0; border-radius: 999px; background: #f1f5f9; color: #1e293b; font-size: .75rem; font-weight: 700; cursor: pointer; transition: background .15s; }
+    .class-pill:hover { background: #e0e7ff; color: #3730a3; }
+    .class-pill:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+    .flat-modal { border: 0; }
+    .flat-sel { border: 0; border-radius: .5rem; background: #f1f5f9; color: #0f172a; padding: .3rem .5rem; font-size: .8rem; font-weight: 600; min-width: 0; cursor: pointer; }
+    .flat-sel:hover { background: #e0e7ff; }
+    .flat-sel:focus-visible { outline: 2px solid #4f46e5; outline-offset: 1px; }
+    .flat-tbl td, .flat-tbl th { padding: .4rem .6rem; text-align: right; }
+    table.grid.flat-tbl thead th { background: #fff; color: #475569; font-size: .75rem; font-weight: 600; border-bottom: 0; }
+    table.grid.flat-tbl td { border-bottom: 0; }
+    .flat-tbl tbody tr:nth-child(odd) { background: #f8fafc; }
     .panel[hidden] { display: none; }
     /* גיליון שליטה ויזואלי (לשונית בגרות) */
     table.mx { font-size: .8rem; }
@@ -500,12 +512,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261116_2"></script>
-  <script src="js/storage.js?v=20261116_2"></script>
-  <script src="js/mockData.js?v=20261116_2"></script>
-  <script src="js/parser.js?v=20261116_2"></script>
-  <script src="js/bagrutEngine.js?v=20261116_2"></script>
-  <script src="js/groupAnalyzer.js?v=20261116_2"></script>
-  <script src="js/app.js?v=20261116_2"></script>
+  <script src="js/config.js?v=20261116_4"></script>
+  <script src="js/storage.js?v=20261116_4"></script>
+  <script src="js/mockData.js?v=20261116_4"></script>
+  <script src="js/parser.js?v=20261116_4"></script>
+  <script src="js/bagrutEngine.js?v=20261116_4"></script>
+  <script src="js/groupAnalyzer.js?v=20261116_4"></script>
+  <script src="js/app.js?v=20261116_4"></script>
 </body>
 </html>
