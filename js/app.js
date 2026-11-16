@@ -1199,14 +1199,11 @@ const App = {
     else this.renderSadinSheet(rows, st.subject !== 'all' || st.teacher !== 'all');
   },
 
-  /** flat: ציון כטקסט שטוח בלבד (ירוק עובר / אדום נכשל או חסר), בלי רקע, מסגרת או ריפוד */
-  sadinScore(value, missed = false, flat = false) {
+  /** ציון כטקסט שטוח בשורה אחת, בלי רקע או מסגרת: אדום כהה לנכשל/חסר/מסומן, אפור-כהה לעובר */
+  sadinScore(value, missed = false) {
     const text = value == null ? (missed ? '⚠️ חסר' : '—') : `${Util.fmt(value, 0)}${missed ? ' ⚠️' : ''}`;
     const alert = missed || (value != null && value < 55);
-    if (flat) return `<span class="${alert ? 'font-medium text-rose-700' : value == null ? 'text-slate-400' : 'font-normal text-emerald-700'}">${text}</span>`;
-    return alert
-      ? `<span class="score-alert">${text}</span>`
-      : `<span class="${value == null ? 'text-slate-400' : 'text-slate-800 font-normal'}">${text}</span>`;
+    return `<span class="sadin-score ${alert ? 'is-bad' : value == null ? 'is-empty' : ''}">${text}</span>`;
   },
 
   sadinTip(subject) {
@@ -1258,21 +1255,18 @@ const App = {
           const text = ev && ev.score == null && ev.scoreRaw ? String(ev.scoreRaw) : '';
           exportRow[col.header] = val != null ? val : text || (missed ? 'חסר' : '');
           const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : '—')}`;
-          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed, true) : E(text || '—')}</td>`;
+          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : E(text || '—')}</td>`;
         }
         exportRow[col.header] = s.avg == null ? '' : +s.avg.toFixed(1);
-        return `<td><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0, true)}</button></td>`;
+        return `<td><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td>`;
       }).join('');
       out.push(exportRow);
       return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
-        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false, true)}</td>
-        <td class="whitespace-nowrap">${[r.failing ? `<span class="font-medium text-rose-700">${r.failing}</span>` : !r.missed ? '<span class="font-medium text-emerald-700">✓ תקין</span>' : '', r.missed ? `<span class="text-xs font-medium text-rose-700">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
+        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
+        <td class="whitespace-nowrap">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
     });
     this._sadinExportRows = out;
-    setHtml('sadin-table', `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
-      <h3 class="text-lg font-bold">📊 סדין ציונים שוטפים</h3>
-      <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${rows.length} חניכים</span><span class="badge bg-white/15 text-white border-white/30">${names.length} מקצועות</span></div>
-      </header><div class="overflow-x-auto overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th>שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
+    setHtml('sadin-table', `<div class="overflow-x-auto overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th>שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
   },
 

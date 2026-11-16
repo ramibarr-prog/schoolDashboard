@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>לוח בקרה פדגוגי – בגרות ושיבוצים</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -82,6 +83,12 @@
     #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(15, 23, 42, .3); text-align: right; pointer-events: none; }
     #mxPop .h { font-weight: 700; color: #7dd3fc; margin-bottom: .15rem; }
     #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(15,23,42,.3); pointer-events: none; white-space: pre-line; }
+    .sadin-score { display: inline; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 400; color: #1e293b; white-space: nowrap; }
+    .sadin-score.is-bad { font-weight: 500; color: #b91c1c; }
+    .sadin-score.is-empty { color: #94a3b8; }
+    .sadin-ok { color: #15803d; font-weight: 500; white-space: nowrap; }
+    .sadin-bad { color: #b91c1c; font-weight: 500; white-space: nowrap; }
+    table.sadin-sheet th, table.sadin-sheet td, table.sadin-sheet th span, table.sadin-sheet td span, table.sadin-sheet td button { white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td { text-align: center; }
     table.sadin-sheet th:first-child, table.sadin-sheet tbody tr:not(.room-divider) td:first-child { position: sticky; right: 0; z-index: 2; background: #fff; text-align: right; min-width: 10rem; }
     table.sadin-sheet thead th:first-child { background: #1e293b; z-index: 4; }
@@ -493,12 +500,12 @@
     })();
   </script>
 
-  <script src="js/config.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/mockData.js"></script>
-  <script src="js/parser.js"></script>
-  <script src="js/bagrutEngine.js"></script>
-  <script src="js/groupAnalyzer.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/config.js?v=20261116_2"></script>
+  <script src="js/storage.js?v=20261116_2"></script>
+  <script src="js/mockData.js?v=20261116_2"></script>
+  <script src="js/parser.js?v=20261116_2"></script>
+  <script src="js/bagrutEngine.js?v=20261116_2"></script>
+  <script src="js/groupAnalyzer.js?v=20261116_2"></script>
+  <script src="js/app.js?v=20261116_2"></script>
 </body>
 </html>
