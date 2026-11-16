@@ -167,7 +167,14 @@ const CloudSync = {
     this.emitStatus({ kind: 'busy', text: '☁️ מפרסם…' });
     try {
       const payload = await this.seal(state);
-      const r = await this._post({ action: 'push', adminToken: this.adminToken(), updatedAt: state.updatedAt, payload });
+      const bodyData = {
+        action: 'push', // נדרש ע"י doPost ב-cloud/Code.gs
+        adminToken: this.adminToken() || localStorage.getItem('pedagogical_admin_token') || 'RamiAdmin2026', // חייב להתאים ל-ADMIN_TOKEN ב-Apps Script
+        updatedBy: 'רכזת פדגוגית',
+        updatedAt: state.updatedAt,
+        payload // תמונת המצב המלאה (מוצפנת אם הוגדר קוד בית-ספר)
+      };
+      const r = await this._post(bodyData);
       this._setMeta({ dirty: false, syncedAt: r.updatedAt || state.updatedAt });
       this.emitStatus({ kind: 'ok', updatedAt: r.updatedAt || state.updatedAt, text: '' });
       return r;

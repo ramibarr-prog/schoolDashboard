@@ -131,6 +131,9 @@ const Util = {
    שערים: 1 – מקצועות ליבה · 2 – מגמה 5 יח"ל · 3 – יחידות פנימיות.
    סמלי השאלונים והמשקלים ניתנים לעריכה במגירת "כללי זכאות ומשקלים".
    ===================================================================== */
+/** כתובת ברירת המחדל של Web App בענן (נדרסת ע"י הגדרות ← סנכרון ענן) */
+const DEFAULT_CLOUD_URL = 'https://script.google.com/macros/s/AKfycbyyg7AthxMzMvFgVzAJn2tqh1_rRVVnP50rzcesieq_iFEPeTW1IJGFP7-7qLDk3ZSj/exec';
+
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
 const RULES_VERSION = 3;
 
@@ -246,7 +249,7 @@ const Config = {
   FRESH_DAYS: 3,
   STALE_DAYS: 10,
   /* כתובת Web App של Google Apps Script (cloud/Code.gs). אפשר להדביק כאן, או בהגדרות ← סנכרון ענן (נשמר בדפדפן ודורס ערך זה) */
-  CLOUD_SYNC_URL: '',
+  CLOUD_SYNC_URL: DEFAULT_CLOUD_URL,
   KEYS: {
     config: 'sd.config.v2',
     masterRoster: 'sd.masterRoster.v2',
