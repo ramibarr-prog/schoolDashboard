@@ -1072,11 +1072,10 @@ const App = {
     });
     const row = m => {
       const t = m.t, count = Store.currentOf(t.tz).reduce((n, e) => n + e.events.length, 0);
-      const focused = st.strip === 'dup' && m.diag.some(d => d.kind === 'dup') || st.strip === 'stray' && m.diag.some(d => d.kind === 'grade' || d.kind === 'outlier');
-      const tint = hit(t) ? 'bg-yellow-100' : focused ? 'bg-amber-100' : m.diag.length ? 'bg-rose-50' : '';
-      const badges = m.diag.map(d => `<span class="badge ${d.kind === 'outlier' ? 'tier-3' : 'tier-5'}" title="${E(d.title)}">${E(d.text)}</span>`).join(' ');
+      const tint = hit(t) ? 'bg-yellow-100' : '';
+      const notes = m.diag.map(d => this.flatNote(d.kind === 'outlier' ? 'warn' : 'severe', d.text, d.title)).join('');
       return `<tr class="${tint}"><td class="tz-col">${E(t.tz)}</td><td><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openBoardProfile" data-tz="${E(t.tz)}" title="${E(`סדין: ${count} אירועים`)}">${E(t.name)}</button></td>
-        <td><bdi dir="rtl">${E(Config.classLabel(t.classKey))}</bdi>${this.overrideBadge(t.tz)}</td><td><div class="flex flex-wrap gap-1">${badges || (g ? '<span class="text-emerald-800">✓ תקין</span>' : 'ללא שיבוץ')}</div></td></tr>`;
+        <td><bdi dir="rtl">${E(Config.classLabel(t.classKey))}</bdi>${this.overrideBadge(t.tz)}</td><td>${notes || (g ? '<span class="text-emerald-800">✓ תקין</span>' : 'ללא שיבוץ')}</td></tr>`;
     };
     const divider = text => `<tr class="room-divider"><td colspan="4">${text}</td></tr>`;
     const body = (anomalies.length ? divider(`🚨 חריגים לבדיקה (${anomalies.length})`) + anomalies.map(row).join('') : '') +
@@ -1093,10 +1092,15 @@ const App = {
       <tbody>${body || '<tr><td colspan="4" class="text-center text-slate-700 py-6">אין חניכים להצגה</td></tr>'}</tbody></table></div></article>`);
   },
 
+  /** ממצא שטוח: טקסט בלבד בלי רקע, מסגרת או ריפוד; חמור בבורדו, בינוני בענבר. כל ממצא בשורה משלו */
+  flatNote(level, text, title = '') {
+    return `<span class="block text-xs font-medium ${level === 'severe' ? 'text-rose-900' : 'text-amber-800'}"${title ? ` title="${E(title)}"` : ''}>${E(text)}</span>`;
+  },
+
   anomaliesTable(analysis, list) {
     const st = this.state.groups;
     const byTz = new Map(list.map(t => [t.tz, t]));
-    const KIND = { none: ['חוסר', 'tier-4'], dup: ['כפילות', 'tier-3'], nomajor: ['ללא', 'tier-5'] };
+    const KIND = { none: ['חוסר', 'severe'], dup: ['כפילות', 'severe'], nomajor: ['ללא', 'warn'] };
     const card = (table, count) => `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
       <h3 class="text-lg font-bold">${st.kind === 'unmatched' ? '⚠️ רשומות שאינן במצבת' : '🚨 חריגי שיבוץ'}</h3>
       <span class="badge bg-indigo-500 text-white border-indigo-300">${count} ${st.kind === 'unmatched' ? 'רשומות' : 'חניכים'}</span>
@@ -1104,7 +1108,7 @@ const App = {
 
     if (st.kind === 'unmatched') {
       return card(`<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם בקובץ</th><th class="text-right">מופיעה ב</th></tr></thead><tbody>${
-              analysis.unmatched.map(u => `<tr><td class="tz-col text-right">${E(u.tz)}</td><td class="text-right font-semibold text-slate-800">${E(u.name || '—')}</td><td class="text-right"><div class="flex flex-wrap gap-1">${u.sources.map(source => `<span class="badge fresh-slate whitespace-nowrap">${E(source)}</span>`).join(' ')}</div></td></tr>`).join('') ||
+              analysis.unmatched.map(u => `<tr><td class="tz-col text-right">${E(u.tz)}</td><td class="text-right font-semibold text-slate-800">${E(u.name || '—')}</td><td class="text-right text-slate-700">${E(u.sources.join(' • '))}</td></tr>`).join('') ||
         '<tr><td colspan="3" class="text-center text-emerald-800 py-8">כל הת.ז בקובצי המשנה נמצאות במצבת 🎉</td></tr>'}</tbody></table>`, analysis.unmatched.length);
     }
     /* שורה אחת לחניך: כל הממצאים שלו כתגיות בתא אחד */
@@ -1117,10 +1121,10 @@ const App = {
       const t = byTz.get(tz);
       const badges = found.map(a => {
         const detail = a.groups.length ? ` (${a.groups.map(g => `[${g.groupId}] ${g.teacher || 'ללא מורה'}`).join(', ')})` : '';
-        return `<span class="badge ${KIND[a.kind][1]} whitespace-nowrap" title="${E(a.subject + detail)}">${KIND[a.kind][0]}: ${E(a.subject)}</span>`;
+        return this.flatNote(KIND[a.kind][1], `${KIND[a.kind][0]}: ${a.subject} ⚠️`, a.subject + detail);
       }).join('');
       return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${tz}"><td class="tz-col min-w-[95px] whitespace-nowrap text-right">${tz}</td><td class="text-right"><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openProfile" data-tz="${E(tz)}">${E(t.name)}</button></td>
-        <td class="text-right">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td><td class="text-right"><div class="flex flex-wrap gap-1">${badges}</div></td></tr>`;
+        <td class="text-right">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td><td class="text-right">${badges}</td></tr>`;
     }).join('');
     return card(`<table class="grid w-full"><colgroup><col style="width:12%"><col style="width:20%"><col style="width:12%"><col style="width:56%"></colgroup>
       <thead><tr><th class="tz-col min-w-[95px] whitespace-nowrap text-right">ת.ז</th><th class="text-right">שם</th><th class="text-right">כיתה</th><th class="text-right">ממצאי שיבוץ</th></tr></thead>
@@ -1195,11 +1199,14 @@ const App = {
     else this.renderSadinSheet(rows, st.subject !== 'all' || st.teacher !== 'all');
   },
 
-  sadinScore(value, missed = false, pill = false) {
+  /** flat: ציון כטקסט שטוח בלבד (ירוק עובר / אדום נכשל או חסר), בלי רקע, מסגרת או ריפוד */
+  sadinScore(value, missed = false, flat = false) {
     const text = value == null ? (missed ? '⚠️ חסר' : '—') : `${Util.fmt(value, 0)}${missed ? ' ⚠️' : ''}`;
-    return missed || (value != null && value < 55)
-      ? `<span class="${pill ? 'badge tier-4 whitespace-nowrap' : 'score-alert'}">${text}</span>`
-      : `<span class="${pill ? 'badge fresh-slate whitespace-nowrap' : value == null ? 'text-slate-400' : 'text-slate-800 font-normal'}">${text}</span>`;
+    const alert = missed || (value != null && value < 55);
+    if (flat) return `<span class="${alert ? 'font-medium text-rose-700' : value == null ? 'text-slate-400' : 'font-normal text-emerald-700'}">${text}</span>`;
+    return alert
+      ? `<span class="score-alert">${text}</span>`
+      : `<span class="${value == null ? 'text-slate-400' : 'text-slate-800 font-normal'}">${text}</span>`;
   },
 
   sadinTip(subject) {
@@ -1259,7 +1266,7 @@ const App = {
       out.push(exportRow);
       return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false, true)}</td>
-        <td class="whitespace-nowrap">${r.failing ? `<span class="badge tier-4">${r.failing}</span>` : !r.missed ? '<span class="badge gate-ok">✓ תקין</span>' : ''}${r.missed ? ` <span class="badge tier-3">⚠️ ${r.missed} חסר</span>` : ''}</td>${cells}</tr>`;
+        <td class="whitespace-nowrap">${[r.failing ? `<span class="font-medium text-rose-700">${r.failing}</span>` : !r.missed ? '<span class="font-medium text-emerald-700">✓ תקין</span>' : '', r.missed ? `<span class="text-xs font-medium text-rose-700">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
     });
     this._sadinExportRows = out;
     setHtml('sadin-table', `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
