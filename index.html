@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>לוח בקרה פדגוגי – בגרות ושיבוצים</title>
+  <link rel="icon" href="app.ico" type="image/x-icon">
+  <link rel="apple-touch-icon" href="school_logo.png">
+  <script>
+    /* סמל גיבוי (נבנה בקוד) כשקובץ school_logo.png חסר, כדי שלא יוצג אייקון תמונה שבור */
+    window.brandEmblem = function (color, size) {
+      var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      s.setAttribute('viewBox', '0 0 64 64'); s.setAttribute('width', size); s.setAttribute('height', size);
+      s.setAttribute('role', 'img'); s.setAttribute('aria-label', 'תיכון אתגרי העתיד'); s.setAttribute('class', 'brand-logo');
+      s.innerHTML = '<circle cx="32" cy="32" r="29" fill="none" stroke="' + color + '" stroke-width="3"/>' +
+        '<path d="M32 49V30" fill="none" stroke="' + color + '" stroke-width="3" stroke-linecap="round"/>' +
+        '<path d="M32 34c-9 0-14-5-14-13 9 0 14 5 14 13z M32 28c0-8 5-13 14-13 0 8-5 13-14 13z" fill="' + color + '"/>';
+      return s;
+    };
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -14,14 +28,14 @@
     tailwind.config = { theme: { extend: {
       fontFamily: { sans: ['Rubik', 'sans-serif'] },
       colors: {
-        slate: { 50: '#FAF8F0', 100: '#E8F0E5', 200: '#D9E6D5', 300: '#CBD5E1', 400: '#7F9188', 500: '#5F7068', 600: '#4B5E56', 700: '#3F554C', 800: '#344E45', 900: '#344E45' },
-        indigo: { 50: '#E8F0E5', 100: '#E8F0E5', 300: '#A8C5A5', 400: '#A8C5A5', 500: '#668F78', 600: '#668F78', 700: '#344E45', 800: '#344E45', 900: '#2A4038' },
-        sky: { 100: '#E8F0E5', 400: '#A8C5A5', 600: '#668F78', 800: '#344E45' },
-        emerald: { 600: '#668F78', 700: '#344E45', 800: '#344E45' },
-        rose: { 400: '#B85D3B', 600: '#B85D3B', 800: '#B85D3B', 900: '#B85D3B' },
-        red: { 600: '#B85D3B' },
-        amber: { 50: '#FBF3DF', 300: '#E7BD65', 400: '#E7BD65', 500: '#E7BD65', 600: '#B45309', 700: '#B45309', 800: '#B45309', 900: '#8A4309' },
-        violet: { 50: '#E8F0E5', 800: '#344E45', 950: '#344E45' },
+        slate: { 50: '#FAF7EF', 100: '#EBF2EC', 200: '#E6ECE6', 300: '#CBD5E1', 400: '#7F9188', 500: '#5F7068', 600: '#4B5E56', 700: '#3F574C', 800: '#355747', 900: '#355747' },
+        indigo: { 50: '#EBF2EC', 100: '#EBF2EC', 300: '#B4CBB6', 400: '#B4CBB6', 500: '#75977D', 600: '#75977D', 700: '#355747', 800: '#355747', 900: '#2B4639' },
+        sky: { 100: '#EBF2EC', 400: '#B4CBB6', 600: '#75977D', 800: '#355747' },
+        emerald: { 600: '#75977D', 700: '#355747', 800: '#355747' },
+        rose: { 400: '#C86432', 600: '#C86432', 800: '#C86432', 900: '#C86432' },
+        red: { 600: '#C86432' },
+        amber: { 50: '#FDF3E1', 300: '#E8B95F', 400: '#E8B95F', 500: '#E8B95F', 600: '#B45309', 700: '#B45309', 800: '#B45309', 900: '#8A4309' },
+        violet: { 50: '#EBF2EC', 800: '#355747', 950: '#355747' },
         yellow: { 100: '#F6E7BD' }
       }
     } } };
@@ -30,21 +44,21 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
-      --forest: #344E45; --sage: #668F78; --sage-soft: #A8C5A5; --sage-tint: #E8F0E5; --cream-bg: #FAF8F0;
-      --mustard: #E7BD65; --terracotta: #B85D3B; --amber-dark: #B45309; --ink: #2A3A34; --muted: #5F7068; --sidebar-w: 250px;
+      --forest: #355747; --sage: #75977D; --sage-soft: #B4CBB6; --sage-tint: #EBF2EC; --cream-bg: #FAF7EF; --card-bg: #FFFFFF; --card-border: #E6ECE6; --track: #ECEFE9;
+      --mustard: #E8B95F; --peach: #F3A16F; --peach-ink: #B4541E; --terracotta: #C86432; --amber-dark: #B45309; --ink: #2B3B33; --muted: #5F7068; --sidebar-w: 250px;
     }
     html, body { font-family: 'Rubik', sans-serif; }
     body { background: var(--cream-bg); color: var(--ink); }
-    .card { background: #fff; border: 1px solid var(--sage-tint); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(52, 78, 69, .12); }
+    .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(120, 92, 50, .14); }
     .btn { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .9rem; border-radius: .6rem; font-size: .875rem; font-weight: 500; transition: background .15s, box-shadow .15s; cursor: pointer; }
     .btn:focus-visible, .inp:focus-visible, .side-tab:focus-visible, .chip:focus-visible, .gstat:focus-visible, [data-act="gPick"]:focus-visible, .ov-card:focus-visible, .ov-bar:focus-visible, .ov-row:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
     .btn-primary { background: var(--sage); color: #fff; }
-    .btn-primary:hover:not(:disabled) { background: #547B65; }
+    .btn-primary:hover:not(:disabled) { background: #5F8268; }
     .btn-ghost { background: #fff; color: var(--forest); border: 1px solid var(--sage-soft); }
     .btn-ghost:hover:not(:disabled) { background: var(--sage-tint); }
-    .btn-danger { background: #fff; color: var(--terracotta); border: 1px solid rgba(184, 93, 59, .4); }
-    .btn-danger:hover:not(:disabled) { background: rgba(184, 93, 59, .08); }
+    .btn-danger { background: #fff; color: var(--terracotta); border: 1px solid rgba(200, 100, 50, .4); }
+    .btn-danger:hover:not(:disabled) { background: rgba(200, 100, 50, .08); }
     .btn-sm { padding: .25rem .6rem; font-size: .8rem; }
     .inp { border: 1px solid var(--sage-soft); border-radius: .55rem; padding: .35rem .6rem; background: #fff; color: var(--forest); font-size: .875rem; font-weight: 600; min-width: 0; }
     .inp:focus { border-color: var(--sage); }
@@ -53,17 +67,28 @@
     .chip[aria-pressed="true"], .chip[aria-selected="true"] { background: var(--sage); color: #fff; border-color: var(--sage); }
     /* סרגל צד ימני (RTL) */
     #sidebar { position: fixed; top: 0; right: 0; bottom: 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; overflow-y: auto; background: var(--forest); color: var(--cream-bg); transition: transform .2s ease; }
-    #sidebar .sync-badge { display: inline-flex; align-items: center; padding: .15rem .65rem; border-radius: 999px; font-size: .75rem; background: rgba(250, 248, 240, .14); color: var(--cream-bg); }
-    #sidebar .sync-badge:empty { display: none; }
-    .side-tab { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .65rem .9rem; border-radius: 10px; font-size: .9rem; font-weight: 500; color: rgba(250, 248, 240, .85); text-align: right; transition: background .15s; }
-    .side-tab:hover { background: rgba(250, 248, 240, .12); color: #fff; }
+    .side-tab { position: relative; display: flex; align-items: center; gap: .6rem; width: 100%; padding: .65rem .9rem; border-radius: 10px; font-size: .9rem; font-weight: 500; color: rgba(250, 247, 239, .88); text-align: right; transition: background .15s; }
+    .side-tab:hover { background: rgba(250, 247, 239, .12); color: #fff; }
     .side-tab[aria-selected="true"] { background: var(--cream-bg); color: var(--forest); font-weight: 700; }
+    .side-tab[aria-selected="true"]::before { content: ""; position: absolute; right: 0; top: 22%; bottom: 22%; width: 4px; border-radius: 4px 0 0 4px; background: var(--mustard); }
+    .side-tab[aria-selected="true"]::after { content: ""; margin-right: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--sage); }
+    .brand-logo { object-fit: contain; flex-shrink: 0; }
+    /* באנר מיתוג */
+    #brandBanner { position: relative; overflow: hidden; background: linear-gradient(135deg, #FAF7EF 0%, #EFF5EE 100%); border-bottom: 1px solid #E2EAE0; }
+    #brandBanner .brand-art { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    #brandBanner .brand-inner { position: relative; z-index: 1; }
+    .brand-name { color: var(--forest); font-size: 1.75rem; font-weight: 800; line-height: 1.1; }
+    .brand-slogan { color: #527361; font-size: 1.05rem; font-weight: 500; }
+    .brand-pill { display: inline-flex; align-items: center; padding: .2rem .75rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--sage-tint); color: var(--forest); border: 1px solid var(--card-border); }
+    .brand-pill:empty { display: none; }
+    #leafCorner { position: fixed; left: 0; bottom: 0; width: 220px; height: 220px; pointer-events: none; z-index: 5; opacity: .6; }
+    @media (max-width: 1023px) { #leafCorner { width: 120px; height: 120px; } }
     @media (max-width: 1023px) {
       #sidebar { transform: translateX(100%); }
       body.nav-open #sidebar { transform: none; box-shadow: -8px 0 24px rgba(0, 0, 0, .25); }
     }
     @media (min-width: 1024px) { #appShell { margin-right: var(--sidebar-w); } }
-    .tbl-wrap { overflow: auto; border-radius: 16px; border: 1px solid var(--sage-tint); background: #fff; }
+    .tbl-wrap { overflow: auto; border-radius: 16px; border: 1px solid var(--card-border); background: #fff; }
     table { width: 100%; border-collapse: collapse; font-size: .85rem; }
     table.grid { display: table; width: 100%; border-collapse: collapse; font-size: .85rem; }
     table th, table td { text-align: right; }
@@ -85,13 +110,13 @@
     .badge.hidden { display: none; }
     .tier-0, .tier-5, .gate-off { background: var(--cream-bg); color: var(--muted); border-color: var(--sage-tint); }
     .tier-1, .tier-2, .gate-ok { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
-    .tier-3, .gate-warn { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); }
-    .tier-4, .gate-bad { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
+    .tier-3, .gate-warn { background: rgba(243, 161, 111, .18); color: var(--peach-ink); border-color: var(--peach); }
+    .tier-4, .gate-bad { background: #fff; color: var(--terracotta); border-color: rgba(200, 100, 50, .45); }
     .badge-exc { background: var(--sage-tint); color: var(--forest); border-color: var(--sage); }
     .fresh-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .85rem; border-radius: .7rem; font-size: .85rem; border: 1px solid; }
     .fresh-emerald { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
-    .fresh-amber { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); }
-    .fresh-red { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
+    .fresh-amber { background: rgba(232, 185, 95, .2); color: var(--amber-dark); border-color: var(--mustard); }
+    .fresh-red { background: #fff; color: var(--terracotta); border-color: rgba(200, 100, 50, .45); }
     .fresh-slate { background: var(--cream-bg); color: var(--forest); border-color: var(--sage-soft); }
     .badge.bg-sky-100 { border-color: var(--sage-soft); color: var(--forest); }
     /* כפתורי כיתה וחלון שיוך מהיר: שטוחים וללא מסגרות */
@@ -119,17 +144,17 @@
     table.mx td.mx-focus, table.mx th.mx-focus { text-align: right; min-width: 13rem; }
     .pill-t0, .pill-t5 { background: var(--cream-bg); color: var(--muted); border-color: var(--sage-tint); }
     .pill-t1, .pill-t2 { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
-    .pill-t3 { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); } .pill-t4 { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
-    #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(52, 78, 69, .3); text-align: right; pointer-events: none; }
+    .pill-t3 { background: rgba(243, 161, 111, .18); color: var(--peach-ink); border-color: var(--peach); } .pill-t4 { background: #fff; color: var(--terracotta); border-color: rgba(200, 100, 50, .45); }
+    #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); text-align: right; pointer-events: none; }
     #mxPop .h { font-weight: 700; color: var(--mustard); margin-bottom: .15rem; }
-    #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(52, 78, 69, .3); pointer-events: none; white-space: pre-line; }
+    #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); pointer-events: none; white-space: pre-line; }
     .sadin-score { display: inline; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 400; color: var(--ink); white-space: nowrap; }
     .sadin-score.is-bad { font-weight: 600; color: var(--terracotta); }
     .sadin-score.is-empty { color: #CBD5E1; }
     table.sadin-sheet td.font-semibold .sadin-score, table.sadin-sheet td.font-bold .sadin-score { font-weight: 700; }
-    .sticky-scroll { overflow: auto; max-height: calc(100vh - 180px); min-height: 12rem; }
+    .sticky-scroll { overflow: auto; max-height: calc(100vh - 270px); min-height: 12rem; }
     @media (min-width: 1024px) { #groups-detail .sticky-scroll { max-height: none; } }
-    table.grid.sadin-flat td { border-bottom: 1px solid #F3F6F0; }
+    table.grid.sadin-flat td { border-bottom: 1px solid #F1F4EE; }
     table.grid.sadin-flat tr.student-end td { border-bottom: 2px solid var(--sage-tint); }
     table.grid tr.room-divider.anomaly-divider td { background: var(--sage-tint); color: var(--forest); border-block: 1px solid var(--sage-tint); }
     .sadin-ok { color: var(--forest); font-weight: 500; white-space: nowrap; }
@@ -141,9 +166,9 @@
     table.sadin-sheet tbody tr:not(.room-divider):hover td:first-child { background: var(--cream-bg); }
     .score-alert { display: inline-block; color: var(--terracotta); font-weight: 600; white-space: nowrap; }
     .seg { display: inline-flex; border: 1px solid var(--sage-soft); border-radius: 999px; overflow: hidden; background: #fff; }
-    .gstat { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border-radius: 10px; border: 1px solid var(--sage-tint); border-right-width: 4px; background: #fff; color: var(--forest); text-align: right; box-shadow: 0 2px 8px -3px rgba(52, 78, 69, .12); }
+    .gstat { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border-radius: 10px; border: 1px solid var(--card-border); border-right-width: 4px; background: #fff; color: var(--forest); text-align: right; box-shadow: 0 2px 8px -3px rgba(120, 92, 50, .14); }
     button.gstat { cursor: pointer; } button.gstat:hover { background: var(--cream-bg); }
-    button.gstat[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--sage), 0 2px 8px -3px rgba(52, 78, 69, .12); }
+    button.gstat[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--sage), 0 2px 8px -3px rgba(120, 92, 50, .14); }
     .gstat-ok { border-right-color: var(--sage); } .gstat-bad { border-right-color: var(--terracotta); }
     .gstat-violet { border-right-color: var(--sage-soft); } .gstat-amber { border-right-color: var(--mustard); }
     .panel .text-slate-400, .panel .text-slate-500, #modal-root .text-slate-400, #modal-root .text-slate-500 { color: var(--muted); }
@@ -184,14 +209,21 @@
     #toast-root { position: fixed; bottom: 1rem; right: 1rem; z-index: 70; display: flex; flex-direction: column; gap: .5rem; }
     ::-webkit-scrollbar { height: 10px; width: 10px; } ::-webkit-scrollbar-thumb { background: var(--sage-soft); border-radius: 6px; }
     /* חדר בקרה */
-    .ov-card { display: flex; flex-direction: column; gap: .35rem; width: 100%; padding: 1rem 1.15rem; text-align: right; background: #fff; border: 1px solid var(--sage-tint); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(52, 78, 69, .12); cursor: pointer; transition: box-shadow .15s, border-color .15s; }
-    .ov-card:hover { border-color: var(--sage-soft); box-shadow: 0 6px 16px -6px rgba(52, 78, 69, .25); }
+    .ov-card { position: relative; display: flex; flex-direction: column; gap: .35rem; width: 100%; padding: 1rem 1.15rem; text-align: right; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(120, 92, 50, .14); cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+    .ov-card:hover { border-color: var(--sage-soft); box-shadow: 0 6px 16px -6px rgba(120, 92, 50, .28); }
+    .ov-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+    .ov-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; }
+    .ov-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .ov-icon.i-attn { background: #FDF3E1; color: #B7791F; } .ov-icon.i-ok { background: #EBF2EC; color: var(--sage); } .ov-icon.i-bad { background: #FDECE3; color: var(--terracotta); }
     .ov-label { font-size: .85rem; font-weight: 600; color: var(--muted); }
     .ov-value { font-size: 2.4rem; font-weight: 800; line-height: 1; color: var(--forest); }
+    .ov-value.warm { color: #D97742; }
     .ov-sub { font-size: .75rem; color: var(--muted); line-height: 1.4; }
+    .ov-title { display: inline-block; position: relative; padding-bottom: .45rem; }
+    .ov-title::after { content: ""; position: absolute; right: 0; bottom: 0; width: 56px; height: 4px; border-radius: 4px; background: var(--mustard); }
     .ov-bar { display: grid; grid-template-columns: minmax(7rem, 11rem) 1fr; align-items: center; gap: .75rem; width: 100%; padding: .2rem .25rem; border-radius: 8px; text-align: right; }
     button.ov-bar:hover { background: var(--cream-bg); }
-    .ov-track { height: .7rem; border-radius: 999px; background: var(--sage-tint); overflow: hidden; }
+    .ov-track { height: .7rem; border-radius: 999px; background: var(--track); overflow: hidden; }
     .ov-fill { display: block; height: 100%; border-radius: 999px; background: var(--sage); }
     .ov-fill.mustard { background: var(--mustard); }
     .ov-bar[aria-pressed="true"] { background: var(--sage-tint); }
@@ -202,7 +234,7 @@
     .ov-row:hover td { background: var(--cream-bg); }
     .ov-pill { display: inline-flex; align-items: center; padding: .15rem .7rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--sage-tint); color: var(--forest); }
     .prof-status { font-size: .9rem; padding: .3rem 1rem; }
-    .prof-kpi { padding: .75rem 1rem; border-radius: 12px; background: var(--cream-bg); border: 1px solid var(--sage-tint); }
+    .prof-kpi { padding: .75rem 1rem; border-radius: 12px; background: var(--cream-bg); border: 1px solid var(--card-border); }
     .prof-kpi .k { font-size: .75rem; font-weight: 600; color: var(--muted); }
     .prof-kpi .v { font-size: 1.6rem; font-weight: 800; line-height: 1.2; color: var(--forest); }
     .prof-kpi .s { font-size: .75rem; color: var(--muted); }
@@ -211,23 +243,38 @@
 </head>
 <body class="min-h-screen lg:h-screen lg:overflow-hidden">
 
+  <!-- מסנני צבע ללוגו: כל פיקסל לא שקוף הופך לגוון המותג (sRGB מדויק) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="recolor-forest" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="0 0 0 0 0.208  0 0 0 0 0.341  0 0 0 0 0.278  0 0 0 1 0"/>
+      </filter>
+      <filter id="recolor-cream" color-interpolation-filters="sRGB">
+        <feColorMatrix type="matrix" values="0 0 0 0 0.980  0 0 0 0 0.969  0 0 0 0 0.937  0 0 0 1 0"/>
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- עלווה דקורטיבית בפינה השמאלית התחתונה -->
+  <svg id="leafCorner" viewBox="0 0 220 220" aria-hidden="true">
+    <path d="M0 220 C 20 150, 70 90, 150 70 C 140 130, 90 190, 0 220 Z" fill="#75977D" opacity=".18"/>
+    <path d="M0 220 C 50 170, 90 130, 150 70" fill="none" stroke="#355747" stroke-width="2" opacity=".25"/>
+    <path d="M0 220 C 10 170, 40 130, 80 120 C 80 160, 50 200, 0 220 Z" fill="#E8B95F" opacity=".2"/>
+    <path d="M0 220 C 60 205, 120 190, 200 200 L 200 220 Z" fill="#355747" opacity=".1"/>
+  </svg>
+
   <div id="navScrim" class="hidden fixed inset-0 z-40 bg-slate-900/50 lg:hidden"></div>
 
   <!-- סרגל צד ימני: כותרת, סטטוס סנכרון וניווט ראשי -->
   <aside id="sidebar" aria-label="תפריט ראשי">
     <div class="px-4 pt-5 pb-4 border-b border-white/10">
       <div class="flex items-center gap-3">
-        <i data-lucide="graduation-cap" class="w-8 h-8 shrink-0 text-[#E7BD65]" aria-hidden="true"></i>
+        <img src="school_logo.png" alt="תיכון אתגרי העתיד" width="48" height="48" class="brand-logo" style="filter:url(#recolor-cream)" onerror="this.onerror=null;this.replaceWith(brandEmblem('#FAF7EF',48))">
         <div>
-          <h1 class="text-base font-bold leading-tight">לוח בקרה פדגוגי – בגרות ושיבוצים</h1>
+          <h1 class="text-base font-bold leading-tight">לוח בקרה פדגוגי</h1>
           <p class="text-xs mt-1 opacity-75">נתוני בית הספר • סנכרון ענן אוטומטי</p>
         </div>
       </div>
-      <div class="mt-3 flex flex-wrap items-center gap-2">
-        <span id="syncStatus" class="sync-badge" role="status" aria-live="polite"></span>
-        <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
-      </div>
-      <div id="statusLine" class="mt-2 text-xs opacity-75" role="status" aria-live="polite">0 חניכים במצבת</div>
     </div>
     <nav id="tabs" class="p-3 flex flex-col gap-1" role="tablist" aria-orientation="vertical" aria-label="תצוגות ראשיות">
       <button class="side-tab" role="tab" id="tab-overview" data-tab="overview" aria-controls="panel-overview" aria-selected="true">🏠 חדר בקרה</button>
@@ -242,13 +289,32 @@
   <div id="appShell" class="flex flex-col min-h-screen lg:h-screen">
 
   <!-- פס עליון למובייל: פתיחת סרגל הצד -->
-  <div class="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-3 py-2 bg-[#344E45] text-[#FAF8F0] shrink-0">
-    <button type="button" id="navToggle" class="btn !px-2 !py-1 text-[#FAF8F0]" aria-controls="sidebar" aria-expanded="false" aria-label="פתיחת תפריט ניווט">☰</button>
+  <div class="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-3 py-2 bg-[#355747] text-[#FAF7EF] shrink-0">
+    <button type="button" id="navToggle" class="btn !px-2 !py-1 text-[#FAF7EF]" aria-controls="sidebar" aria-expanded="false" aria-label="פתיחת תפריט ניווט">☰</button>
     <span class="font-semibold text-sm">לוח בקרה פדגוגי</span>
   </div>
 
+  <!-- באנר מיתוג בית הספר -->
+  <header id="brandBanner" class="shrink-0">
+    <svg class="brand-art" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 78 C 150 40, 300 118, 480 82 S 800 36, 1000 76 S 1160 92, 1200 70 L1200 120 L0 120 Z" fill="#75977D" opacity=".12"/>
+      <path d="M0 96 C 200 66, 360 120, 560 96 S 900 70, 1200 100 L1200 120 L0 120 Z" fill="#355747" opacity=".08"/>
+      <path d="M0 108 C 240 92, 420 120, 700 106 S 1040 94, 1200 110 L1200 120 L0 120 Z" fill="#E8B95F" opacity=".16"/>
+      <g transform="translate(70 22) rotate(-18)" opacity=".28"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#75977D"/><path d="M0 70 C 14 52, 20 34, 30 0" fill="none" stroke="#355747" stroke-width="1.5"/></g>
+      <g transform="translate(130 40) rotate(24) scale(.7)" opacity=".24"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#E8B95F"/></g>
+    </svg>
+    <div class="brand-inner px-5 py-3 flex items-center gap-4">
+      <img src="school_logo.png" alt="תיכון אתגרי העתיד" width="64" height="64" class="brand-logo" style="width:64px;height:64px;filter:url(#recolor-forest)" onerror="this.onerror=null;this.replaceWith(brandEmblem('#355747',64))">
+      <div>
+        <div class="brand-name">תיכון אתגרי העתיד</div>
+        <div class="brand-slogan">מקום שטוב לגדול בו</div>
+        <svg width="170" height="10" viewBox="0 0 170 10" aria-hidden="true" class="block"><path d="M2 7 C 30 0, 55 10, 85 5 S 140 1, 168 6" fill="none" stroke="#E8B95F" stroke-width="3" stroke-linecap="round"/></svg>
+      </div>
+    </div>
+  </header>
+
   <!-- סרגל סינון גלובלי -->
-  <div id="globalFilterBar" class="bg-white border-b border-[#E8F0E5] z-20 shrink-0">
+  <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-20 shrink-0">
     <div class="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
@@ -283,7 +349,7 @@
         <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
         <input id="globalSearch" type="search" class="inp w-44 lg:w-52" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off"></label>
       <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
-      <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1 mr-auto">
+      <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1">
         <details class="relative" id="bagrutSimulation">
           <summary class="btn btn-ghost btn-sm">⚙️ סימולציית מה-אם</summary>
           <div class="absolute left-0 top-full z-50 w-96 max-w-[90vw] rounded-lg border border-slate-300 bg-white p-3 shadow-xl text-sm">
@@ -303,12 +369,12 @@
         <button type="button" id="btnRulesToggle" class="btn btn-ghost btn-sm" aria-expanded="false" aria-controls="rulesDrawer" title="כללי זכאות ומשקלים" aria-label="כללי זכאות ומשקלים">📐</button>
         <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
       </div>
-      <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1 mr-auto" role="group" aria-label="בחירת חניך">
+      <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1" role="group" aria-label="בחירת חניך">
         <button type="button" id="profPrev" class="btn btn-ghost btn-sm" aria-label="החניך הקודם">הקודם</button>
         <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
         <button type="button" id="profNext" class="btn btn-ghost btn-sm" aria-label="החניך הבא">הבא</button>
       </div>
-      <div id="groupActions" data-groups-only class="hidden flex-wrap items-center gap-1 mr-auto">
+      <div id="groupActions" data-groups-only class="hidden flex-wrap items-center gap-1">
         <div class="flex items-center gap-1" role="group" aria-label="תצוגת קבוצות">
           <button type="button" class="chip" data-gview="explorer" aria-pressed="true" title="קבוצות ורשימות שמיות">📋 קבוצות</button>
           <button type="button" class="chip" data-gview="anomalies" aria-pressed="false" title="טבלת חריגי שיבוץ לכלל המקצועות">חריגים</button>
@@ -317,7 +383,7 @@
         <button type="button" class="btn btn-primary btn-sm" data-upload="groupsData" title="טען קובץ קבוצות ושיבוצים" aria-label="טען קובץ קבוצות ושיבוצים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-groupsData" data-file-input="groupsData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ קבוצות ושיבוצים">
       </div>
-      <div id="sadinActions" data-sadin-only class="hidden flex-wrap items-center gap-1 mr-auto">
+      <div id="sadinActions" data-sadin-only class="hidden flex-wrap items-center gap-1">
         <div class="flex items-center gap-1" role="group" aria-label="תצוגת סדין">
           <button type="button" class="chip" data-sview="sheet" aria-pressed="true" title="סדין חניכים" aria-label="סדין חניכים">📊 סדין</button>
           <button type="button" class="chip" data-sview="flat" aria-pressed="false" title="פירוט שורות" aria-label="פירוט שורות">📋 פירוט</button>
@@ -327,6 +393,11 @@
         <div id="unknown-sadinData" class="hidden"></div>
         <button type="button" class="btn btn-primary btn-sm" data-upload="sadinData" title="טען קובץ ציונים שוטפים (סדין)" aria-label="טען קובץ ציונים שוטפים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
+      </div>
+      <div id="ribbonStatus" class="flex flex-wrap items-center gap-2 mr-auto">
+        <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
+        <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
+        <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
       </div>
     </div>
   </div>
@@ -424,7 +495,7 @@
       <div class="card px-5 py-4">
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div class="min-w-0">
-            <div id="profName" class="text-2xl font-extrabold text-[#344E45]">—</div>
+            <div id="profName" class="text-2xl font-extrabold text-[#355747]">—</div>
             <div id="profMeta" class="text-sm text-slate-500 mt-0.5"></div>
           </div>
           <div id="profBadges" class="flex flex-wrap items-center gap-2"></div>
@@ -441,7 +512,7 @@
 
     <!-- 5. הגדרות ומצבת -->
     <section id="panel-settings" class="panel space-y-4" role="tabpanel" aria-labelledby="tab-settings" hidden>
-      <h2 class="text-xl font-semibold text-[#344E45]">הגדרות ומצבת</h2>
+      <h2 class="text-xl font-semibold text-[#355747]">הגדרות ומצבת</h2>
       <div class="grid xl:grid-cols-2 gap-4">
         <div class="card p-4 space-y-3">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="clipboard-list" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>מצבת חניכים עליונה</div>
@@ -587,12 +658,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_3"></script>
-  <script src="js/storage.js?v=20261117_3"></script>
-  <script src="js/mockData.js?v=20261117_3"></script>
-  <script src="js/parser.js?v=20261117_3"></script>
-  <script src="js/bagrutEngine.js?v=20261117_3"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_3"></script>
-  <script src="js/app.js?v=20261117_3"></script>
+  <script src="js/config.js?v=20261117_4"></script>
+  <script src="js/storage.js?v=20261117_4"></script>
+  <script src="js/mockData.js?v=20261117_4"></script>
+  <script src="js/parser.js?v=20261117_4"></script>
+  <script src="js/bagrutEngine.js?v=20261117_4"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_4"></script>
+  <script src="js/app.js?v=20261117_4"></script>
 </body>
 </html>
