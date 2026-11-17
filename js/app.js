@@ -39,7 +39,8 @@ const App = {
     groups: { view: 'explorer', subject: 'all', teacher: 'all', kind: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false },
     sadin: { subject: 'all', teacher: 'all', view: 'sheet', strip: 'all', alertBy: 'teacher', initials: false },
     profileTz: null,
-    selectedSearchTz: null
+    selectedSearchTz: null,
+    settingsView: 'roster'
   },
   evals: new Map(),
   lastFiles: {},
@@ -72,7 +73,7 @@ const App = {
     this.showTab(this.state.tab);
     if (seeded) this.toast('המצבת הייתה ריקה – נטענו נתוני דמו. אפשר להחליף אותם בהגדרות ומצבת חניכים.', 'info');
     if ((Config.rules().version || 0) < RULES_VERSION) {
-      this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ כללי זכאות ← שחזור ברירות מחדל.', 'info');
+      this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ הגדרות ומצבת ← חוקי בגרות ושאלונים ← שחזור ברירות מחדל.', 'info');
     }
   },
 
@@ -205,7 +206,7 @@ const App = {
   },
 
   syncGroupLayout() {
-    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groups.view === 'explorer' && Store.hasData() && Store.loaded.groups);
+    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groups.view === 'explorer' && Store.hasData() && Store.loaded.groups && !this.lockedTrainee());
   },
 
   /* ------------------------------------------------------------------
@@ -393,17 +394,11 @@ const App = {
     if (input) input.focus();
   },
 
-  /** כפתור ה-× בתיבת החיפוש, וכמוהו הכותרת "מציג חניך" בראש לשונית הקבוצות */
+  /** כפתור ה-× בתיבת החיפוש (מוצג כשיש טקסט או חניך נעול) */
   renderSearchChrome() {
     const input = $('globalSearch'), st = this.state;
     const clear = $('searchClear');
     if (clear) clear.classList.toggle('hidden', !(input && input.value) && !st.selectedSearchTz);
-    const pill = $('searchLockPill'), t = this.lockedTrainee();
-    if (pill) {
-      const show = !!t && st.tab === 'groups';
-      pill.classList.toggle('hidden', !show);
-      pill.innerHTML = show ? `<span class="ov-pill">מציג חניך: <b>${E(t.name)}</b></span><button type="button" class="ov-pill sg-x" data-act="searchClear" aria-label="הסרת הבחירה והצגת כל החניכים">×</button>` : '';
-    }
   },
 
   onFilterChange() {
@@ -1083,17 +1078,7 @@ const App = {
     this._mxPinned = null;
   },
 
-  /* ---------- מגירת כללי זכאות ומשקלים ---------- */
-  toggleDrawer(force) {
-    const drawer = $('rulesDrawer');
-    if (!drawer) return;
-    const open = typeof force === 'boolean' ? force : drawer.classList.contains('hidden');
-    drawer.classList.toggle('hidden', !open);
-    const btn = $('btnRulesToggle');
-    if (btn) btn.setAttribute('aria-expanded', String(open));
-    if (open) this.renderRulesDrawer();
-  },
-
+  /* ---------- כללי זכאות ומשקלים (בתת-הלשונית "חוקי בגרות ושאלונים" בהגדרות) ---------- */
   applyRule(res) {
     if (res && res.ok === false) { this.toast(res.error || 'השינוי נדחה', 'error'); this.renderRulesDrawer(); }
   },
@@ -1251,7 +1236,17 @@ const App = {
       this._explorerView = []; this._boardMissing = [];
       this.noRoster(['groups-kpis', 'groups-master', 'groups-detail'], 'groups-table');
       show('groups-table', true); show('groups-explorer', false); show('gctl-explorer', false); show('gctl-anomalies', false); show('groups-kpis', false); show('groups-strip', false);
+      show('groups-student-map', false);
       return;
+    }
+    /* חניך נעול (נבחר בחיפוש): במקום סייר הקבוצות מוצגת מפת השיבוצים שלו */
+    const lockT = this.lockedTrainee();
+    show('groups-student-map', !!lockT && (Store.loaded.groups || Store.loaded.grades));
+    if (lockT && (Store.loaded.groups || Store.loaded.grades)) {
+      ['groups-explorer', 'groups-table', 'groups-kpis', 'groups-strip', 'gctl-explorer', 'gctl-anomalies'].forEach(id => show(id, false));
+      $('groups-kpis').classList.remove('grid');
+      this._explorerView = []; this._boardMissing = [];
+      return this.renderStudentGroupsMap(lockT.tz);
     }
     if (explorer && !Store.loaded.groups) return message('הסייר מציג את הרשימות השמיות כפי שנרשמו במשוב, ולכן נדרש קובץ קבוצות לימוד. אפשר לטעון אותו בכפתור שבראש הפאנל.');
     if (!explorer && !Store.loaded.groups && !Store.loaded.grades) return message('נדרש קובץ קבוצות ושיבוצים לניתוח השיבוצים. אפשר לטעון אותו בכפתור שבראש הפאנל.');
@@ -1275,6 +1270,48 @@ const App = {
     setHtml('groupsSubject', opt('all', 'כל מקצועות החובה + מגמה', st.subject) +
       GroupAnalyzer.coreSubjects().map(s => opt(s.id, s.name, st.subject)).join('') + opt('major', 'מגמה 5 יח"ל בלבד', st.subject));
     setHtml('groups-table', this.anomaliesTable(analysis, list));
+  },
+
+  /** מפת שיבוצים לחניך: שורה לכל מקצוע (ליבה, מגמה ושאר המקצועות שבהם רשום או מקבל ציונים) מול הסדין, עם חיווי בקרה */
+  renderStudentGroupsMap(tz) {
+    const m = GroupAnalyzer.studentPlacementMap(tz);
+    if (!m) return setHtml('groups-student-map', '');
+    const t = m.t, c = m.counts;
+    const dash = '<span class="text-slate-300">—</span>';
+    const kpi = (label, value, sub, cls = '') => `<div class="prof-kpi"><div class="k">${label}</div><div class="v ${cls}">${value}</div><div class="s">${sub}</div></div>`;
+    const groupBtn = g => `<button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="sgOpenGroup" data-id="${E(g.groupId)}" title="פתיחת הקבוצה בסייר הקבוצות">${E(g.subject)} <span dir="ltr">[${E(g.groupId)}]</span>${g.reinforcement ? ' <span class="text-xs text-slate-500">תגבור</span>' : ''}</button>`;
+    const body = m.rows.map(r => {
+      const tag = r.kind === 'core' ? 'ליבה' : r.kind === 'major' ? 'מגמה' : '';
+      const enrolled = r.enrolled.length ? r.enrolled.map(g => `<div>${groupBtn(g)}</div>`).join('') : '<span class="txt-bad font-semibold">ללא שיבוץ</span>';
+      const teachers = r.enrolled.length ? r.enrolled.map(g => `<div>${E(g.teacher || 'ללא מורה')}</div>`).join('') : dash;
+      const sadin = r.sadin.length ? r.sadin.map(s => `<div class="${s.mismatch ? 'txt-bad font-semibold' : ''}">${s.groupId ? `<button type="button" class="hover:underline" data-act="sgOpenGroup" data-id="${E(s.groupId)}"><span dir="ltr">[${E(s.groupId)}]</span> ${E(s.teacher || 'ללא מורה')}</button>` : E(s.teacher || 'ללא קבוצה')}${s.avg != null ? ` <span class="text-slate-500 font-normal">· ממוצע ${Util.fmt(s.avg, 0)}</span>` : ''}</div>`).join('') : dash;
+      const status = r.issues.length ? r.issues.map(i => `<div class="text-xs font-semibold ${i.level === 'severe' ? 'txt-bad' : 'txt-warn'}">${E(i.text)}</div>`).join('')
+        : r.enrolled.length ? '<span class="txt-ok font-semibold">✓ תקין</span>' : dash;
+      return `<tr><td class="font-bold text-[#355747] whitespace-nowrap">${E(r.label)}${tag ? ` <span class="text-[11px] font-normal text-slate-500">${tag}</span>` : ''}</td>
+        <td>${enrolled}</td><td class="whitespace-nowrap">${teachers}</td><td>${sadin}</td><td>${status}</td></tr>`;
+    }).join('');
+    setHtml('groups-student-map', `
+      <div class="card px-5 py-4">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div class="min-w-0">
+            <div class="text-xs font-semibold text-[#75977D]">מפת שיבוצים לחניך</div>
+            <div class="text-2xl font-extrabold text-[#355747]">${E(t.name)}</div>
+            <div class="text-sm text-slate-500 mt-0.5">ת.ז ${E(t.tz)} · כיתת אם ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}</div>
+          </div>
+          <div class="grid grid-cols-3 gap-3">
+            ${kpi('קבוצות משובצות', c.groups, 'בקובץ הקבוצות')}
+            ${kpi('מקצועות ליבה ללא שיבוץ', c.missingCore, c.missingCore ? 'דורש שיבוץ' : 'כל מקצועות הליבה משובצים', c.missingCore ? 'txt-bad' : 'txt-ok')}
+            ${kpi('חריגות שיבוץ', c.anomalies, c.anomalies ? 'לבדיקה בטבלה' : 'אין חריגות', c.anomalies ? 'txt-bad' : 'txt-ok')}
+          </div>
+          <div class="mr-auto flex flex-wrap gap-2">
+            <button type="button" class="btn btn-ghost" data-act="openProfile" data-tz="${E(t.tz)}">👤 מעבר לכרטיס 360°</button>
+            <button type="button" class="nav-back" data-act="searchClear">× חזרה לכל הקבוצות</button>
+          </div>
+        </div>
+      </div>
+      <div class="tbl-wrap sticky-scroll"><table class="grid w-full" aria-label="מפת שיבוצים לחניך">
+        <thead><tr><th>מקצוע</th><th>קבוצה רשומה (שיבוץ)</th><th>מורה</th><th>קבוצה בסדין ציונים</th><th>חיווי בקרה</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="5" class="text-center text-slate-500 py-8">לא נמצאו שיבוצים או ציונים לחניך זה</td></tr>'}</tbody></table></div>`);
   },
 
   groupsRerender() {
@@ -2010,6 +2047,19 @@ const App = {
   /* ==================================================================
      פאנל 5 – הגדרות ומצבת חניכים
      ================================================================== */
+  /** תתי-לשוניות ההגדרות: מציג חלונית אחת ומעדכן את מוני התגיות (דריסות + סתירות שיוך, שאלונים שטרם שויכו) */
+  renderSettingsNav() {
+    const view = ['roster', 'overrides', 'rules', 'system'].includes(this.state.settingsView) ? this.state.settingsView : 'roster';
+    this.state.settingsView = view;
+    document.querySelectorAll('[data-settings-pane]').forEach(p => { p.hidden = p.dataset.settingsPane !== view; });
+    document.querySelectorAll('#settingsTabs [data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
+    const badge = (id, n, title) => { const el = $(id); if (el) { el.classList.toggle('hidden', !n); el.textContent = n; el.title = title; } };
+    const overrides = Object.keys(Config.getRosterOverrides()).length, mismatches = Config.detectRosterMismatches().length;
+    badge('setBadgeOverrides', overrides + mismatches, `${overrides} דריסות פעילות · ${mismatches} סתירות שיוך`);
+    const unmapped = this.unrecognizedCodes().length;
+    badge('setBadgeRules', unmapped, `${unmapped} שאלונים שטרם שויכו`);
+  },
+
   renderSettingsPanel() {
     this.renderFreshnessBar('roster');
     const roster = Config.getRoster();
@@ -2047,7 +2097,9 @@ const App = {
     this.renderRosterOverrides();
     this.renderDataTools();
     this.renderCloudCard();
-       this.renderCalibration();
+    this.renderCalibration();
+    this.renderRulesDrawer();
+    this.renderSettingsNav();
   },
 
   /* ---------- דריסת שיוך שכבה וכיתת אם ---------- */
@@ -2248,18 +2300,17 @@ const App = {
     document.addEventListener('click', e => {
       if (e.target.closest('[data-go-overrides]')) {
         e.stopPropagation();
+        this.state.settingsView = 'overrides';
         this.showTab('settings');
+        this.renderSettingsNav();
         const section = $('ovTableSection');
-        section.scrollIntoView({ block: 'start' });
-        section.focus({ preventScroll: true });
+        if (section) { section.scrollIntoView({ block: 'start' }); section.focus({ preventScroll: true }); }
         return;
       }
       const tab = e.target.closest('[data-tab]');
       if (tab) { e.stopPropagation(); this.showTab(tab.dataset.tab); return; }
       const up = e.target.closest('[data-upload]');
       if (up) { e.stopPropagation(); e.preventDefault(); this.pickFile(up.dataset.upload); return; }
-      if (e.target.closest('#btnRulesToggle')) { e.stopPropagation(); this.toggleDrawer(); return; }
-      if (e.target.closest('#rulesClose')) { e.stopPropagation(); this.toggleDrawer(false); }
     }, true);
     document.addEventListener('change', e => {
       const inp = e.target.closest && e.target.closest('[data-file-input]');
@@ -2621,6 +2672,7 @@ const App = {
       <div class="flex flex-wrap gap-2 mt-2">${unk.map((u, i) => `<span class="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs">
         <span class="font-mono font-bold">${E(u.code)}</span><span class="text-slate-500">${E(u.subject)} · ${u.count} רשומות</span>
         <button type="button" class="btn btn-primary btn-sm" data-act="calibAssign" data-i="${i}">+ שייך כעת</button></span>`).join('')}</div></div>` : '';
+    setHtml('qUnmapped', banner);
     let last = null;
     const body = rows.map((r, i) => {
       const head = r.group !== last ? `<tr class="bg-slate-100"><td colspan="7" class="font-bold text-slate-700 py-1">${E(r.group)}</td></tr>` : '';
@@ -2631,7 +2683,7 @@ const App = {
         <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="calibEdit" data-i="${i}" title="עריכה">✏️</button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="calibDelete" data-i="${i}" title="מחיקה">🗑️</button></td></tr>`;
     }).join('');
-    host.innerHTML = `${banner}
+    host.innerHTML = `
       <div class="flex flex-wrap items-center justify-between gap-2"><p class="text-xs text-slate-500">שינוי נשמר מיד, מחשב מחדש את זכאות הבגרות ומסומן לפרסום לצוות.</p>
         <button type="button" class="btn btn-primary btn-sm" data-act="calibAdd">+ הוספת סמל שאלון</button></div>
       <div class="tbl-wrap" style="max-height:480px"><table class="w-full text-sm">
@@ -2793,8 +2845,10 @@ const App = {
       else this.showSadinPop(el, true);
     },
     goSettings() { this.showTab('settings'); },
+    settingsView(el) { this.state.settingsView = el.dataset.view; this.renderSettingsNav(); },
     sgPick(el) { this.pickSuggestion(+el.dataset.i); },
     searchClear() { this.clearSearch(); },
+    sgOpenGroup(el) { this.selectGroup(el.dataset.id); },
     /** ניווט מכרטיסי חדר הבקרה ללשונית מסוננת מראש */
     ovGo(el) {
       const { go, chip, strip, view } = el.dataset;
@@ -2851,6 +2905,7 @@ const App = {
       if (!m) return;
       Config.dismissRosterMismatch(m.tz, m.signature);
       this.renderRosterOverrides();
+      this.renderSettingsNav();
     },
     ovRemove(el) {
       const res = Config.removeRosterOverride(el.dataset.tz);

@@ -606,6 +606,62 @@ const GroupAnalyzer = {
   },
 
   /**
+   * מפת שיבוצים לחניך אחד: שורה לכל מקצוע (מקצועות ליבה שיש להם קבוצות בשכבתו + כל מקצוע שבו הוא רשום או מקבל ציונים),
+   * עם הקבוצות הרשומות, הקבוצות שבהן יש לו ציונים בסדין וחיווי בקרה. issues: { level: 'severe' | 'warn', text }.
+   * מקור החריגות זהה לטבלת החריגים ולסייר הקבוצות (analyzeGroupAnomalies / explorerModel).
+   */
+  studentPlacementMap(tz) {
+    const t = Store.trainees.get(tz);
+    if (!t) return null;
+    const diagByGroup = new Map();
+    if (Store.loaded.groups) {
+      this.explorerModel().groups.forEach(g => { const m = g.members.find(x => x.t.tz === tz); if (m) diagByGroup.set(g.groupId, m.diag); });
+    }
+    const items = Store.loaded.groups ? this.analyzeGroupAnomalies([t], 'all').items : [];
+    const rows = new Map();
+    const rowOf = cat => {
+      if (!rows.has(cat.key)) rows.set(cat.key, { key: cat.key, label: cat.label, kind: cat.kind, order: cat.order, enrolled: [], sadin: [], issues: [] });
+      return rows.get(cat.key);
+    };
+    if (Store.loaded.groups) {
+      this.coreSubjects().forEach((s, i) => { if (Store.groupsLoaded(s.keywords, t.gradeKey)) rowOf({ key: `core:${s.id}`, label: s.name, kind: 'core', order: i }); });
+    }
+    Store.groupsOf(tz).forEach(g => {
+      rowOf(this.categoryOf(g)).enrolled.push({ groupId: g.groupId, subject: g.subject, teacher: g.teacher || '', reinforcement: g.reinforcement, inFile: g.inFile, diag: diagByGroup.get(g.groupId) || [] });
+    });
+    Store.currentOf(tz).forEach(e => {
+      const g = e.groupId ? Store.groups.get(e.groupId) : null;
+      rowOf(this.categoryOf(g || { subject: e.subject })).sadin.push({ groupId: e.groupId || '', teacher: (g && g.teacher) || e.teacher || '', avg: e.avg });
+    });
+    if (items.some(a => a.kind === 'nomajor')) rowOf({ key: 'major:none', label: 'מגמה 5 יח"ל', kind: 'major', order: 100 });
+
+    rows.forEach(r => {
+      const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => !g.reinforcement && g.inFile);
+      if (r.kind === 'core' && !r.enrolled.length && items.some(a => a.kind === 'none' && a.subject === r.label)) r.issues.push({ level: 'severe', text: 'חסר שיבוץ' });
+      if (r.key === 'major:none') r.issues.push({ level: 'warn', text: 'חסר שיבוץ: ללא מגמה 5 יח"ל' });
+      if (regular.length >= 2) r.issues.push({ level: 'severe', text: `כפול: רשום ב-${regular.length} קבוצות` });
+      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'grade'))) r.issues.push({ level: 'severe', text: 'חריג שכבה' });
+      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'outlier'))) r.issues.push({ level: 'warn', text: 'בודד מכיתתו' });
+      if (Store.loaded.grades) {
+        r.sadin.forEach(s => { s.mismatch = !!(s.groupId && ids.length && !ids.includes(s.groupId)); });
+        if (r.sadin.some(s => s.mismatch)) r.issues.push({ level: 'warn', text: 'ציונים בסדין בקבוצה אחרת' });
+        else if (!ids.length && r.sadin.length && r.kind !== 'core') r.issues.push({ level: 'warn', text: 'ציונים בסדין ללא שיבוץ' });
+      }
+    });
+    const KIND = { core: 0, major: 1, internal: 2, other: 3 };
+    const list = [...rows.values()].filter(r => r.enrolled.length || r.sadin.length || r.issues.length)
+      .sort((a, b) => KIND[a.kind] - KIND[b.kind] || a.order - b.order || natural(a.label, b.label));
+    return {
+      t, rows: list,
+      counts: {
+        groups: Store.groupsOf(tz).length,
+        missingCore: list.filter(r => r.kind === 'core' && r.issues.some(i => i.text === 'חסר שיבוץ')).length,
+        anomalies: list.reduce((n, r) => n + r.issues.length, 0)
+      }
+    };
+  },
+
+  /**
    * חניכים עם ציון חסר או 0 באירוע שרוב חברי הקבוצה (לפי [groupId]) קיבלו בו ציון.
    * kind: no-row (אין שורה) | empty (ללא ציון) | zero (ציון 0)
    */

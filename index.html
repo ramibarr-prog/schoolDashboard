@@ -261,6 +261,15 @@
     .nav-back:hover { background: #75977D; color: #fff; }
     .nav-back:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
     .nav-back.hidden { display: none; }
+    /* תתי-לשוניות הגדרות */
+    [data-settings-pane][hidden] { display: none; }
+    .settings-seg { display: inline-flex; flex-wrap: wrap; gap: .25rem; padding: .25rem; background: #fff; border: 1px solid var(--card-border); border-radius: 999px; box-shadow: 0 2px 8px -4px rgba(120, 92, 50, .2); }
+    .seg-tab { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem 1rem; border-radius: 999px; font-size: .85rem; font-weight: 600; color: #355747; white-space: nowrap; transition: background .15s; }
+    .seg-tab:hover { background: var(--sage-tint); }
+    .seg-tab:focus-visible { outline: 2px solid #75977D; outline-offset: 2px; }
+    .seg-tab[aria-selected="true"] { background: #355747; color: #FAF7EF; }
+    .seg-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; padding: 0 .35rem; border-radius: 999px; background: #E8B95F; color: #355747; font-size: .72rem; font-weight: 800; }
+    .seg-badge.hidden { display: none; }
     @keyframes navFlash {
       0%, 65% { background: #FAF7EF; box-shadow: inset 0 2px 0 #E8B95F, inset 0 -2px 0 #E8B95F; }
       100% { background: transparent; box-shadow: inset 0 0 0 transparent; }
@@ -398,7 +407,6 @@
           </div>
         </details>
         <button type="button" class="btn btn-primary btn-sm" data-upload="bagrutData" title="טען קובץ ציוני בגרות" aria-label="טען קובץ ציוני בגרות">📂 טעינת קובץ</button>
-        <button type="button" id="btnRulesToggle" class="btn btn-ghost btn-sm" aria-expanded="false" aria-controls="rulesDrawer" title="כללי זכאות ומשקלים" aria-label="כללי זכאות ומשקלים">📐</button>
         <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
       </div>
       <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1" role="group" aria-label="בחירת חניך">
@@ -442,58 +450,6 @@
     <section id="panel-bagrut" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-bagrut" hidden>
       <div id="stale-bagrutData" class="hidden card p-5 text-center" data-stale-overlay="bagrutData"></div>
 
-      <!-- מגירת עריכת כללי זכאות ומשקלים -->
-      <div id="rulesDrawer" class="card p-4 hidden" aria-label="עריכת כללי זכאות ומשקלים">
-        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div class="font-semibold flex items-center gap-2"><i data-lucide="scale" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>כללי זכאות ומשקלים</div>
-          <div class="flex gap-2">
-            <button type="button" class="btn btn-ghost btn-sm" id="rulesReset">שחזור ברירות מחדל</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="rulesClose">סגירה</button>
-          </div>
-        </div>
-        <div id="rulesWarnings" class="text-sm text-amber-700 mb-3" role="status" aria-live="polite"></div>
-
-        <div id="rulesTabs" class="flex flex-wrap gap-2 mb-3" role="tablist" aria-label="לשוניות כללי זכאות"></div>
-
-        <div data-rules-pane="core">
-          <div id="rulesCore" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
-          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
-        </div>
-        <div data-rules-pane="major" hidden>
-          <div id="rulesMajor" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
-          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="major">+ הוספת מגמה</button>
-        </div>
-        <div data-rules-pane="internal" hidden>
-          <div id="rulesInternal" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
-          <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="internal">+ הוספת יחידה פנימית</button>
-        </div>
-        <div data-rules-pane="params" hidden>
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div class="card p-3 bg-slate-50">
-              <div class="text-sm font-medium mb-2">חוק קיזוז</div>
-              <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="ruleCompEnabled" class="w-4 h-4">פעיל: ציון בודד 45–54 מזכה ללא סכום נקודות, למעט עברית ומעורבות חברתית</label>
-              <label class="flex items-center gap-2 text-sm mb-2" title="מקצוע אחד בציון 5–44 (לא עברית) מפוצה בשני מקצועות עוברים של 3+ יח&quot;ל לפי סקאלת סכום הנקודות של חוזר המנכ&quot;ל"><input type="checkbox" id="ruleCompPoints" class="w-4 h-4">פיצוי נקודות לציון 5–44 (חוזר מנכ"ל)</label>
-              <div class="grid grid-cols-3 gap-2 text-xs">
-                <label class="flex flex-col gap-1">מינימום<input type="number" id="ruleCompMin" class="inp" min="0" max="100"></label>
-                <label class="flex flex-col gap-1">מקסימום<input type="number" id="ruleCompMax" class="inp" min="0" max="100"></label>
-                <label class="flex flex-col gap-1">מכסה<input type="number" id="ruleCompCount" class="inp" min="0" max="20"></label>
-              </div>
-              <label class="flex flex-col gap-1 text-xs mt-2">מקצועות מוחרגים מקיזוז (מופרדים בפסיק)<input type="text" id="ruleCompExcluded" class="inp"></label>
-            </div>
-            <div class="card p-3 bg-slate-50">
-              <div class="text-sm font-medium mb-2">פרמטרים כלליים</div>
-              <div class="grid grid-cols-3 gap-2 text-xs">
-                <label class="flex flex-col gap-1">ציון עובר<input type="number" id="ruleParamPass" class="inp" min="0" max="100"></label>
-                <label class="flex flex-col gap-1">תחילת גבולי<input type="number" id="ruleParamBorderline" class="inp" min="0" max="100"></label>
-                <label class="flex flex-col gap-1">תוספת בסימולציה<input type="number" id="ruleParamBonus" class="inp" min="0" max="100"></label>
-                <label class="flex flex-col gap-1" title="משקל ציון ההגשה (מגן) בחישוב ציון שאלון מהגשה ובחינה; הבחינה מקבלת את השאר">משקל מגן (%)<input type="number" id="ruleParamMagen" class="inp" min="0" max="100"></label>
-              </div>
-              <div class="mt-3 space-y-1 text-sm" id="rulesGates"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div id="bagrut-kpis" class="hidden" aria-label="סיכום זכאות"></div>
       <div id="bagrut-table" class="tbl-wrap sticky-scroll w-full"></div>
       <div id="mxPop" class="hidden" role="tooltip"></div>
@@ -502,7 +458,7 @@
     <!-- 2. סייר קבוצות (קריאה בלבד) -->
     <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
       <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
-      <div id="searchLockPill" class="hidden mb-2"></div>
+      <div id="groups-student-map" class="hidden space-y-3" aria-live="polite"></div>
       <div id="groups-kpis" class="hidden grid-cols-2 lg:grid-cols-5 gap-2 mb-2"></div>
       <div id="groups-strip" class="hidden" aria-label="סינון חריגים למקצוע"></div>
       <div id="groups-explorer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0" aria-label="סייר קבוצות">
@@ -550,7 +506,13 @@
     <!-- 5. הגדרות ומצבת -->
     <section id="panel-settings" class="panel space-y-4" role="tabpanel" aria-labelledby="tab-settings" hidden>
       <h2 class="text-xl font-semibold text-[#355747]">הגדרות ומצבת</h2>
-      <div class="grid xl:grid-cols-2 gap-4">
+      <div id="settingsTabs" class="settings-seg" role="tablist" aria-label="תתי-לשוניות הגדרות">
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="roster" aria-selected="true">📋 מצבת וכיתות אם</button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="overrides" aria-selected="false">🔀 דריסות שיוך וסתירות <span id="setBadgeOverrides" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="rules" aria-selected="false">🎓 חוקי בגרות ושאלונים <span id="setBadgeRules" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="system" aria-selected="false">☁️ ענן, גיבוי ותחזוקה</button>
+      </div>
+      <div data-settings-pane="roster" class="grid xl:grid-cols-2 gap-4">
         <div class="card p-4 space-y-3">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="clipboard-list" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>מצבת חניכים עליונה</div>
           <p class="text-xs text-slate-500">המצבת קובעת מי חניך פעיל, באיזו שכבה ובאיזו כיתת אם. קובצי המשנה אינם יכולים לדרוס שדות אלה. המצבת נשמרת עד לטעינת מצבת חדשה.
@@ -566,6 +528,14 @@
           <div id="rosterSummary" class="text-sm text-slate-600"></div>
         </div>
 
+        <div class="card p-4 space-y-3 xl:col-span-2" id="nicknamesCard">
+          <div class="font-semibold">🏫 הגדרת כיתות חינוך מיוחד (חנ"מ)</div>
+          <p class="text-xs text-slate-500">שמות הכיתות נלקחים מהמצבת. סימון חנ"מ מגדיר את מסלול חניכי הכיתה, אלא אם הוגדר לחניך מסלול ידני בדריסת המצבת או בכרטיס שלו; הזיהוי אוטומטי כששם הכיתה כולל "חנמ" או "מרחב".</p>
+          <div id="nicknames" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4"></div>
+        </div>
+      </div>
+
+      <div data-settings-pane="overrides" class="grid xl:grid-cols-2 gap-4" hidden>
         <div class="card p-4 space-y-3 xl:col-span-2" id="rosterOverridesCard">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="shuffle" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>🔀 דריסת שיוך שכבה וכיתת אם (Roster Overrides)</div>
           <p class="text-xs text-slate-500">תיקון שיוך חניך בלי לגעת בקובץ המצבת: הדריסה נשמרת בנפרד ומונחת מעל הנתונים שבקובץ, ואפשר לבטל אותה בכל עת. חניך מוסתר (עזב / לא פעיל) אינו מופיע בפאנלים אך נשמר כאן לשחזור.</p>
@@ -600,27 +570,70 @@
             <div id="ovTable" class="tbl-wrap"></div>
           </div>
         </div>
+      </div>
 
-        <div class="card p-4 space-y-3 xl:col-span-2" id="nicknamesCard">
-          <div class="font-semibold">🏫 הגדרת כיתות חינוך מיוחד (חנ"מ)</div>
-          <p class="text-xs text-slate-500">שמות הכיתות נלקחים מהמצבת. סימון חנ"מ מגדיר את מסלול חניכי הכיתה, אלא אם הוגדר לחניך מסלול ידני בדריסת המצבת או בכרטיס שלו; הזיהוי אוטומטי כששם הכיתה כולל "חנמ" או "מרחב".</p>
-          <div id="nicknames" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4"></div>
+      <div data-settings-pane="rules" class="space-y-4" hidden>
+        <div id="qUnmapped"></div>
+
+        <!-- עריכת כללי זכאות ומשקלים (מקור יחיד לכללים) -->
+        <div id="rulesDrawer" class="card p-4" aria-label="עריכת כללי זכאות ומשקלים">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div class="font-semibold flex items-center gap-2"><i data-lucide="scale" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>כללי זכאות ומשקלים</div>
+            <button type="button" class="btn btn-ghost btn-sm" id="rulesReset">שחזור ברירות מחדל</button>
+          </div>
+          <div id="rulesWarnings" class="text-sm text-amber-700 mb-3" role="status" aria-live="polite"></div>
+
+          <div id="rulesTabs" class="flex flex-wrap gap-2 mb-3" role="tablist" aria-label="לשוניות כללי זכאות"></div>
+
+          <div data-rules-pane="core">
+            <div id="rulesCore" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+            <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
+          </div>
+          <div data-rules-pane="major" hidden>
+            <div id="rulesMajor" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+            <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="major">+ הוספת מגמה</button>
+          </div>
+          <div data-rules-pane="internal" hidden>
+            <div id="rulesInternal" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+            <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="internal">+ הוספת יחידה פנימית</button>
+          </div>
+          <div data-rules-pane="params" hidden>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div class="card p-3 bg-slate-50">
+                <div class="text-sm font-medium mb-2">חוק קיזוז</div>
+                <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="ruleCompEnabled" class="w-4 h-4">פעיל: ציון בודד 45–54 מזכה ללא סכום נקודות, למעט עברית ומעורבות חברתית</label>
+                <label class="flex items-center gap-2 text-sm mb-2" title="מקצוע אחד בציון 5–44 (לא עברית) מפוצה בשני מקצועות עוברים של 3+ יח&quot;ל לפי סקאלת סכום הנקודות של חוזר המנכ&quot;ל"><input type="checkbox" id="ruleCompPoints" class="w-4 h-4">פיצוי נקודות לציון 5–44 (חוזר מנכ"ל)</label>
+                <div class="grid grid-cols-3 gap-2 text-xs">
+                  <label class="flex flex-col gap-1">מינימום<input type="number" id="ruleCompMin" class="inp" min="0" max="100"></label>
+                  <label class="flex flex-col gap-1">מקסימום<input type="number" id="ruleCompMax" class="inp" min="0" max="100"></label>
+                  <label class="flex flex-col gap-1">מכסה<input type="number" id="ruleCompCount" class="inp" min="0" max="20"></label>
+                </div>
+                <label class="flex flex-col gap-1 text-xs mt-2">מקצועות מוחרגים מקיזוז (מופרדים בפסיק)<input type="text" id="ruleCompExcluded" class="inp"></label>
+              </div>
+              <div class="card p-3 bg-slate-50">
+                <div class="text-sm font-medium mb-2">פרמטרים כלליים</div>
+                <div class="grid grid-cols-3 gap-2 text-xs">
+                  <label class="flex flex-col gap-1">ציון עובר<input type="number" id="ruleParamPass" class="inp" min="0" max="100"></label>
+                  <label class="flex flex-col gap-1">תחילת גבולי<input type="number" id="ruleParamBorderline" class="inp" min="0" max="100"></label>
+                  <label class="flex flex-col gap-1">תוספת בסימולציה<input type="number" id="ruleParamBonus" class="inp" min="0" max="100"></label>
+                  <label class="flex flex-col gap-1" title="משקל ציון ההגשה (מגן) בחישוב ציון שאלון מהגשה ובחינה; הבחינה מקבלת את השאר">משקל מגן (%)<input type="number" id="ruleParamMagen" class="inp" min="0" max="100"></label>
+                </div>
+                <div class="mt-3 space-y-1 text-sm" id="rulesGates"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="card p-4 space-y-3 xl:col-span-2" id="dataToolsCard">
-          <div class="font-semibold">🛠️ כלים טכניים לקובצי נתונים</div>
-          <p class="text-xs text-slate-500">טעינת קובצי נתונים, מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). אפשר לטעון קובץ גם מכפתור "📂 טעינת קובץ" בכל לשונית.</p>
-          <div id="dataTools" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
+        <div class="card p-4 space-y-3" id="qCalibCard">
+          <div class="font-semibold">🎯 ניהול וכיול סמלי שאלונים</div>
+          <div id="qCalib" class="space-y-3 text-sm"></div>
         </div>
+      </div>
 
+      <div data-settings-pane="system" class="grid xl:grid-cols-2 gap-4" hidden>
         <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
           <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
           <div id="cloudBody" class="space-y-3 text-sm"></div>
-        </div>
-
-        <div class="card p-4 space-y-3 xl:col-span-2" id="qCalibCard">
-          <div class="font-semibold">🎯 ניהול וכיול סמלי שאלונים</div>
-          <div id="qCalib" class="space-y-3 text-sm"></div>
         </div>
 
         <div class="card p-4 space-y-3 xl:col-span-2">
@@ -632,8 +645,15 @@
               <input type="file" id="fileImportConfig" class="hidden" accept=".json,application/json"></label>
             <button type="button" id="btnClearData" class="btn btn-danger"><i data-lucide="trash-2" class="w-4 h-4" aria-hidden="true"></i>ניקוי קובצי משנה</button>
             <button type="button" id="btnResetConfig" class="btn btn-danger"><i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i>איפוס הגדרות</button>
+            <button type="button" class="btn btn-ghost" data-act="loadMock">🧪 טעינת נתוני דמו</button>
           </div>
           <div id="configSummary" class="text-xs text-slate-400"></div>
+        </div>
+
+        <div class="card p-4 space-y-3 xl:col-span-2" id="dataToolsCard">
+          <div class="font-semibold">🛠️ כלים טכניים לקובצי נתונים</div>
+          <p class="text-xs text-slate-500">טעינת קובצי נתונים, מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). אפשר לטעון קובץ גם מכפתור "📂 טעינת קובץ" בכל לשונית.</p>
+          <div id="dataTools" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
         </div>
       </div>
     </section>
@@ -714,12 +734,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_8"></script>
-  <script src="js/storage.js?v=20261117_8"></script>
-  <script src="js/mockData.js?v=20261117_8"></script>
-  <script src="js/parser.js?v=20261117_8"></script>
-  <script src="js/bagrutEngine.js?v=20261117_8"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_8"></script>
-  <script src="js/app.js?v=20261117_8"></script>
+  <script src="js/config.js?v=20261117_10"></script>
+  <script src="js/storage.js?v=20261117_10"></script>
+  <script src="js/mockData.js?v=20261117_10"></script>
+  <script src="js/parser.js?v=20261117_10"></script>
+  <script src="js/bagrutEngine.js?v=20261117_10"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_10"></script>
+  <script src="js/app.js?v=20261117_10"></script>
 </body>
 </html>
