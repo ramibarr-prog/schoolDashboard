@@ -190,12 +190,6 @@ const App = {
     this.syncGroupLayout();
     if (changed && $('mainContent')) $('mainContent').scrollTop = 0;
     document.body.classList.remove('nav-open');
-    const upload = $('btnUpload'), key = { bagrut: 'bagrutData', groups: 'groupsData', sadin: 'sadinData' }[name];
-    if ($('ribbonRow2')) $('ribbonRow2').classList.toggle('hidden', name === 'overview' || name === 'settings');
-    if (upload) {
-      upload.classList.toggle('invisible', !key);
-      if (key) { upload.dataset.upload = key; upload.title = `טעינת קובץ: ${DATASETS[key].title}`; upload.setAttribute('aria-label', upload.title); }
-    }
     if ($('navScrim')) $('navScrim').classList.add('hidden');
     const search = $('globalSearch');
     if (search) search.placeholder = name === 'groups' ? 'חיפוש חניך לפי שם, ת.ז או קוד קבוצה' : 'חיפוש חניך לפי שם או ת.ז';

@@ -317,7 +317,7 @@
   </header>
 
   <!-- סרגל סינון גלובלי -->
-  <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-20 shrink-0">
+  <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-40 shrink-0">
     <div class="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
@@ -329,19 +329,7 @@
         <select id="fTrack" class="inp">
           <option value="all">הכל</option><option value="רגילה">רגילה</option><option value="אתגר">אתגר</option><option value="מב&quot;ר">מב"ר</option><option value="חנ&quot;מ">חנ"מ</option>
         </select></label>
-      <label class="flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
-        <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
-        <input id="globalSearch" type="search" class="inp w-44 lg:w-52" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off"></label>
-      <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
-      <div id="ribbonStatus" class="flex flex-wrap items-center gap-2 mr-auto">
-        <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
-        <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
-        <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
-        <button type="button" id="btnUpload" class="btn btn-primary btn-sm invisible" data-upload="bagrutData">📂 טעינת קובץ</button>
-      </div>
-    </div>
-    <!-- שורה שנייה: בקרות ייחודיות ללשונית הפעילה (נעלמת בלשוניות ללא בקרות כאלה) -->
-    <div id="ribbonRow2" class="px-4 pb-2 flex flex-wrap items-center gap-2 text-xs">
+      <span data-groups-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
       <div data-groups-only class="hidden">
         <div id="gctl-explorer" class="flex flex-wrap items-center gap-2">
           <select id="groupSubjectSelect" class="inp font-bold max-w-[10rem]" aria-label="מקצוע"><option value="all">כל המקצועות</option></select>
@@ -351,13 +339,19 @@
           <select id="groupsSubject" class="inp max-w-[10rem]" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option></select>
         </div>
       </div>
+      <span data-sadin-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
       <div data-sadin-only class="hidden">
         <select id="sadinSubjectSelect" class="inp font-bold max-w-[10rem]" aria-label="מקצוע בסדין"><option value="all">כל המקצועות</option></select>
         <select id="sadinTeacherSelect" class="inp font-bold max-w-[10rem]" aria-label="מורה בסדין"><option value="all">כל המורים</option></select>
         <select id="sadinFilterSelect" class="inp" aria-label="סינון ציונים שוטפים"><option value="all">כל החניכים</option></select>
       </div>
+      <span data-bagrut-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
       <select id="bagrutStatusSelect" data-bagrut-only class="hidden inp" aria-label="סינון צפי זכאות"><option value="all">כל הסטטוסים</option></select>
       <select id="bagrutSubjectDrillSelect" data-bagrut-only class="hidden inp max-w-[12rem]" aria-label="מבט לפי מקצוע"><option value="all">📊 מבט על – כל המקצועות</option></select>
+      <label class="flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
+        <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
+        <input id="globalSearch" type="search" class="inp w-44 lg:w-52" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off"></label>
+      <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
       <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1">
         <details class="relative" id="bagrutSimulation">
           <summary class="btn btn-ghost btn-sm">⚙️ סימולציית מה-אם</summary>
@@ -366,7 +360,15 @@
             <div id="bagrut-cohort" class="text-xs text-slate-600 mt-3"></div>
           </div>
         </details>
-        <div id="unknown-bagrutData" class="hidden"></div>
+        <details class="relative">
+          <summary class="btn btn-ghost btn-sm" title="מצב קובץ הבגרות ופעולות נוספות" aria-label="מצב קובץ הבגרות">ℹ️</summary>
+          <div class="ribbon-pop fixed z-50 w-80 max-w-[90vw] max-h-[75vh] overflow-y-auto rounded-lg border border-slate-300 bg-white p-3 shadow-xl space-y-2">
+            <div data-fresh-bar="bagrutData" role="status" aria-live="polite"></div>
+            <div data-coverage="bagrutData" class="flex flex-wrap gap-1"></div>
+            <div id="unknown-bagrutData" class="hidden"></div>
+          </div>
+        </details>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="bagrutData" title="טען קובץ ציוני בגרות" aria-label="טען קובץ ציוני בגרות">📂 טעינת קובץ</button>
         <button type="button" id="btnRulesToggle" class="btn btn-ghost btn-sm" aria-expanded="false" aria-controls="rulesDrawer" title="כללי זכאות ומשקלים" aria-label="כללי זכאות ומשקלים">📐</button>
         <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
       </div>
@@ -380,6 +382,7 @@
           <button type="button" class="chip" data-gview="explorer" aria-pressed="true" title="קבוצות ורשימות שמיות">📋 קבוצות</button>
           <button type="button" class="chip" data-gview="anomalies" aria-pressed="false" title="טבלת חריגי שיבוץ לכלל המקצועות">חריגים</button>
         </div>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="groupsData" title="טען קובץ קבוצות ושיבוצים" aria-label="טען קובץ קבוצות ושיבוצים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-groupsData" data-file-input="groupsData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ קבוצות ושיבוצים">
       </div>
       <div id="sadinActions" data-sadin-only class="hidden flex-wrap items-center gap-1">
@@ -389,7 +392,13 @@
         </div>
         <button type="button" class="btn btn-ghost btn-sm" data-act="sadinAlerts">🔔 התראות</button>
         <div id="unknown-sadinData" class="hidden"></div>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="sadinData" title="טען קובץ ציונים שוטפים (סדין)" aria-label="טען קובץ ציונים שוטפים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
+      </div>
+      <div id="ribbonStatus" class="flex flex-wrap items-center gap-2 mr-auto">
+        <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
+        <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
+        <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
       </div>
     </div>
   </div>
@@ -669,12 +678,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_5"></script>
-  <script src="js/storage.js?v=20261117_5"></script>
-  <script src="js/mockData.js?v=20261117_5"></script>
-  <script src="js/parser.js?v=20261117_5"></script>
-  <script src="js/bagrutEngine.js?v=20261117_5"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_5"></script>
-  <script src="js/app.js?v=20261117_5"></script>
+  <script src="js/config.js?v=20261117_6"></script>
+  <script src="js/storage.js?v=20261117_6"></script>
+  <script src="js/mockData.js?v=20261117_6"></script>
+  <script src="js/parser.js?v=20261117_6"></script>
+  <script src="js/bagrutEngine.js?v=20261117_6"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_6"></script>
+  <script src="js/app.js?v=20261117_6"></script>
 </body>
 </html>
