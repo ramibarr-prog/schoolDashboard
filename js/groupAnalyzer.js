@@ -374,11 +374,11 @@ const GroupAnalyzer = {
         const diag = [];
         if (!g.reinforcement) {
           Store.groupsOf(t.tz).filter(o => o.groupId !== g.groupId && o.inFile && !o.reinforcement && (cats.get(o.groupId) || {}).key === cat.key)
-            .forEach(o => diag.push({ kind: 'dup', other: o.groupId, text: `🚨 כפול: רשום גם אצל ${o.teacher || 'ללא מורה'} [${o.groupId}]`, title: 'רשום ביותר מקבוצה אחת באותו מקצוע במשוב' }));
+            .forEach(o => diag.push({ kind: 'dup', other: o.groupId, text: `כפול: רשום גם אצל ${o.teacher || 'ללא מורה'} [${o.groupId}]`, title: 'רשום ביותר מקבוצה אחת באותו מקצוע במשוב' }));
         }
         const k = kindOf.get(t.classKey);
-        if (k === 'straggler') diag.push({ kind: 'grade', text: `🚨 חריג שכבה (משובץ מ-${t.classKey})`, title: `חניך משכבה ${Util.gl(t.gradeKey)} בקבוצה של שכבה ${Util.gl(domGrade)} – ייתכן מעבר שלא עודכן במשוב` });
-        else if (k === 'minor') diag.push({ kind: 'outlier', text: `⚠️ בודד מכיתה ${t.classKey} בקבוצה של ${mainLabel}`, title: 'חניך בודד מכיתת אם שונה מרוב הקבוצה – ייתכן מעבר שלא עודכן במשוב' });
+        if (k === 'straggler') diag.push({ kind: 'grade', text: `חריג שכבה (משובץ מ-${t.classKey})`, title: `חניך משכבה ${Util.gl(t.gradeKey)} בקבוצה של שכבה ${Util.gl(domGrade)} – ייתכן מעבר שלא עודכן במשוב` });
+        else if (k === 'minor') diag.push({ kind: 'outlier', text: `בודד מכיתה ${t.classKey} בקבוצה של ${mainLabel}`, title: 'חניך בודד מכיתת אם שונה מרוב הקבוצה – ייתכן מעבר שלא עודכן במשוב' });
         /* הצלבה מול הסדין: מוצגת רק כשהחניך מקבל ציונים בקבוצה אחרת באותו מקצוע */
         if (sadinLoaded && sadinGrades.has(t.gradeKey)) {
           const entries = Store.currentOf(t.tz).filter(e => e.groupId && e.events.length);
@@ -386,7 +386,7 @@ const GroupAnalyzer = {
             const other = entries.find(e => (cats.get(e.groupId) || {}).key === cat.key);
             if (other) {
               const og = Store.groups.get(other.groupId);
-              diag.push({ kind: 'sadin-other', other: other.groupId, text: `🚨 ציונים בסדין בקבוצה אחרת [${other.groupId}]`, title: og ? `מקבל ציונים ב-${label(og)} ולא בקבוצה הרשומה` : 'מקבל ציונים בקבוצה אחרת' });
+              diag.push({ kind: 'sadin-other', other: other.groupId, text: `ציונים בסדין בקבוצה אחרת [${other.groupId}]`, title: og ? `מקבל ציונים ב-${label(og)} ולא בקבוצה הרשומה` : 'מקבל ציונים בקבוצה אחרת' });
             }
           }
         }

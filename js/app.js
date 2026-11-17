@@ -505,7 +505,7 @@ const App = {
     return true;
   },
 
-  /** תגי "מחשבון הפוך" לציון ה-30% החסר: מידע / 🎯 ענבר / 🚨 אדום */
+  /** תגי "מחשבון הפוך" לציון ה-30% החסר: מידע / 🎯 ענבר / אדום */
   reverseBadges(ev, max = Infinity) {
     if (!ev.reverse || !ev.reverse.length || ev.tier === 0) return '';
     const cls = { info: 'bg-sky-100 text-sky-800', amber: 'tier-3', red: 'tier-4' };
@@ -531,7 +531,7 @@ const App = {
       option('savable', `🎯 הצלה ב-30% (${stats.savable})`) +
       option('near', `חסם בודד (${stats.singleBlocker})`) +
       option('exception', `⚡ חריג ידני (${stats.exceptions})`) +
-      option('suspect', `⚠️ חשד לחריג (${stats.potentialExceptions})`));
+      option('suspect', `חשד לחריג (${stats.potentialExceptions})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
     const modeBtn = (full, label, title) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${!!sim.fullMode === full}" title="${E(title)}">${label}</button>`;
@@ -730,7 +730,7 @@ const App = {
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
       return `${status}
-        ${ev.manual ? '<span class="badge badge-exc">⚡ חריג</span>' : ev.isPotentialException ? `<span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">⚠️</span>` : ''}`;
+        ${ev.manual ? '<span class="badge badge-exc">⚡ חריג</span>' : ev.isPotentialException ? `<span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span>` : ''}`;
     };
 
     const cols = 6 + coreCols.length;
@@ -791,7 +791,7 @@ const App = {
   renderRulesDrawer() {
     const r = Config.rules();
     const warnings = Config.rulesWarnings(r);
-    setHtml('rulesWarnings', warnings.map(w => `<div>⚠️ ${E(w)}</div>`).join(''));
+    setHtml('rulesWarnings', warnings.map(w => `<div>${E(w)}</div>`).join(''));
     setChecked('ruleCompEnabled', r.allowCompensationRule !== false);
     setChecked('ruleCompPoints', Config.pointsCompensation().enabled);
     setVal('ruleCompMin', r.compensationMin);
@@ -910,7 +910,7 @@ const App = {
     this.openModal(`
       <h3 class="text-lg font-semibold mb-1">⚡ מצב חריג – ${E(t.name)}</h3>
       <p class="text-xs text-slate-500 mb-3">ת.ז ${t.tz} · ${E(Config.classLabel(t.classKey))}</p>
-      ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">⚠️ חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
+      ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
       <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${ex.isException ? 'checked' : ''}>מוחרג מחישוב אוטומטי</label>
       <label class="flex flex-col gap-1 text-sm mb-3">סטטוס מוכרע
         <select id="xmStatus" class="inp">${Config.OVERRIDE_STATUSES.map(s => `<option value="${s.value}" ${(ex.overrideStatus || 'atrisk') === s.value ? 'selected' : ''}>${E(s.label)}</option>`).join('')}</select></label>
@@ -1048,7 +1048,7 @@ const App = {
     if (!scope.length && missing.length) st.missingSelected = true;
     const missingItem = missing.length ? `<button type="button" data-act="gMissing" aria-pressed="${st.missingSelected}"
       class="w-full text-right rounded-xl border border-r-4 py-2 px-3 transition ${st.missingSelected ? 'bg-slate-900 text-white border-slate-900 border-r-rose-400 shadow-lg' : 'bg-white border-slate-300 border-r-rose-600 hover:border-indigo-500 hover:shadow-md text-slate-900'}">
-      <span class="font-bold">🚨 לא משובצים ל${E(cat.label)}</span><span class="block text-xs mt-1">${missing.length} חניכים</span></button>` : '';
+      <span class="font-bold">לא משובצים ל${E(cat.label)}</span><span class="block text-xs mt-1">${missing.length} חניכים</span></button>` : '';
     setHtml('groups-master', missingItem + scope.map(g => this.groupListItem(g, !st.missingSelected && g.groupId === st.groupId)).join('') ||
       '<div class="card p-6 text-center text-slate-700 text-sm">אין קבוצות או חניכים להצגה בסינון הנוכחי</div>');
     if (st.missingSelected) this.renderGroupDetail(null, missing, hit, cat);
@@ -1064,9 +1064,9 @@ const App = {
       <span class="text-xs font-bold text-slate-700 truncate">${E(label)}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100 whitespace-nowrap">${value}</span></button>`;
     box.innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-2">${[
       pill('all', 'gstat-ok', '🟢 הכל / משובצים תקין', `${h.ok} מתוך ${h.total}`),
-      pill('missing', 'gstat-bad', `🚨 לא משובצים כלל ל${cat.label}`, h.missing.length),
+      pill('missing', 'gstat-bad', `לא משובצים כלל ל${cat.label}`, h.missing.length),
       pill('dup', 'gstat-violet', `🔀 רשומים ל-2 קבוצות ב${cat.label}`, h.dup.length),
-      pill('stray', 'gstat-amber', `⚠️ חריגי שכבה/כיתה ב${cat.label}`, h.stray.length)
+      pill('stray', 'gstat-amber', `חריגי שכבה/כיתה ב${cat.label}`, h.stray.length)
     ].join('')}</div>`;
   },
 
@@ -1099,16 +1099,16 @@ const App = {
         <td><bdi dir="rtl">${E(Config.classLabel(t.classKey))}</bdi>${this.overrideBadge(t.tz)}</td><td>${notes || (g ? '<span class="text-emerald-800">✓ תקין</span>' : 'ללא שיבוץ')}</td></tr>`;
     };
     const divider = (text, cls = '') => `<tr class="room-divider ${cls}"><td colspan="4">${text}</td></tr>`;
-    const body = (anomalies.length ? divider(`⚠️ חריגי שיבוץ בקבוצה זו (${anomalies.length})`, 'anomaly-divider') + anomalies.map(row).join('') : '') +
+    const body = (anomalies.length ? divider(`חריגי שיבוץ בקבוצה זו (${anomalies.length})`, 'anomaly-divider') + anomalies.map(row).join('') : '') +
       [...rooms.entries()].map(([key, items]) => divider(`כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${items.length})`) + items.map(row).join('')).join('');
-    const title = g ? `${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span class="font-mono">[${E(g.groupId)}]</span>` : `🚨 לא משובצים ל${E(cat ? cat.label : '')}`;
-    const declared = g && g.declared != null && g.declared !== g.total ? `<span class="badge tier-3">⚠ מוצהר ${g.declared}</span>` : '';
+    const title = g ? `${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span class="font-mono">[${E(g.groupId)}]</span>` : `לא משובצים ל${E(cat ? cat.label : '')}`;
+    const declared = g && g.declared != null && g.declared !== g.total ? `<span class="badge tier-3">מוצהר ${g.declared}</span>` : '';
     setHtml('groups-detail', `<article class="card overflow-hidden lg:h-full lg:flex lg:flex-col lg:min-h-0">
       <header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div><h3 class="text-lg font-bold">${title}</h3>${g && g.targetClasses ? `<div class="text-xs text-indigo-100 mt-1">כיתות יעד: <bdi dir="rtl">${E(g.targetClasses)}</bdi></div>` : ''}</div>
         <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${members.length} חניכים</span>${declared}        ${g && g.reinforcement ? '<span class="badge bg-white/15 text-white border-white/30">תגבור</span>' : ''}</div>
       </header>
-      <div class="overflow-x-auto lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain"><table class="grid w-full"><thead><tr><th>ת.ז</th><th>שם חניך</th><th>כיתת אם</th><th>חיווי בקרה</th></tr></thead>
+      <div class="sticky-scroll lg:flex-1 lg:min-h-0 overscroll-contain"><table class="grid w-full"><thead><tr><th>ת.ז</th><th>שם חניך</th><th>כיתת אם</th><th>חיווי בקרה</th></tr></thead>
       <tbody>${body || '<tr><td colspan="4" class="text-center text-slate-700 py-6">אין חניכים להצגה</td></tr>'}</tbody></table></div></article>`);
   },
 
@@ -1122,9 +1122,9 @@ const App = {
     const byTz = new Map(list.map(t => [t.tz, t]));
     const KIND = { none: ['חוסר', 'severe'], dup: ['כפילות', 'severe'], nomajor: ['ללא', 'warn'] };
     const card = (table, count) => `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
-      <h3 class="text-lg font-bold">${st.kind === 'unmatched' ? '⚠️ רשומות שאינן במצבת' : '🚨 חריגי שיבוץ'}</h3>
+      <h3 class="text-lg font-bold">${st.kind === 'unmatched' ? 'רשומות שאינן במצבת' : 'חריגי שיבוץ'}</h3>
       <span class="badge bg-indigo-500 text-white border-indigo-300">${count} ${st.kind === 'unmatched' ? 'רשומות' : 'חניכים'}</span>
-      </header><div class="overflow-x-auto overscroll-contain">${table}</div>`;
+      </header><div class="sticky-scroll overscroll-contain">${table}</div>`;
 
     if (st.kind === 'unmatched') {
       return card(`<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם בקובץ</th><th class="text-right">מופיעה ב</th></tr></thead><tbody>${
@@ -1141,7 +1141,7 @@ const App = {
       const t = byTz.get(tz);
       const badges = found.map(a => {
         const detail = a.groups.length ? ` (${a.groups.map(g => `[${g.groupId}] ${g.teacher || 'ללא מורה'}`).join(', ')})` : '';
-        return this.flatNote(KIND[a.kind][1], `${KIND[a.kind][0]}: ${a.subject} ⚠️`, a.subject + detail);
+        return this.flatNote(KIND[a.kind][1], `${KIND[a.kind][0]}: ${a.subject}`, a.subject + detail);
       }).join('');
       return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${tz}"><td class="tz-col min-w-[95px] whitespace-nowrap text-right">${tz}</td><td class="text-right"><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openProfile" data-tz="${E(tz)}">${E(t.name)}</button></td>
         <td class="text-right">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td><td class="text-right">${badges}</td></tr>`;
@@ -1157,7 +1157,7 @@ const App = {
   renderSadinPanel() {
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
-    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sadin-scroll';
+    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sticky-scroll';
     document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sview === st.view)));
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
@@ -1184,8 +1184,8 @@ const App = {
     const filters = [
       ['all', 'כל החניכים', all.length],
       ['fail', '🔴 עם נכשל שוטף', all.filter(r => r.failing > 0).length],
-      ['multiple', '🚨 ריבוי שליליים', all.filter(r => r.failing >= 2).length],
-      ['missed', '⚠️ אירועים שהוחמצו', all.filter(r => r.missed > 0).length]
+      ['multiple', 'ריבוי שליליים', all.filter(r => r.failing >= 2).length],
+      ['missed', 'אירועים שהוחמצו', all.filter(r => r.missed > 0).length]
     ];
     setHtml('sadinFilterSelect', filters.map(([key, label, count]) => option(key, `${label} (${count})`, st.strip)).join(''));
     const selectedFilter = filters.find(([key]) => key === st.strip);
@@ -1197,7 +1197,7 @@ const App = {
 
   /** ציון כטקסט שטוח בשורה אחת, בלי רקע או מסגרת: אדום כהה לנכשל/חסר/מסומן, אפור-כהה לעובר */
   sadinScore(value, missed = false) {
-    const text = value == null ? (missed ? '⚠️ חסר' : '—') : `${Util.fmt(value, 0)}${missed ? ' ⚠️' : ''}`;
+    const text = value == null ? (missed ? 'חסר' : '—') : Util.fmt(value, 0);
     const alert = missed || (value != null && value < 55);
     return `<span class="sadin-score ${alert ? 'is-bad' : value == null ? 'is-empty' : ''}">${text}</span>`;
   },
@@ -1254,9 +1254,9 @@ const App = {
       }).join('');
       return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td class="font-semibold bg-slate-50/70" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
-        <td class="whitespace-nowrap border-l-2 border-slate-200">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
+        <td class="whitespace-nowrap border-l-2 border-slate-200">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
     });
-    setHtml('sadin-table', `<div class="sadin-scroll overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th class="border-l-2 border-slate-500">שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
+    setHtml('sadin-table', `<div class="sticky-scroll overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th class="border-l-2 border-slate-500">שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
   },
 
@@ -1605,7 +1605,7 @@ const App = {
       html = `<div class="font-medium mb-1">${roster.length} חניכים פעילים · ${classes.length} כיתות אם</div>
         <div class="flex flex-wrap gap-1 mb-2">${classes.map(c => `<button type="button" class="class-pill" data-act="classRoster" data-class="${E(c)}" title="הצגת חניכי הכיתה ושיוך מהיר" aria-haspopup="dialog">${E(Config.classLabel(c))}: ${byClass.get(c)}</button>`).join('')}</div>
         ${rep ? `<div class="text-xs text-slate-500">נקלטו ${rep.sheets.length} גיליונות${rep.skipped ? ` · ${rep.skipped} שורות דולגו` : ''}${rep.duplicates ? ` · ${rep.duplicates} כפילויות אוחדו` : ''}${rep.ignored ? ` · ${rep.ignored} חניכי ז'-ט' לא נקלטו` : ''}</div>
-          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">⚠️ ${E(w)}</div>`).join('')}` : ''}
+          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">${E(w)}</div>`).join('')}` : ''}
         <div class="flex gap-2 mt-3"><button type="button" class="btn btn-danger btn-sm" data-act="deleteRoster">מחיקת המצבת</button></div>`;
     }
     setHtml('rosterSummary', html);
@@ -1697,7 +1697,7 @@ const App = {
     const adoptable = mm.filter(m => m.adopt), unnamed = adoptable.filter(m => this.isUnnamedClass(m.homeroom));
     setHtml('ovConflicts', mm.length ? `
       <div class="rounded-lg bg-amber-50 p-3">
-        <div class="font-medium text-amber-800 mb-2">⚠️ סתירות שיוך בין המצבת לקובצי המשוב (${mm.length})</div>
+        <div class="font-medium text-amber-800 mb-2">סתירות שיוך בין המצבת לקובצי המשוב (${mm.length})</div>
         <div class="flex flex-wrap items-center gap-2 mb-3" role="group" aria-label="פעולות קבוצתיות לסתירות שיוך">
           <button type="button" class="btn btn-primary btn-sm" data-act="ovAdoptAll" data-scope="unnamed" ${unnamed.length ? '' : 'disabled'}>העבר את כל החניכים מקבוצות ללא שם לכיתה הנכונה (${unnamed.length})</button>
           <button type="button" class="btn btn-sm bg-white text-slate-800 hover:bg-indigo-100" data-act="ovAdoptAll" data-scope="all" ${adoptable.length ? '' : 'disabled'}>אמץ שיוך משו"ב לכל הסתירות (${adoptable.length})</button>
@@ -1726,7 +1726,7 @@ const App = {
       return `<tr class="${o.hidden ? 'opacity-60' : ''}"><td class="tz-col text-right">${E(o.tz)}</td><td class="text-right font-medium">${E(name)}</td>
         <td class="text-right whitespace-nowrap">${E(r ? this.rawLabel(r) : '— (לא במצבת)')}</td><td class="text-right whitespace-nowrap">${E(eff)}</td>
         <td class="text-right">${status}</td>
-        <td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${o.tz}">❌ בטל דריסה</button></td></tr>`;
+        <td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${o.tz}">בטל דריסה</button></td></tr>`;
     }).join('');
     setHtml('ovTable', `<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם חניך</th><th class="text-right">שיוך מקורי בקובץ</th><th class="text-right">שיוך דורס פעיל</th><th class="text-right">סטטוס / מסלול</th><th class="text-right">פעולה</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6" class="text-center text-slate-400 py-6">אין דריסות פעילות</td></tr>'}</tbody></table>`);

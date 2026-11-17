@@ -197,10 +197,10 @@ const BagrutEngine = (() => {
       text = `🎯 חסר ${pct}% — נדרש ציון חיובי (מינימום ${Math.max(1, required30)}) ב-${pct}% לעובר ${pass}`;
     } else if (required30 <= 100) {
       level = 'amber';
-      text = `🎯 חסר ${pct}% — חייב לפחות ${required30} ב-${pct}% כדי לעבור מקצוע (${pass})!`;
+      text = `🎯 חסר ${pct}% — חייב לפחות ${required30} ב-${pct}%       כדי לעבור מקצוע (${pass})`;
     } else {
       level = 'red';
-      text = `🚨 קריטי: גם 100 ב-${pct}% לא יספיק (מקסימום ${max}) — חייב מועד ב' בבחינה!`;
+            text = `קריטי: גם 100 ב-${pct}% לא יספיק (מקסימום ${max}) — חייב מועד ב' בבחינה`;
     }
     return { subject: res.name, level, text, required30, requiredFor45, pct, max, externalScore, wExt, wInt, internalCodes: missing.map(u => u.code), pendingCohort: !res.unresolved.length };
   }
@@ -323,7 +323,7 @@ const BagrutEngine = (() => {
       const redReverse = !!(s.reverse && s.reverse.level === 'red');
       const hasExternal = s.comps.some(c => c.state === 'num' || c.state === 'pass');
       s.unresolved.forEach(c => {
-        if (c.blocked) { B.push({ gate: 1, k: 'bagrut-block', hard: true, text: `🚨 חסם בגרות – ${s.name} (שאלון ${c.code})` }); return; }
+        if (c.blocked) { B.push({ gate: 1, k: 'bagrut-block', hard: true, text: `חסם בגרות – ${s.name} (שאלון ${c.code})` }); return; }
         /* מחשבון הפוך אדום מייצר חסם קשה אחד משלו, ולכן לא מוסיפים גם חסם "שאלון חסר" על אותו רכיב */
         if (redReverse && c.internal) return;
         /* השכבה כבר נבחנה ברכיב והחניך ללא ציון: לומד השנה (התראה רכה), או "לא ניגש!" / שאלון חסר (חסם) */
@@ -333,7 +333,7 @@ const BagrutEngine = (() => {
           return;
         }
         if (!ctx.strict && !(c.internal && hasExternal)) {
-          if (!s.noShow) B.push({ gate: 1, k: 'noshow', hard: full, miss: true, text: `לא ניגש! ${s.name} (שאלון ${c.code})` });
+          if (!s.noShow) B.push({ gate: 1, k: 'noshow', hard: full, miss: true, text: `לא ניגש ${s.name} (שאלון ${c.code})` });
           s.noShow = true;
           return;
         }
@@ -449,7 +449,7 @@ const BagrutEngine = (() => {
 
     const blockedCand = cands.find(c => c.blocked);
     const failing = cands.find(c => c.status === 'fail');
-    if (blockedCand) B.push({ gate: 2, k: 'bagrut-block', hard: true, text: `🚨 חסם בגרות – מגמה ${blockedCand.name} (שאלון ${blockedCand.blocked})` });
+    if (blockedCand) B.push({ gate: 2, k: 'bagrut-block', hard: true, text: `חסם בגרות – מגמה ${blockedCand.name} (שאלון ${blockedCand.blocked})` });
     else if (failing) {
       const soft = failing.source === 'current' && ctx.adaptive;
       B.push({ gate: 2, k: 'major-fail', hard: !soft, watch: soft, grade: failing.adj, text: `מגמה ${failing.name} ${failing.source === 'current' ? 'שוטף ' : ''}(${rnd(failing.adj)})` });
@@ -486,7 +486,7 @@ const BagrutEngine = (() => {
       /* המתג בסימולטור מתעלם מכל יחידות שער 3, ללא תלות בהגדרה פרטנית */
       if (ctx.ignoreInternals) { res.ignored = true; return res; }
       /* יחידה פנימית שמועדה הגיע וחסרה היא חסם קשה (גם במצב המותאם, אלא אם החניך לומד אותה השנה) */
-      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `🚨 חסם בגרות – ${it.name}` });
+      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `חסם בגרות – ${it.name}` });
       else B.push({ gate: 3, k: 'internal', hard: ctx.strict || !res.inGroup, miss: true, inGroup: res.inGroup, text: `ציון ${it.name}${res.inGroup ? ' (בלימוד)' : ''}` });
       return res;
     });
@@ -676,7 +676,7 @@ const BagrutEngine = (() => {
     if (rev) tip.push(rev.text);
     tip.push(s.group ? `קבוצה: ${s.group.subject} [${s.group.groupId}]${s.group.teacher ? ` · ${s.group.teacher}` : ''}` : 'קבוצה: לא משובץ');
     tip.push(`ציון שוטף: ${s.current != null ? Math.round(s.current) : '—'}${s.source === 'current' ? ' (משמש כתחזית)' : ''}`);
-    if (s.currentWarn) tip.push(`⚠️ ${s.currentWarn}`);
+    if (s.currentWarn) tip.push(s.currentWarn);
     return { id: s.id, name: s.name, units: s.variableUnits ? s.units : null, text, sub, cls, state, tip: tip.join(' | ') };
   }
 
@@ -704,7 +704,7 @@ const BagrutEngine = (() => {
     const tip = [`מגמה 5 יח"ל: ${cand.name}`];
     if (cand.bagrut != null) tip.push(`ציון בגרות: ${Math.round(cand.bagrut)}`);
     if (cand.missing && cand.missing.length) tip.push(`שאלון חסר: ${cand.missing.join(', ')}`);
-    if (cand.blocked) tip.push(`🚨 חסם בגרות (שאלון ${cand.blocked})`);
+    if (cand.blocked) tip.push(`חסם בגרות (שאלון ${cand.blocked})`);
     tip.push(`ציון שוטף: ${cand.current != null ? Math.round(cand.current) : '—'}`);
     others.forEach(o => tip.push(`מגמה נוספת: ${o.name} – ${({ pass: 'עברה', pending: 'לומד', fail: 'נכשלה', missing: 'חסר שאלון', nodata: 'אין נתון' })[o.status] || ''}${o.adj != null ? ` (${Math.round(o.adj)})` : ''}`));
     const sub = [name, others.length ? `+ ${others.map(short).join(', ')}` : '', cand.source === 'current' && cand.status !== 'pending' ? '(שוטף)' : ''].filter(Boolean).join(' ');
