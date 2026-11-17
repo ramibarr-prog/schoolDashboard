@@ -190,6 +190,12 @@ const App = {
     this.syncGroupLayout();
     if (changed && $('mainContent')) $('mainContent').scrollTop = 0;
     document.body.classList.remove('nav-open');
+    const upload = $('btnUpload'), key = { bagrut: 'bagrutData', groups: 'groupsData', sadin: 'sadinData' }[name];
+    if ($('ribbonRow2')) $('ribbonRow2').classList.toggle('hidden', name === 'overview' || name === 'settings');
+    if (upload) {
+      upload.classList.toggle('invisible', !key);
+      if (key) { upload.dataset.upload = key; upload.title = `טעינת קובץ: ${DATASETS[key].title}`; upload.setAttribute('aria-label', upload.title); }
+    }
     if ($('navScrim')) $('navScrim').classList.add('hidden');
     const search = $('globalSearch');
     if (search) search.placeholder = name === 'groups' ? 'חיפוש חניך לפי שם, ת.ז או קוד קבוצה' : 'חיפוש חניך לפי שם או ת.ז';
@@ -256,16 +262,6 @@ const App = {
     const banner = $('overridesBanner');
     if (banner) { banner.classList.toggle('hidden', !count); banner.textContent = `🔀 ${count} דריסות שיוך פעילות`; }
     ['bagrut', 'groups', 'sadin', 'roster'].forEach(p => this.renderFreshnessBar(p));
-    this.renderSadinFileInfo();
-  },
-
-  renderSadinFileInfo() {
-    const rows = Config.getRows('sadinData');
-    const count = new Set(rows.map(r => r.tz).filter(Boolean)).size;
-    const info = $('sadinLoadedInfo');
-    const fresh = Config.getFreshnessInfo('sadinData');
-    info.textContent = `${({ fresh: '🟢', aging: '🟠', stale: '🔴', empty: '⚪' })[fresh.status]} ${count} חניכים`;
-    info.title = `${fresh.message}${Store.latestEventDate ? ` · אירוע אחרון: ${Store.latestEventDate}` : ''}`;
   },
 
   /** כלים טכניים בלשונית ההגדרות: מיפוי עמודות וניקוי נתונים לכל קובץ משנה (כולל הסרת סדין לפי שכבה) */
@@ -867,7 +863,7 @@ const App = {
       if (ev.tier === 0) body = `<span class="text-xs text-slate-600">${E(ev.diagnostic)}</span>`;
       else if (!items.length) body = '<span class="text-xs text-emerald-800">✓ תקין</span>';
       else {
-        const b = x => `<span class="badge ${x.hard ? 'tier-4' : x.target ? 'bg-sky-100 text-sky-800' : 'tier-3'} !inline-block max-w-[15rem] truncate align-middle">${E(x.text)}</span>`;
+        const b = x => `<span class="badge ${x.hard ? 'tier-4' : x.target ? 'bg-sky-100 text-sky-800' : 'tier-3'}">${E(x.text)}</span>`;
         const more = items.length - MAX;
         body = items.slice(0, MAX).map(b).join(' ') + (more > 0 ? ` <span class="badge fresh-slate border" title="${E(items.slice(MAX).map(x => x.text).join(' · '))}">+${more}</span>` : '');
       }
@@ -879,8 +875,8 @@ const App = {
       const status = ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
-      return `${status}
-        ${ev.manual ? '<span class="badge badge-exc">⚡ חריג</span>' : ev.isPotentialException ? `<span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span>` : ''}`;
+      return `<div>${status}</div>
+        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : ev.isPotentialException ? `<div><span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span></div>` : ''}`;
     };
 
     const cols = 6 + coreCols.length;
@@ -1081,7 +1077,6 @@ const App = {
     this.renderFreshnessBar('groups');
     const st = this.state.groups, explorer = st.view === 'explorer';
     document.querySelectorAll('[data-gview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.gview === st.view)));
-    this.renderGroupsInfo();
     const show = (id, on) => { const el = $(id); if (el) el.classList.toggle('hidden', !on); };
     const message = text => {
       this._explorerView = []; this._boardMissing = [];
@@ -1116,25 +1111,6 @@ const App = {
     setHtml('groupsSubject', opt('all', 'כל מקצועות החובה + מגמה', st.subject) +
       GroupAnalyzer.coreSubjects().map(s => opt(s.id, s.name, st.subject)).join('') + opt('major', 'מגמה 5 יח"ל בלבד', st.subject));
     setHtml('groups-table', this.anomaliesTable(analysis, list));
-  },
-
-  /** שורת מידע שקטה ליד כפתור הטעינה: כמה חניכים טענו ובאילו שכבות (הצבע מרמז על עדכניות הקובץ) */
-  renderGroupsInfo() {
-    const el = $('groupsLoadedInfo');
-    if (!el) return;
-    const rows = Config.getRows('groupsData');
-    if (!rows.length) { el.className = 'text-xs text-slate-400'; el.textContent = 'טרם נטען קובץ'; el.removeAttribute('title'); return; }
-    const roster = Config.rosterMap(), tzs = new Set(), grades = new Set();
-    rows.forEach(r => {
-      if (r.isTeacher || !r.tz) return;
-      tzs.add(r.tz);
-      const g = r.gradeKey || (roster.get(r.tz) || {}).grade;
-      if (g) grades.add(g);
-    });
-    const info = Config.getFreshnessInfo('groupsData');
-    el.className = `text-xs ${{ aging: 'txt-warn', stale: 'txt-bad' }[info.status] || 'text-slate-500'}`;
-    el.title = `${info.message} · שכבות: ${[...grades].sort((a, b) => Util.ord(a) - Util.ord(b)).map(g => Util.gl(g)).join(', ')}`;
-    el.textContent = `${tzs.size} חניכים`;
   },
 
   groupsRerender() {
