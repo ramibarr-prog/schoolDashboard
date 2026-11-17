@@ -16,7 +16,6 @@ const setChecked = (id, v) => { const el = $(id); if (el) el.checked = !!v; };
 const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
 
 const TABS = ['bagrut', 'groups', 'sadin', 'profile', 'settings'];
-const GATE_TITLE = { pass: 'עומד', partial: 'חסר חלקי', fail: 'לא עומד', off: 'כבוי בכללים', nodata: 'אין נתונים' };
 
 /* סוג קובץ בממשק ← מפתח אחסון */
 const DATASETS = {
@@ -257,21 +256,42 @@ const App = {
   },
 
   renderSadinFileInfo() {
-    const rows = Config.getRows('sadinData'), roster = Config.rosterMap(), grades = new Map();
-    rows.forEach(r => {
-      const grade = r.gradeKey || (roster.get(r.tz) || {}).grade;
-      if (!Util.GRADE_KEYS.includes(grade)) return;
-      if (!grades.has(grade)) grades.set(grade, new Set());
-      if (r.tz) grades.get(grade).add(r.tz);
-    });
+    const rows = Config.getRows('sadinData');
     const count = new Set(rows.map(r => r.tz).filter(Boolean)).size;
     const info = $('sadinLoadedInfo');
     const fresh = Config.getFreshnessInfo('sadinData');
     info.textContent = `${({ fresh: '🟢', aging: '🟠', stale: '🔴', empty: '⚪' })[fresh.status]} ${count} חניכים`;
     info.title = `${fresh.message}${Store.latestEventDate ? ` · אירוע אחרון: ${Store.latestEventDate}` : ''}`;
-    setHtml('sadinRemoveOptions', Util.GRADE_KEYS.filter(g => grades.has(g)).map(g =>
-      `<button type="button" class="btn btn-ghost btn-sm w-full justify-between mb-1" data-act="clearSadinGrade" data-grade="${E(g)}" title="הסרת שורות סדין של שכבה ${E(Util.gl(g))}">${E(Util.gl(g))} (${grades.get(g).size}) ×</button>`).join('') +
-      `<button type="button" class="btn btn-danger btn-sm w-full" data-act="clearPanel" data-key="sadinData" ${rows.length ? '' : 'disabled'}>🧹 נקה את כל הסדין</button>`);
+  },
+
+  /** כלים טכניים בלשונית ההגדרות: מיפוי עמודות וניקוי נתונים לכל קובץ משנה (כולל הסרת סדין לפי שכבה) */
+  renderDataTools() {
+    const sadinGrades = new Map(), roster = Config.rosterMap();
+    Config.getRows('sadinData').forEach(r => {
+      const grade = r.gradeKey || (roster.get(r.tz) || {}).grade;
+      if (!Util.GRADE_KEYS.includes(grade)) return;
+      if (!sadinGrades.has(grade)) sadinGrades.set(grade, new Set());
+      if (r.tz) sadinGrades.get(grade).add(r.tz);
+    });
+    const card = key => {
+      const loaded = !!Config.getDataset(key);
+      const perGrade = key === 'sadinData'
+        ? Util.GRADE_KEYS.filter(g => sadinGrades.has(g)).map(g =>
+          `<button type="button" class="btn btn-ghost btn-sm w-full justify-between" data-act="clearSadinGrade" data-grade="${E(g)}" title="הסרת שורות סדין של שכבה ${E(Util.gl(g))}">הסרת שכבה ${E(Util.gl(g))} (${sadinGrades.get(g).size}) ×</button>`).join('')
+        : '';
+      return `<div class="rounded-lg border border-slate-300 bg-slate-50 p-3 space-y-2">
+        <div class="text-sm font-bold">${E(DATASETS[key].title)}</div>
+        <div data-fresh-bar="${key}" role="status"></div>
+        <div class="flex flex-col gap-1.5">
+          <button type="button" class="btn btn-ghost btn-sm w-full justify-between" data-act="remap" data-key="${key}" title="מיפוי ידני מחדש של עמודות הקובץ">🔧 מיפוי עמודות</button>
+          ${perGrade}
+          <button type="button" class="btn btn-danger btn-sm w-full justify-between" data-act="clearPanel" data-key="${key}" ${loaded ? '' : 'disabled'}>🧹 נקה את כל הנתונים</button>
+        </div></div>`;
+    };
+    setHtml('dataTools', Object.keys(DATASETS).map(card).join(''));
+    Object.keys(DATASETS).forEach(key => {
+      document.querySelectorAll(`#dataTools [data-fresh-bar="${key}"]`).forEach(el => { el.innerHTML = this.freshBarHtml(key); });
+    });
   },
 
   overrideBadge(tz) {
@@ -303,7 +323,7 @@ const App = {
     return `<div class="fresh-bar fresh-slate"><span class="font-medium">⚪ טרם נטען קובץ</span></div>`;
   },
 
-  /** כיסוי לפי שכבה (חניכים ייחודיים בקובץ לכל שכבה) + כפתור ניקוי הפאנל; ריק כשלא נטען קובץ */
+  /** כיסוי לפי שכבה (חניכים ייחודיים בקובץ לכל שכבה); ריק כשלא נטען קובץ. ניקוי הנתונים נמצא בהגדרות */
   coverageHtml(key) {
     if (!Config.getDataset(key)) return '';
     let badges = '';
@@ -319,7 +339,7 @@ const App = {
       badges = [...byGrade.entries()].sort((a, b) => Util.ord(a[0]) - Util.ord(b[0]))
         .map(([g, set]) => `<span class="badge fresh-slate border" title="חניכים ייחודיים בקובץ">${E(Util.gl(g))}: ${set.size} חניכים</span>`).join('');
     }
-    return `${badges}<button type="button" class="btn btn-ghost btn-sm" data-act="clearPanel" data-key="${key}" title="מחיקת כל נתוני הפאנל (כל השכבות)">🧹 נקה נתוני פאנל</button>`;
+    return badges;
   },
 
   renderFreshnessBar(panelType) {
@@ -469,18 +489,6 @@ const App = {
       </div>`);
   },
 
-  exportSheet(name, data, file) {
-    if (typeof XLSX === 'undefined') return this.toast('ספריית SheetJS לא נטענה', 'error');
-    if (!data.length) return this.toast('אין נתונים לייצוא', 'warn');
-    const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = Object.keys(data[0]).map(k => ({ wch: Math.min(60, Math.max(10, k.length + 4, ...data.slice(0, 50).map(r => String(r[k] ?? '').length + 2))) }));
-    ws['!views'] = [{ rightToLeft: true }];
-    const wb = XLSX.utils.book_new();
-    wb.Workbook = { Views: [{ RTL: true }] };
-    XLSX.utils.book_append_sheet(wb, ws, name.slice(0, 30));
-    XLSX.writeFile(wb, file);
-  },
-
   /* ==================================================================
      פאנל 1 – צפי זכאות לבגרות
      ================================================================== */
@@ -491,6 +499,7 @@ const App = {
     if (chip === 'suspect') return !r.ev.manual && r.ev.isPotentialException;
     if (chip === 'near') return r.ev.singleBlocker;
     if (chip === 'notok') return r.ev.tier === 4;
+    if (chip === 'eligible') return r.ev.tier === 1 || r.ev.tier === 2;
     if (chip === 'savable') return r.ev.savable;
     if (/^tier[0-5]$/.test(chip)) return r.ev.tier === +chip.slice(4);
     return true;
@@ -517,6 +526,7 @@ const App = {
     const option = (id, label) => `<option value="${id}" ${st.chip === id ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('bagrutStatusSelect',
       option('all', `כל הסטטוסים (${rows.length})`) +
+      option('eligible', `✅ זכאים (${tierCount[1] + tierCount[2]})`) +
       [1, 2, 3, 4, 5, 0].map(i => option(`tier${i}`, `${['⚪', '🟢', '🟡', '🟠', '🔴', '⚪'][i]} ${i === 0 ? 'ללא נתוני בגרות' : TT[i]} (${tierCount[i]})`)).join('') +
       option('savable', `🎯 הצלה ב-30% (${stats.savable})`) +
       option('near', `חסם בודד (${stats.singleBlocker})`) +
@@ -530,6 +540,7 @@ const App = {
       sw('ignoreInternals', 'התעלם מחוסר יחידות פנימיות (חנ"ג, מעורבות, השכלה כללית ומדעים)') + sw('plus5', 'תוספת +5 לגבוליים 50-54') + sw('useCurrent', 'שלב ציונים שוטפים כתחזית (תצוגה מקדימה)'));
 
     this.renderCohortInfo(rows);
+    this.renderBagrutKpis(stats, tierCount, TT);
     const drillOpts = BagrutEngine.drillOptions();
     if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
     setHtml('bagrutSubjectDrillSelect',
@@ -538,6 +549,30 @@ const App = {
     if (!Store.hasData()) return this.noRoster([], 'bagrut-table');
     if (st.drill !== 'all') return setHtml('bagrut-table', this.bagrutSubjectMatrix(rows.filter(r => this.chipMatch(r, st.chip))));
     setHtml('bagrut-table', this.bagrutTable(list));
+  },
+
+  /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
+  renderBagrutKpis(stats, tierCount, TT) {
+    const box = $('bagrut-kpis');
+    if (!box) return;
+    if (!Store.hasData() || !Store.loaded.bagrut) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    const active = this.state.bagrut.chip;
+    const pct = (value, label, title) => `<div class="flex items-baseline gap-2" title="${E(title)}"><span class="text-2xl font-extrabold leading-none text-slate-900">${value}%</span><span class="text-xs font-semibold text-slate-600">${label}</span></div>`;
+    const quick = (id, cls, label, count, title) => `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(title)}">
+      <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${count}</span></button>`;
+    const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
+        ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis)}
+        ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis)}
+      </div>
+      <span class="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true"></span>
+      <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי צפי">
+        ${quick('eligible', 'gstat-ok', 'זכאים', tierCount[1] + tierCount[2], `${TT[1]} + ${TT[2]}`)}
+        ${quick('tier3', 'gstat-amber', 'קרובים לזכאות', tierCount[3], TT[3])}
+        ${quick('tier4', 'gstat-bad', 'בסיכון', tierCount[4], TT[4])}
+      </div></div>`;
   },
 
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
@@ -736,20 +771,6 @@ const App = {
     const pop = $('mxPop');
     if (pop) pop.classList.add('hidden');
     this._mxPinned = null;
-  },
-
-  exportBagrut() {
-    const CORE = [['hebrew', 'עברית'], ['history', 'היסטוריה'], ['civics', 'אזרחות'], ['tanach', 'תנ"ך'], ['literature', 'ספרות'], ['english', 'אנגלית'], ['math', 'מתמטיקה']];
-    const cellText = c => (c ? [c.units ? `${c.units} יח'` : '', c.text, c.sub].filter(Boolean).join(' ') : '');
-    this.exportSheet('צפי זכאות', this.bagrutList(this.dashRows()).map(({ t, ev }) => ({
-      'ת.ז': t.tz, 'שם': t.name, 'שכבה': Util.gl(t.gradeKey), 'כיתה': Config.classLabel(t.classKey), 'מסלול': this.trackOf(t),
-      'צפי (1-5)': ev.tier, 'תיאור צפי': ev.tierText, 'חריג ידני': ev.manual ? 'כן' : '', 'חשד לחריג': ev.potentialExceptionReason,
-      ...Object.fromEntries(CORE.map(([id, label]) => [label, cellText(ev.cells[id])])),
-      'מגמה 5 יח"ל': ev.majorCell ? [ev.majorCell.name, ev.majorCell.text].filter(Boolean).join(' ') : '',
-      'פנימיים': ev.internalCells.map(c => `${c.name}: ${({ ok: 'עומד', miss: 'חסר', learning: 'בלימוד', na: 'פטור', pending: 'טרם נדרש' })[c.state]}`).join(' · '),
-      'שער 1': GATE_TITLE[ev.gates[1]], 'שער 2': GATE_TITLE[ev.gates[2]], 'שער 3': GATE_TITLE[ev.gates[3]],
-      'מיקוד פדגוגי': ev.focus.map(x => x.text).join(' · '), 'מה חסר / סטטוס': ev.diagnostic, 'מחשבון 30%': ev.reverseText, 'ניתן להציל באמצעות 30%': ev.savable ? 'כן' : '', 'הערת מרכזת': Config.getException(t.tz).note
-    })), 'צפי-זכאות.xlsx');
   },
 
   /* ---------- מגירת כללי זכאות ומשקלים ---------- */
@@ -1077,16 +1098,15 @@ const App = {
       return `<tr class="${tint}"><td class="tz-col">${E(t.tz)}</td><td><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openBoardProfile" data-tz="${E(t.tz)}" title="${E(`סדין: ${count} אירועים`)}">${E(t.name)}</button></td>
         <td><bdi dir="rtl">${E(Config.classLabel(t.classKey))}</bdi>${this.overrideBadge(t.tz)}</td><td>${notes || (g ? '<span class="text-emerald-800">✓ תקין</span>' : 'ללא שיבוץ')}</td></tr>`;
     };
-    const divider = text => `<tr class="room-divider"><td colspan="4">${text}</td></tr>`;
-    const body = (anomalies.length ? divider(`🚨 חריגים לבדיקה (${anomalies.length})`) + anomalies.map(row).join('') : '') +
+    const divider = (text, cls = '') => `<tr class="room-divider ${cls}"><td colspan="4">${text}</td></tr>`;
+    const body = (anomalies.length ? divider(`⚠️ חריגי שיבוץ בקבוצה זו (${anomalies.length})`, 'anomaly-divider') + anomalies.map(row).join('') : '') +
       [...rooms.entries()].map(([key, items]) => divider(`כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${items.length})`) + items.map(row).join('')).join('');
     const title = g ? `${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span class="font-mono">[${E(g.groupId)}]</span>` : `🚨 לא משובצים ל${E(cat ? cat.label : '')}`;
     const declared = g && g.declared != null && g.declared !== g.total ? `<span class="badge tier-3">⚠ מוצהר ${g.declared}</span>` : '';
     setHtml('groups-detail', `<article class="card overflow-hidden lg:h-full lg:flex lg:flex-col lg:min-h-0">
       <header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div><h3 class="text-lg font-bold">${title}</h3>${g && g.targetClasses ? `<div class="text-xs text-indigo-100 mt-1">כיתות יעד: <bdi dir="rtl">${E(g.targetClasses)}</bdi></div>` : ''}</div>
-        <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${members.length} חניכים</span>${declared}${g && g.reinforcement ? '<span class="badge bg-white/15 text-white border-white/30">תגבור</span>' : ''}
-          ${g ? `<button type="button" class="btn btn-sm bg-white text-slate-900 hover:bg-indigo-50 font-semibold" data-act="exportGroup" data-id="${E(g.groupId)}">📥 ייצוא קבוצה לאקסל</button>` : ''}</div>
+        <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${members.length} חניכים</span>${declared}        ${g && g.reinforcement ? '<span class="badge bg-white/15 text-white border-white/30">תגבור</span>' : ''}</div>
       </header>
       <div class="overflow-x-auto lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain"><table class="grid w-full"><thead><tr><th>ת.ז</th><th>שם חניך</th><th>כיתת אם</th><th>חיווי בקרה</th></tr></thead>
       <tbody>${body || '<tr><td colspan="4" class="text-center text-slate-700 py-6">אין חניכים להצגה</td></tr>'}</tbody></table></div></article>`);
@@ -1131,36 +1151,13 @@ const App = {
       <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-emerald-800 py-8">לא נמצאו חריגות 🎉</td></tr>'}</tbody></table>`, byTrainee.size);
   },
 
-  exportGroups() {
-    const st = this.state.groups;
-    if (st.view === 'anomalies') {
-      const list = this.filtered(), byTz = new Map(list.map(t => [t.tz, t]));
-      const KIND = { none: 'חוסר שיבוץ', dup: 'כפילות שיבוץ', nomajor: 'ללא מגמה' };
-      const a = GroupAnalyzer.analyzeGroupAnomalies(list, st.subject);
-      this.exportSheet('חריגות שיבוץ', a.items.filter(x => st.kind === 'all' || x.kind === st.kind).map(x => ({
-        'ת.ז': x.tz, 'שם': byTz.get(x.tz).name, 'כיתה': Config.classLabel(byTz.get(x.tz).classKey), 'מקצוע': x.subject,
-        'ממצא': KIND[x.kind], 'קבוצות': x.groups.map(g => `[${g.groupId}] ${g.subject} – ${g.teacher}`).join(' | ')
-      })), 'חריגות-שיבוץ.xlsx');
-    } else {
-      /* ייצוא הרשימות השמיות של הקבוצות המוצגות כעת (קריאה בלבד) */
-      const rows = (this._boardMissing || []).map(t => ({
-        'קוד קבוצה': '', 'מקצוע': (this._boardCategory || ''), 'מורה': '', 'ת.ז': t.tz, 'שם חניך': t.name,
-        'כיתת אם': t.classKey, 'חיווי בקרה': 'לא משובץ במקצוע'
-      })).concat((this._explorerView || []).flatMap(g => g.members.map(m => ({
-        'קוד קבוצה': g.groupId, 'מקצוע': g.subject, 'מורה': g.teacher, 'ת.ז': m.t.tz, 'שם חניך': m.t.name,
-        'כיתת אם': m.t.classKey, 'חיווי בקרה': m.diag.map(d => d.text).join(' | ')
-      }))));
-      this.exportSheet('רשימות שמיות', rows, 'קבוצות-ורשימות-שמיות.xlsx');
-    }
-  },
-
   /* ==================================================================
      פאנל 3 – מוניטור ציונים שוטפים
      ================================================================== */
   renderSadinPanel() {
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
-    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap';
+    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sadin-scroll';
     document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sview === st.view)));
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
@@ -1171,7 +1168,6 @@ const App = {
     const option = (v, label, selected) => `<option value="${E(v)}" ${v === selected ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('sadinSubjectSelect', option('all', 'כל המקצועות', st.subject) + subjects.map(s => option(s, s, st.subject)).join(''));
     setHtml('sadinTeacherSelect', option('all', 'כל המורים', st.teacher) + teachers.map(t => option(t, t, st.teacher)).join(''));
-    this._sadinExportRows = [];
     if (!Store.hasData()) {
       setHtml('sadinFilterSelect', option('all', 'כל החניכים (0)', 'all'));
       return this.noRoster([], 'sadin-table');
@@ -1220,12 +1216,12 @@ const App = {
   },
 
   renderSadinSheet(rows, eventsMode) {
-    const core = ['אזרחות', 'אנגלית', 'היסטוריה', 'מתמטיקה', 'ספרות', 'תנך', 'עברית'];
-    const names = [...new Set(rows.flatMap(r => [...r.subjects.keys()]))].sort((a, b) => {
-      const rank = s => core.findIndex(c => Util.norm(s) === c || Util.norm(s).startsWith(`${c} `));
-      const ai = rank(a), bi = rank(b);
-      return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || natural(a, b);
-    });
+    const coreOrder = GroupAnalyzer.coreSubjects().map(s => s.name);
+    const rank = s => { const i = coreOrder.indexOf(s); return i < 0 ? coreOrder.length : i; };
+    /* עמודת מקצוע מוצגת רק אם לפחות חניך אחד בסינון רשום בה, בעל ציון או אירוע שהוחמץ; מקצועות ליבה קודם, אחריהם בחירה */
+    const relevant = s => s.entries.length || s.events.length || s.missed.size;
+    const names = [...new Set(rows.flatMap(r => [...r.subjects.values()].filter(relevant).map(s => s.name)))]
+      .sort((a, b) => rank(a) - rank(b) || natural(a, b));
     const columns = [];
     names.forEach(name => {
       if (eventsMode) {
@@ -1243,45 +1239,41 @@ const App = {
       }
       columns.push({ kind: 'subject', name, header: eventsMode ? (names.length > 1 ? `ממוצע ${name}` : 'ממוצע מקצוע') : name });
     });
-    const out = [];
     const body = this.homeroomRows(rows, columns.length + 4, r => {
-      const exportRow = { 'ת.ז': r.t.tz, 'חניך': r.t.name, 'כיתה': Config.classLabel(r.t.classKey), 'ממוצע כללי': r.overall == null ? '' : +r.overall.toFixed(1), 'שליליים': r.failing, 'אירועים שהוחמצו / ציון 0': r.missed };
       const cells = columns.map(col => {
         const s = r.subjects.get(col.name);
-        if (!s) { exportRow[col.header] = ''; return '<td class="text-slate-400">—</td>'; }
+        if (!s) return '<td class="text-slate-300">—</td>';
         if (col.kind === 'event') {
           const ev = s.events.find(x => x.key === col.event.key), missed = s.missed.has(col.event.key);
           const val = ev && ev.score != null ? ev.score : null;
           const text = ev && ev.score == null && ev.scoreRaw ? String(ev.scoreRaw) : '';
-          exportRow[col.header] = val != null ? val : text || (missed ? 'חסר' : '');
           const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : '—')}`;
-          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : E(text || '—')}</td>`;
+          return `<td title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : text ? E(text) : '<span class="text-slate-300">—</span>'}</td>`;
         }
-        exportRow[col.header] = s.avg == null ? '' : +s.avg.toFixed(1);
         return `<td><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td>`;
       }).join('');
-      out.push(exportRow);
       return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
-        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
-        <td class="whitespace-nowrap">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
+        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td><td class="font-semibold bg-slate-50/70" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
+        <td class="whitespace-nowrap border-l-2 border-slate-200">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">⚠️ ${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
     });
-    this._sadinExportRows = out;
-    setHtml('sadin-table', `<div class="overflow-x-auto overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th>שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
+    setHtml('sadin-table', `<div class="sadin-scroll overscroll-contain"><table class="grid sadin-sheet w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>ממוצע כללי</th><th class="border-l-2 border-slate-500">שליליים</th>${columns.map(c => `<th>${E(c.header)}</th>`).join('')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
   },
 
   renderSadinFlat(rows) {
-    const out = [];
-    const body = this.homeroomRows(rows.filter(r => r.subjects.size), 7, r => [...r.subjects.values()].map(s => {
+    /* שם וכיתה מוצגים רק בשורה הראשונה של כל חניך; השורה האחרונה שלו נושאת את קו ההפרדה */
+    const body = this.homeroomRows(rows.filter(r => r.subjects.size), 7, r => [...r.subjects.values()].map((s, i, all) => {
         const teacher = [...new Set(s.entries.map(e => e.teacher).filter(Boolean))].join(', ');
         const groups = [...new Set(s.entries.map(e => e.groupId).filter(Boolean))].join(', ');
         const n = Store.weightedAverage(s.events).n;
-        out.push({ 'ת.ז': r.t.tz, 'חניך': r.t.name, 'כיתה': Config.classLabel(r.t.classKey), 'מקצוע': s.name, 'מורה': teacher, 'קבוצה': groups, 'אירועים': n, 'ממוצע': s.avg == null ? '' : +s.avg.toFixed(1) });
-        return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td><td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td>
+        const last = i === all.length - 1;
+        const who = i === 0
+          ? `<td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td><td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td>`
+          : '<td aria-hidden="true"></td><td aria-hidden="true"></td>';
+        return `<tr class="${last ? 'student-end border-b border-slate-200' : ''}">${who}
           <td>${E(s.name)}</td><td>${E(teacher || '—')}</td><td>${E(groups || '—')}</td><td>${n}</td><td><button type="button" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${s.name}: הצגת פירוט הציונים`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td></tr>`;
     }).join(''));
-    this._sadinExportRows = out;
-    setHtml('sadin-table', `<table class="grid w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>מקצוע</th><th>מורה</th><th>קבוצה</th><th>אירועים</th><th>ממוצע משוקלל</th></tr></thead><tbody>${body || '<tr><td colspan="7" class="text-center py-8">אין נתונים בסינון הנוכחי</td></tr>'}</tbody></table>`);
+    setHtml('sadin-table', `<table class="grid sadin-flat w-full"><thead><tr><th>חניך</th><th>כיתה</th><th>מקצוע</th><th>מורה</th><th>קבוצה</th><th>אירועים</th><th>ממוצע משוקלל</th></tr></thead><tbody>${body || '<tr><td colspan="7" class="text-center py-8">אין נתונים בסינון הנוכחי</td></tr>'}</tbody></table>`);
   },
 
   renderAlerts() {
@@ -1633,7 +1625,8 @@ const App = {
       : '<div class="text-sm text-slate-400 md:col-span-3">הכיתות יוצגו לאחר טעינת המצבת.</div>');
     setText('configSummary', `${Object.keys(Config.data.traineeExceptions).length} רשומות חריג/מסלול שמורות · ${Object.keys(Config.getRosterOverrides()).length} דריסות שיוך`);
     this.renderRosterOverrides();
-       this.renderCloudCard();
+    this.renderDataTools();
+    this.renderCloudCard();
        this.renderCalibration();
   },
 
@@ -1926,8 +1919,6 @@ const App = {
       if (st.teacher !== 'all') { st.subjectKey = 'all'; st.strip = 'all'; st.missingSelected = false; }
       this.groupsRerender();
     });
-    on('exportGroups', 'click', () => this.exportGroups());
-
     /* ציונים שוטפים */
     const compatible = (subject, teacher) => Store.traineeList().some(t => Store.currentOf(t.tz).some(e =>
       GroupAnalyzer.sadinSubject(e.subject) === subject && ((Store.groups.get(e.groupId) || {}).teacher || e.teacher) === teacher));
@@ -2355,7 +2346,6 @@ const App = {
       if (this._sadinPinned === el) this.hideSadinPop();
       else this.showSadinPop(el, true);
     },
-    exportSadin() { this.exportSheet('סדין ציונים', this._sadinExportRows || [], 'סדין-ציונים.xlsx'); },
     goSettings() { this.showTab('settings'); },
     ovPick(el) { this.ovSelect(el.dataset.tz); this.ovCloseResults(); },
     ovSave() {
@@ -2420,7 +2410,6 @@ const App = {
       if (!ds || !confirm(`למחוק את כל נתוני "${ds.title}" (כל השכבות)? המצבת וההגדרות יישמרו.`)) return;
       try { await Config.clearDataset(key); }
       catch (err) { return this.toast(`מחיקת הנתונים נכשלה: ${err.message}`, 'error'); }
-      if (key === 'sadinData') $('sadinRemoveMenu').open = false;
       this.afterDataChange();
       this.toast(`נתוני "${ds.title}" נוקו`, 'ok');
     },
@@ -2430,7 +2419,6 @@ const App = {
       try {
         const res = await Config.clearSadinGrade(grade);
         if (!res.ok) return this.toast(res.error, 'error');
-        $('sadinRemoveMenu').open = false;
         this.afterDataChange();
         this.toast(`נתוני סדין של שכבה ${Util.gl(grade)} הוסרו`, 'ok');
       } catch (err) { this.toast(`מחיקת הנתונים נכשלה: ${err.message}`, 'error'); }
@@ -2452,7 +2440,12 @@ const App = {
       this.dirty.add('bagrut');
       this.renderTab('bagrut');
     },
-    exportBagrut() { this.exportBagrut(); },
+    bagrutChip(el) {
+      const st = this.state.bagrut, chip = el.dataset.chip;
+      st.chip = st.chip === chip ? 'all' : chip;
+      this.dirty.add('bagrut');
+      this.renderTab('bagrut');
+    },
     excModal(el) { this.openExceptionModal(el.dataset.tz); },
     excModalSave(el) {
       const is = $('xmIs') ? $('xmIs').checked : false;
@@ -2537,14 +2530,6 @@ const App = {
       this.syncFilters();
       ['bagrut', 'groups', 'sadin', 'profile'].forEach(tab => this.dirty.add(tab));
       this.openProfile(t.tz);
-    },
-    exportGroup(el) {
-      const g = (this._explorerView || []).find(x => x.groupId === el.dataset.id);
-      if (!g) return;
-      this.exportSheet('רשימה שמית', g.members.map(m => ({
-        'קוד קבוצה': g.groupId, 'מקצוע': g.subject, 'מורה': g.teacher, 'ת.ז': m.t.tz, 'שם חניך': m.t.name,
-        'כיתת אם': m.t.classKey, 'חיווי בקרה': m.diag.map(d => d.text).join(' | ')
-      })), `קבוצה-${g.groupId}.xlsx`);
     },
     showMissed() { this.showMissed(); },
     copyAlert(el) {

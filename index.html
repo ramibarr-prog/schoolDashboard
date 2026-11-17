@@ -97,7 +97,12 @@
     #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(15,23,42,.3); pointer-events: none; white-space: pre-line; }
     .sadin-score { display: inline; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 400; color: #1e293b; white-space: nowrap; }
     .sadin-score.is-bad { font-weight: 500; color: #b91c1c; }
-    .sadin-score.is-empty { color: #94a3b8; }
+    .sadin-score.is-empty { color: #cbd5e1; }
+    table.sadin-sheet td.font-semibold .sadin-score { font-weight: 600; }
+    .sadin-scroll { overflow: auto; max-height: calc(100vh - var(--hdr-h, 92px) - 7rem); min-height: 12rem; }
+    table.grid.sadin-flat td { border-bottom: 1px solid #f1f5f9; }
+    table.grid.sadin-flat tr.student-end td { border-bottom: 1px solid #e2e8f0; }
+    table.grid tr.room-divider.anomaly-divider td { background: #fffbeb; color: #78350f; border-block: 1px solid #fcd34d; }
     .sadin-ok { color: #15803d; font-weight: 500; white-space: nowrap; }
     .sadin-bad { color: #b91c1c; font-weight: 500; white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td, table.sadin-sheet th span, table.sadin-sheet td span, table.sadin-sheet td button { white-space: nowrap; }
@@ -231,9 +236,7 @@
             <div id="unknown-bagrutData" class="hidden"></div>
           </div>
         </details>
-        <button type="button" class="btn btn-ghost btn-sm" data-upload="bagrutData" title="טען קובץ ציוני בגרות" aria-label="טען קובץ ציוני בגרות">📤</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="bagrutData" title="מיפוי עמודות" aria-label="מיפוי עמודות בגרות">🔧</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="exportBagrut" title="ייצוא לאקסל" aria-label="ייצוא בגרות לאקסל">📥</button>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="bagrutData" title="טען קובץ ציוני בגרות" aria-label="טען קובץ ציוני בגרות">📂 טעינת קובץ</button>
         <button type="button" id="btnRulesToggle" class="btn btn-ghost btn-sm" aria-expanded="false" aria-controls="rulesDrawer" title="כללי זכאות ומשקלים" aria-label="כללי זכאות ומשקלים">📐</button>
         <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
       </div>
@@ -248,9 +251,7 @@
           <button type="button" class="chip" data-gview="anomalies" aria-pressed="false" title="טבלת חריגי שיבוץ לכלל המקצועות">🚨 חריגים</button>
         </div>
         <span id="groupsLoadedInfo" class="text-xs text-slate-600" role="status"></span>
-        <button type="button" class="btn btn-ghost btn-sm" data-upload="groupsData" title="עדכן קובץ קבוצות" aria-label="עדכן קובץ קבוצות">📤</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="groupsData" title="מיפוי עמודות" aria-label="מיפוי עמודות">🔧</button>
-        <button type="button" id="exportGroups" class="btn btn-ghost btn-sm" title="ייצוא לאקסל" aria-label="ייצוא לאקסל">📥</button>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="groupsData" title="טען קובץ קבוצות ושיבוצים" aria-label="טען קובץ קבוצות ושיבוצים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-groupsData" data-file-input="groupsData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ קבוצות ושיבוצים">
       </div>
       <div id="sadinActions" data-sadin-only class="hidden flex-wrap items-center gap-1 mr-auto">
@@ -260,16 +261,8 @@
         </div>
         <button type="button" class="btn btn-ghost btn-sm" data-act="sadinAlerts">🔔 התראות</button>
         <span id="sadinLoadedInfo" class="text-xs text-slate-600" role="status"></span>
-        <details id="sadinRemoveMenu" class="relative">
-          <summary class="btn btn-ghost btn-sm" title="הסרת נתוני סדין לפי שכבה או ניקוי הכל" aria-label="הסרת נתוני סדין">×</summary>
-          <div class="absolute left-0 top-full z-50 min-w-[12rem] rounded-lg border border-slate-300 bg-white p-2 shadow-xl">
-            <div id="unknown-sadinData" class="hidden"></div>
-            <div id="sadinRemoveOptions"></div>
-          </div>
-        </details>
-        <button type="button" class="btn btn-ghost btn-sm" data-upload="sadinData" title="טען סדין" aria-label="טען סדין">📤</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="remap" data-key="sadinData" title="מיפוי עמודות" aria-label="מיפוי עמודות">🔧</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="exportSadin" title="ייצוא לאקסל" aria-label="ייצוא סדין לאקסל">📥</button>
+        <div id="unknown-sadinData" class="hidden"></div>
+        <button type="button" class="btn btn-primary btn-sm" data-upload="sadinData" title="טען קובץ ציונים שוטפים (סדין)" aria-label="טען קובץ ציונים שוטפים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
       </div>
     </div>
@@ -333,6 +326,7 @@
         </div>
       </div>
 
+      <div id="bagrut-kpis" class="hidden" aria-label="סיכום זכאות"></div>
       <div id="bagrut-table" class="tbl-wrap w-full"></div>
       <div id="mxPop" class="hidden" role="tooltip"></div>
     </section>
@@ -435,6 +429,12 @@
           <div id="nicknames" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4"></div>
         </div>
 
+        <div class="card p-4 space-y-3 xl:col-span-2" id="dataToolsCard">
+          <div class="font-semibold">🛠️ כלים טכניים לקובצי נתונים</div>
+          <p class="text-xs text-slate-500">מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). טעינת הקבצים עצמה מתבצעת מכפתור "📂 טעינת קובץ" בכל לשונית.</p>
+          <div id="dataTools" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
+        </div>
+
         <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
           <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
           <div id="cloudBody" class="space-y-3 text-sm"></div>
@@ -512,12 +512,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261116_4"></script>
-  <script src="js/storage.js?v=20261116_4"></script>
-  <script src="js/mockData.js?v=20261116_4"></script>
-  <script src="js/parser.js?v=20261116_4"></script>
-  <script src="js/bagrutEngine.js?v=20261116_4"></script>
-  <script src="js/groupAnalyzer.js?v=20261116_4"></script>
-  <script src="js/app.js?v=20261116_4"></script>
+  <script src="js/config.js?v=20261117_1"></script>
+  <script src="js/storage.js?v=20261117_1"></script>
+  <script src="js/mockData.js?v=20261117_1"></script>
+  <script src="js/parser.js?v=20261117_1"></script>
+  <script src="js/bagrutEngine.js?v=20261117_1"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_1"></script>
+  <script src="js/app.js?v=20261117_1"></script>
 </body>
 </html>
