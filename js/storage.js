@@ -244,19 +244,34 @@ const CloudSync = {
   },
 
   /* ---------- גיבוי לקובץ ---------- */
+  /** גיבוי מלא: כל תמונת המצב (מצבת, קובצי בגרות/קבוצות/סדין, דריסות, חריגים וכללים) + פרופילי מיפוי העמודות */
   exportBackup() {
-    const blob = new Blob([JSON.stringify(this.buildState())], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ ...this.buildState(), mappingProfiles: Config.data.mappingProfiles })], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `school-dashboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
+  /** מחזיר 'full' לגיבוי מלא או 'legacy' לקובץ config.json ישן (מצבת והגדרות בלבד) */
   async importBackup(text) {
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
+    const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
+    /* config.json ישן (גרסה 2): מצבת והגדרות בלבד, בלי המפתחות של תמונת המצב המלאה */
+    const isFull = s && typeof s === 'object' && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
+    if (s && typeof s === 'object' && !Array.isArray(s) && !isFull && LEGACY_KEYS.some(k => k in s)) {
+      await Config.importJSON(text, { silent: true });
+      this.markDirty();
+      return 'legacy';
+    }
     await this.applyState(s);
+    if (s.mappingProfiles && typeof s.mappingProfiles === 'object' && !Array.isArray(s.mappingProfiles)) {
+      Config.data.mappingProfiles = s.mappingProfiles;
+      Config.save();
+    }
     this.markDirty();
+    return 'full';
   },
 
   init() {

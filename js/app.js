@@ -54,7 +54,29 @@ const App = {
   /* ------------------------------------------------------------------
      אתחול
      ------------------------------------------------------------------ */
+  /** מסך הפתיחה: מוצג לפחות 850ms ולכל היותר 1600ms מרגע הטעינה, גם אם האתחול (ענן / רשת) עוד לא הסתיים */
+  SPLASH_MIN_MS: 850,
+  SPLASH_MAX_MS: 1600,
+  startSplash() {
+    const t0 = window.__splashT0 || Date.now();
+    this._splashT0 = t0;
+    clearTimeout(this._splashFailsafe);
+    this._splashFailsafe = setTimeout(() => this.hideSplash(), Math.max(0, this.SPLASH_MAX_MS - (Date.now() - t0)));
+  },
+  finishSplash() {
+    clearTimeout(this._splashMin);
+    this._splashMin = setTimeout(() => this.hideSplash(), Math.max(0, this.SPLASH_MIN_MS - (Date.now() - (this._splashT0 || Date.now()))));
+  },
+  hideSplash() {
+    clearTimeout(this._splashFailsafe); clearTimeout(this._splashMin);
+    const s = $('appSplash');
+    if (!s || s.classList.contains('splash-hidden')) return;
+    s.classList.add('splash-hidden');
+    setTimeout(() => s.remove(), 700);
+  },
+
   async init() {
+    this.startSplash();
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
@@ -75,6 +97,7 @@ const App = {
     if ((Config.rules().version || 0) < RULES_VERSION) {
       this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ הגדרות ומצבת ← חוקי בגרות ושאלונים ← שחזור ברירות מחדל.', 'info');
     }
+    this.finishSplash();
   },
 
   icons() { try { if (window.lucide) window.lucide.createIcons(); } catch (e) { /* noop */ } },
@@ -203,6 +226,7 @@ const App = {
     TABS.forEach(t => { const p = $(`panel-${t}`); if (p) p.hidden = t !== name; });
     this.renderChrome();
     this.renderTab(name);
+    if (name === 'overview' && changed) this.animateOverviewBars();
   },
 
   syncGroupLayout() {
@@ -752,7 +776,7 @@ const App = {
       const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
       return { key, value: avg, text: avg == null ? '—' : Util.fmt(avg, 0) };
     });
-    const bar = (label, value, cls = '') => `<span class="min-w-0 truncate text-sm font-semibold text-[#355747]">${label}</span><span class="ov-track"><span class="ov-fill ${cls}" style="width:${Math.max(0, Math.min(100, value || 0))}%"></span></span>`;
+    const bar = (label, value, cls = '') => `<span class="min-w-0 truncate text-sm font-semibold text-[#355747]">${label}</span><span class="ov-track"><span class="ov-fill ${cls}" style="width:0%" data-w="${Math.max(0, Math.min(100, value || 0))}"></span></span>`;
     const classHtml = classBars.length && (bagrutOn || sadinOn)
       ? classBars.map(b => `<button type="button" class="ov-bar" data-act="ovClass" data-class="${E(b.key)}" aria-pressed="${f.cls === b.key}" title="סינון לפי כיתה">${bar(`${E(Config.classLabel(b.key))} (${b.text})`, b.value)}</button>`).join('')
       : `<div class="text-sm text-slate-500 py-3">${notLoaded} – אחוז הזכאות או הממוצע לפי כיתות יוצגו לאחר הטעינה.</div>`;
@@ -760,7 +784,7 @@ const App = {
     const blockers = this.overviewBlockers(m);
     const maxBad = Math.max(1, ...blockers.items.map(x => x.bad));
     const blockerHtml = blockers.items.length
-      ? blockers.items.map((x, i) => `<div class="ov-bar" title="${E(`${x.bad} מתוך ${x.enrolled} חניכים`)}"><span class="min-w-0 truncate text-sm font-semibold text-[#355747]">${E(x.name)} <span class="${i === 0 ? 'txt-bad' : 'txt-warn'} font-bold">(${x.bad} - ${x.pct}%)</span></span><span class="ov-track"><span class="ov-fill mustard" style="width:${Math.round((x.bad / maxBad) * 100)}%"></span></span></div>`).join('')
+      ? blockers.items.map((x, i) => `<div class="ov-bar" title="${E(`${x.bad} מתוך ${x.enrolled} חניכים`)}"><span class="min-w-0 truncate text-sm font-semibold text-[#355747]">${E(x.name)} <span class="${i === 0 ? 'txt-bad' : 'txt-warn'} font-bold">(${x.bad} - ${x.pct}%)</span></span><span class="ov-track"><span class="ov-fill mustard" style="width:0%" data-w="${Math.round((x.bad / maxBad) * 100)}"></span></span></div>`).join('')
       : `<div class="text-sm text-slate-500 py-3">${bagrutOn || sadinOn ? 'לא נמצאו מקצועות עם ציונים נכשלים או חסרים בסינון הנוכחי.' : notLoaded}</div>`;
 
     const issues = this.overviewIssues(m), SHOWN = 8;
@@ -793,6 +817,15 @@ const App = {
         </div>
         <div class="card p-5 lg:col-span-5"><h3 class="font-bold text-[#355747] mb-2">חניכים בחריגה וצווארי בקבוק</h3>${issueHtml}</div>
       </div>`);
+    this.animateOverviewBars();
+  },
+
+  /** פסי ההתקדמות בחדר הבקרה מתחילים מאפס וגולשים למקומם (המעבר מוגדר ב-CSS על .ov-fill) */
+  animateOverviewBars() {
+    const fills = document.querySelectorAll('#overview-body .ov-fill[data-w]');
+    fills.forEach(el => { el.style.transition = 'none'; el.style.width = '0%'; });
+    void document.body.offsetWidth;
+    fills.forEach(el => { el.style.transition = ''; el.style.width = `${el.dataset.w}%`; });
   },
 
   /* ==================================================================
@@ -1108,13 +1141,13 @@ const App = {
     const compRow = (s, level, c, i) => {
       const q = r.questionnaires[c.codes[0]];
       const grade = q ? q.expectedGrade : 'יב';
-      return `<div class="flex flex-wrap items-center gap-1.5 text-xs py-0.5 ${c.enabled === false ? 'opacity-50' : ''}">
+      return `<div class="q-row ${c.enabled === false ? 'opacity-50' : ''}">
         <input type="checkbox" class="w-4 h-4" aria-label="פעיל" data-chg="compEnabled" ${attrs('core', s.id, level, i)} ${c.enabled === false ? '' : 'checked'}>
-        <input type="text" class="inp w-28" aria-label="סמלי שאלון" value="${E(c.codes.join(', '))}" data-chg="compCodes" ${attrs('core', s.id, level, i)}>
-        <label class="flex items-center gap-1">משקל<input type="number" min="0" max="100" class="inp w-14" value="${c.weight}" data-chg="compWeight" ${attrs('core', s.id, level, i)}>%</label>
-        <select class="inp" aria-label="שכבה צפויה" title="שכבה צפויה לשאלון" data-chg="qGrade" data-code="${E(c.codes.join(','))}">${GRADE_OPTS.map(g => `<option value="${g}" ${grade === g ? 'selected' : ''}>${Util.gl(g)}</option>`).join('')}</select>
-        <input type="text" class="inp w-36" aria-label="שם השאלון" placeholder="שם השאלון" title="שם השאלון בקטלוג" value="${E(q ? q.name : '')}" data-chg="qName" data-code="${E(c.codes[0])}">
-        <button type="button" class="btn btn-danger btn-sm mr-auto" aria-label="הסרת שאלון" data-act="compRemove" ${attrs('core', s.id, level, i)}>✕</button></div>`;
+        <input type="text" class="inp q-codes" dir="ltr" aria-label="סמלי שאלון" value="${E(c.codes.join(', '))}" data-chg="compCodes" ${attrs('core', s.id, level, i)}>
+        <label class="flex items-center gap-1 whitespace-nowrap">משקל<input type="number" min="0" max="100" class="inp q-weight" value="${c.weight}" data-chg="compWeight" ${attrs('core', s.id, level, i)}>%</label>
+        <select class="inp q-grade" aria-label="שכבה צפויה" title="שכבה צפויה לשאלון" data-chg="qGrade" data-code="${E(c.codes.join(','))}">${GRADE_OPTS.map(g => `<option value="${g}" ${grade === g ? 'selected' : ''}>${Util.gl(g)}</option>`).join('')}</select>
+        <input type="text" class="inp q-name" aria-label="שם השאלון" placeholder="שם השאלון" title="שם השאלון בקטלוג" value="${E(q ? q.name : '')}" data-chg="qName" data-code="${E(c.codes[0])}">
+        <button type="button" class="btn btn-danger btn-sm" aria-label="הסרת שאלון" data-act="compRemove" ${attrs('core', s.id, level, i)}>✕</button></div>`;
     };
     const compBlock = (s, level, label, comps) => {
       const sum = comps.filter(c => c.enabled !== false).reduce((a, c) => a + (Number(c.weight) || 0), 0);
@@ -2461,14 +2494,6 @@ const App = {
     on('ovOtherHomeroom', 'input', e => { this.ovSyncGrade(e.target.value); this.ovSyncDefaultTrack(e.target.value); });
     on('ovTrack', 'change', () => { this.ovTrackEdited = true; });
     on('ovForm', 'submit', e => { e.preventDefault(); this.acts.ovSave.call(this); });
-    on('btnExportConfig', 'click', () => Config.exportJSON());
-    on('fileImportConfig', 'change', async e => {
-      const f = e.target.files[0];
-      e.target.value = '';
-      if (!f) return;
-      try { await Config.importJSON(await f.text(), { silent: true }); this.toast('ההגדרות יובאו בהצלחה', 'ok'); this.afterDataChange(); }
-      catch (err) { this.toast(err.message || 'קובץ config.json לא תקין', 'error'); }
-    });
     on('btnClearData', 'click', async () => {
       if (!confirm('למחוק את קובצי הבגרות, הקבוצות והציונים השוטפים? המצבת וההגדרות יישמרו.')) return;
       try {
@@ -2587,9 +2612,6 @@ const App = {
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSave">שמירת הגדרות</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">⬇️ משיכה מהענן</button>
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">☁️ סנכרן לענן כעת</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="backupExport">💾 ייצוא קובץ גיבוי (.json)</button>
-        <label id="backupImportLabel" class="btn btn-ghost btn-sm cursor-pointer">💾 ייבוא קובץ גיבוי (.json)
-          <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
       </div>`;
   },
 
@@ -3089,8 +3111,12 @@ const App = {
     async backupImport(el) {
       const f = el.files[0];
       el.value = '';
-      if (!f || !confirm('ייבוא הגיבוי יחליף את כל הנתונים וההגדרות הנוכחיים. להמשיך?')) return;
-      await this.cloudRefresh(async () => { await CloudSync.importBackup(await f.text()); this.toast('הגיבוי נטען בהצלחה', 'ok'); return 'applied'; });
+      if (!f || !confirm('השחזור יחליף את כל הנתונים וההגדרות הנוכחיים בתוכן קובץ הגיבוי. להמשיך?')) return;
+      await this.cloudRefresh(async () => {
+        const kind = await CloudSync.importBackup(await f.text());
+        this.toast(kind === 'legacy' ? 'קובץ config.json ישן נקלט: שוחזרו המצבת וההגדרות (קובצי בגרות, קבוצות וסדין אינם כלולים בו)' : 'הגיבוי נטען בהצלחה', kind === 'legacy' ? 'warn' : 'ok');
+        return 'applied';
+      });
     },
     sim(el) { this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab); },
     compEnabled(el) { this.patchComp(el, { enabled: el.checked }); },

@@ -76,11 +76,15 @@
     /* באנר מיתוג */
     #brandBanner { position: relative; overflow: hidden; background: linear-gradient(135deg, #FAF7EF 0%, #EFF5EE 100%); border-bottom: 1px solid #E2EAE0; }
     #brandBanner .brand-art { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-    #brandBanner .brand-inner { position: relative; z-index: 1; }
+    #brandBanner .brand-inner { position: relative; z-index: 1; padding: 16px 20px 14px; }
     .brand-name { color: var(--forest); font-size: 1.75rem; font-weight: 800; line-height: 1.1; }
     .brand-slogan { color: #527361; font-size: 1.05rem; font-weight: 500; }
     .brand-pill { display: inline-flex; align-items: center; padding: .2rem .75rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--sage-tint); color: var(--forest); border: 1px solid var(--card-border); }
     .brand-pill:empty { display: none; }
+    .brand-pill { max-width: 100%; }
+    html, body { margin: 0; }
+    #globalFilterBar > div { max-width: 100%; box-sizing: border-box; }
+    #appShell { min-width: 0; }
     #leafCorner { position: fixed; left: 0; bottom: 0; width: 220px; height: 220px; pointer-events: none; z-index: -1; opacity: .6; }
     @media (max-width: 1023px) { #leafCorner { width: 120px; height: 120px; } }
     @media (max-width: 1023px) {
@@ -261,6 +265,13 @@
     .nav-back:hover { background: #75977D; color: #fff; }
     .nav-back:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
     .nav-back.hidden { display: none; }
+    /* שורת שאלון בעורך הכללים: שדות רחבים וקריאים (סמלים משמאל לימין, שם מלא) */
+    .q-row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .35rem 0; font-size: .8rem; }
+    @media (min-width: 1200px) { .q-row { display: grid; grid-template-columns: auto minmax(300px, 1.2fr) auto auto minmax(240px, 1.5fr) auto; } .q-row .q-codes, .q-row .q-name { width: 100%; } }
+    .q-row .q-codes { flex: 1 1 300px; min-width: 220px; direction: ltr; text-align: left; padding-inline: .75rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .q-row .q-weight { width: 5rem; text-align: center; padding-inline: .4rem; }
+    .q-row .q-grade { min-width: 76px; padding-inline-start: .6rem; padding-inline-end: 1.75rem; }
+    .q-row .q-name { flex: 1.5 1 240px; min-width: 240px; padding-inline: .75rem; }
     /* תתי-לשוניות הגדרות */
     [data-settings-pane][hidden] { display: none; }
     .settings-seg { display: inline-flex; flex-wrap: wrap; gap: .25rem; padding: .25rem; background: #fff; border: 1px solid var(--card-border); border-radius: 999px; box-shadow: 0 2px 8px -4px rgba(120, 92, 50, .2); }
@@ -270,6 +281,21 @@
     .seg-tab[aria-selected="true"] { background: #355747; color: #FAF7EF; }
     .seg-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; padding: 0 .35rem; border-radius: 999px; background: #E8B95F; color: #355747; font-size: .72rem; font-weight: 800; }
     .seg-badge.hidden { display: none; }
+    /* מסך פתיחה */
+    #appSplash { position: fixed; inset: 0; z-index: 9999; background: #FAF7EF; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity .45s ease, visibility .45s ease; }
+    #appSplash.splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    #appSplash svg.brand-logo { animation: splashPulse 1.6s ease-in-out infinite; }
+    .splash-title { color: #355747; font-size: 1.85rem; font-weight: 800; line-height: 1.2; }
+    .splash-sub { color: #75977D; font-size: 1.05rem; font-weight: 500; margin-top: 4px; }
+    .splash-track { width: 180px; height: 4px; margin-top: 20px; background: #E6ECE6; border-radius: 999px; overflow: hidden; }
+    .splash-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, #355747, #75977D, #E8B95F); animation: splashFill 1.5s cubic-bezier(.22, 1, .36, 1) forwards; }
+    @keyframes splashPulse { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.06); opacity: 1; } }
+    @keyframes splashFill { from { width: 0; } to { width: 100%; } }
+    /* מעברים שקטים: דהייה קלה בהחלפת לשונית / תת-לשונית וגלישת פסי התקדמות בחדר הבקרה */
+    @keyframes tabFade { from { opacity: 0; } to { opacity: 1; } }
+    .panel:not([hidden]), [data-settings-pane]:not([hidden]), [data-rules-pane]:not([hidden]) { animation: tabFade .18s ease-out; }
+    .ov-fill { transition: width .6s cubic-bezier(.22, 1, .36, 1); }
+    @media (prefers-reduced-motion: reduce) { .panel, [data-settings-pane], [data-rules-pane], .ov-fill, .splash-fill, #appSplash img, #appSplash svg { animation: none !important; transition: none !important; } .splash-fill { width: 100%; } }
     @keyframes navFlash {
       0%, 65% { background: #FAF7EF; box-shadow: inset 0 2px 0 #E8B95F, inset 0 -2px 0 #E8B95F; }
       100% { background: transparent; box-shadow: inset 0 0 0 transparent; }
@@ -278,6 +304,15 @@
   </style>
 </head>
 <body class="min-h-screen lg:h-screen lg:overflow-hidden">
+  <script>window.__splashT0 = Date.now();</script>
+
+  <!-- מסך פתיחה ממותג: מוסתר ע"י App.init (מינימום 850ms, מקסימום 1600ms) -->
+  <div id="appSplash" role="status" aria-live="polite" aria-label="טוען את לוח הבקרה">
+    <img src="school_logo.png" alt="תיכון אתגרי העתיד" class="w-24 h-24 mb-4" style="filter: url(#recolor-forest); animation: splashPulse 1.6s ease-in-out infinite;" onerror="this.onerror=null;this.replaceWith(brandEmblem('#355747',96))">
+    <div class="splash-title">תיכון אתגרי העתיד</div>
+    <div class="splash-sub">לוח בקרה פדגוגי – בגרות ושיבוצים</div>
+    <div class="splash-track"><div class="splash-fill"></div></div>
+  </div>
 
   <!-- מסנני צבע ללוגו: כל פיקסל לא שקוף הופך לגוון המותג (sRGB מדויק) -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -339,7 +374,7 @@
       <g transform="translate(70 22) rotate(-18)" opacity=".28"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#75977D"/><path d="M0 70 C 14 52, 20 34, 30 0" fill="none" stroke="#355747" stroke-width="1.5"/></g>
       <g transform="translate(130 40) rotate(24) scale(.7)" opacity=".24"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#E8B95F"/></g>
     </svg>
-    <div class="brand-inner px-5 py-3 flex items-center gap-4">
+    <div class="brand-inner flex items-center gap-4">
       <img src="school_logo.png" alt="תיכון אתגרי העתיד" width="64" height="64" class="brand-logo" style="width:64px;height:64px;filter:url(#recolor-forest)" onerror="this.onerror=null;this.replaceWith(brandEmblem('#355747',64))">
       <div>
         <div class="brand-name">תיכון אתגרי העתיד</div>
@@ -351,7 +386,7 @@
 
   <!-- סרגל סינון גלובלי -->
   <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-40 shrink-0">
-    <div class="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+    <div class="px-6 py-2 flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
           <option value="all">הכל</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option>
@@ -430,7 +465,7 @@
         <button type="button" class="btn btn-primary btn-sm" data-upload="sadinData" title="טען קובץ ציונים שוטפים (סדין)" aria-label="טען קובץ ציונים שוטפים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
       </div>
-      <div id="ribbonStatus" class="flex flex-wrap items-center gap-2 mr-auto">
+      <div id="ribbonStatus" class="flex flex-wrap items-center justify-start gap-2 mr-auto min-w-0 max-w-full">
         <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
         <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
         <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
@@ -586,15 +621,15 @@
           <div id="rulesTabs" class="flex flex-wrap gap-2 mb-3" role="tablist" aria-label="לשוניות כללי זכאות"></div>
 
           <div data-rules-pane="core">
-            <div id="rulesCore" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+            <div id="rulesCore" class="grid grid-cols-1 gap-3"></div>
             <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
           </div>
           <div data-rules-pane="major" hidden>
-            <div id="rulesMajor" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+            <div id="rulesMajor" class="grid grid-cols-1 gap-2"></div>
             <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="major">+ הוספת מגמה</button>
           </div>
           <div data-rules-pane="internal" hidden>
-            <div id="rulesInternal" class="grid grid-cols-1 lg:grid-cols-2 gap-2"></div>
+            <div id="rulesInternal" class="grid grid-cols-1 gap-2"></div>
             <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="internal">+ הוספת יחידה פנימית</button>
           </div>
           <div data-rules-pane="params" hidden>
@@ -637,12 +672,12 @@
         </div>
 
         <div class="card p-4 space-y-3 xl:col-span-2">
-          <div class="font-semibold flex items-center gap-2"><i data-lucide="save" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>גיבוי ושחזור (config.json)</div>
-          <p class="text-xs text-slate-500">כולל: מצבת חניכים, דריסות שיוך, כללי זכאות ומשקלים, חריגים לפי ת.ז, הגדרות כיתות ופרופילי מיפוי עמודות. קובצי המשנה אינם נכללים בגיבוי.</p>
+          <div class="font-semibold flex items-center gap-2"><i data-lucide="save" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>גיבוי, שחזור ותחזוקת נתונים</div>
+          <p class="text-xs text-slate-500">גיבוי מלא של כל נתוני המערכת לקובץ אחד (מצבת, קובצי בגרות/קבוצות/סדין, דריסות שיוך, חריגים וכללי זכאות) וכלי תחזוקה.</p>
           <div class="flex flex-wrap gap-2">
-            <button type="button" id="btnExportConfig" class="btn btn-primary"><i data-lucide="download" class="w-4 h-4" aria-hidden="true"></i>ייצוא config.json</button>
-            <label class="btn btn-ghost cursor-pointer"><i data-lucide="upload" class="w-4 h-4" aria-hidden="true"></i>ייבוא config.json
-              <input type="file" id="fileImportConfig" class="hidden" accept=".json,application/json"></label>
+            <button type="button" class="btn btn-primary" data-act="backupExport">📥 ייצוא גיבוי מלא (.json)</button>
+            <label class="btn btn-ghost cursor-pointer">📤 שחזור מגיבוי (.json)
+              <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
             <button type="button" id="btnClearData" class="btn btn-danger"><i data-lucide="trash-2" class="w-4 h-4" aria-hidden="true"></i>ניקוי קובצי משנה</button>
             <button type="button" id="btnResetConfig" class="btn btn-danger"><i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i>איפוס הגדרות</button>
             <button type="button" class="btn btn-ghost" data-act="loadMock">🧪 טעינת נתוני דמו</button>
@@ -707,6 +742,15 @@
       document.getElementById('navScrim').addEventListener('click', function () { setNav(false); });
       document.getElementById('tabs').addEventListener('click', function () { setNav(false); });
       function closeMapping() { mappingModal.classList.add('hidden'); }
+      /* במסך רחב הדף כולו קבוע (רק אזור התוכן גולל); גלילה תוכנתית (scrollIntoView) אינה רשאית להזיז את הכותרת אל מחוץ למסך */
+      function lockPageScroll() {
+        if (window.innerWidth < 1024) return;
+        var shell = document.getElementById('appShell');
+        if (window.scrollY) window.scrollTo(0, 0);
+        document.documentElement.scrollTop = 0; document.body.scrollTop = 0;
+        if (shell) { shell.scrollTop = 0; shell.scrollLeft = 0; }
+      }
+      [window, document.body, document.getElementById('appShell')].forEach(function (t) { if (t) t.addEventListener('scroll', lockPageScroll); });
       /* תפריטים נפתחים בסרגל הסינון (סימולציית מה-אם, מצב קובץ): ממוקמים בתוך אזור התוכן, ליד הכפתור ולא מתחת לסרגל הצד */
       var ribbonDetails = document.querySelectorAll('#globalFilterBar details');
       function placePop(d) {
@@ -734,12 +778,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_10"></script>
-  <script src="js/storage.js?v=20261117_10"></script>
-  <script src="js/mockData.js?v=20261117_10"></script>
-  <script src="js/parser.js?v=20261117_10"></script>
-  <script src="js/bagrutEngine.js?v=20261117_10"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_10"></script>
-  <script src="js/app.js?v=20261117_10"></script>
+  <script src="js/config.js?v=20261117_13"></script>
+  <script src="js/storage.js?v=20261117_13"></script>
+  <script src="js/mockData.js?v=20261117_13"></script>
+  <script src="js/parser.js?v=20261117_13"></script>
+  <script src="js/bagrutEngine.js?v=20261117_13"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_13"></script>
+  <script src="js/app.js?v=20261117_13"></script>
 </body>
 </html>
