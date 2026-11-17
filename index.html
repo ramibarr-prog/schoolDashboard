@@ -242,6 +242,30 @@
     .prof-kpi .v { font-size: 1.6rem; font-weight: 800; line-height: 1.2; color: var(--forest); }
     .prof-kpi .s { font-size: .75rem; color: var(--muted); }
     .txt-bad { color: var(--terracotta); } .txt-warn { color: var(--amber-dark); } .txt-ok { color: var(--forest); }
+    /* חיפוש חכם */
+    #globalSearch { padding-left: 1.6rem; }
+    #globalSearch::-webkit-search-cancel-button { display: none; }
+    #searchSuggestPopup { position: absolute; top: calc(100% + 6px); right: 0; z-index: 50; width: 24rem; max-width: 90vw; max-height: 70vh; overflow-y: auto; padding: .35rem; background: #FFFFFF; border: 1px solid var(--card-border); border-radius: 12px; box-shadow: 0 10px 28px -8px rgba(53, 87, 71, .28); }
+    .sg-head { padding: .3rem .6rem; font-size: .72rem; font-weight: 700; color: var(--muted); }
+    .sg-item { display: flex; align-items: center; gap: .5rem; padding: .45rem .6rem; border-radius: 8px; font-size: .85rem; cursor: pointer; }
+    .sg-item:hover, .sg-item.active { background: var(--sage-tint); }
+    .sg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--ink); }
+    .sg-hit { font-weight: 800; color: #355747; }
+    .sg-badge { flex-shrink: 0; padding: .05rem .55rem; border: 1px solid var(--card-border); border-radius: 999px; background: #FAF7EF; color: #355747; font-size: .72rem; font-weight: 600; white-space: nowrap; }
+    .sg-tz { flex-shrink: 0; font-size: .75rem; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .sg-empty { padding: .5rem .6rem; font-size: .8rem; color: var(--muted); }
+    .sg-x { cursor: pointer; font-weight: 800; }
+    .sg-x:hover { background: var(--sage-soft); }
+    /* ניווט כרטיס חניך: כפתור חזרה והדגשת השורה האחרונה שנצפתה */
+    .nav-back { display: inline-flex; align-items: center; gap: .4rem; padding: .5rem 1.1rem; border-radius: 10px; background: #E8F0E5; color: #355747; font-size: .9rem; font-weight: 700; border: 1px solid #B4CBB6; cursor: pointer; transition: background .15s; }
+    .nav-back:hover { background: #75977D; color: #fff; }
+    .nav-back:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+    .nav-back.hidden { display: none; }
+    @keyframes navFlash {
+      0%, 65% { background: #FAF7EF; box-shadow: inset 0 2px 0 #E8B95F, inset 0 -2px 0 #E8B95F; }
+      100% { background: transparent; box-shadow: inset 0 0 0 transparent; }
+    }
+    tr.nav-flash > td { animation: navFlash 2.5s ease-out; }
   </style>
 </head>
 <body class="min-h-screen lg:h-screen lg:overflow-hidden">
@@ -348,9 +372,14 @@
       <span data-bagrut-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
       <select id="bagrutStatusSelect" data-bagrut-only class="hidden inp" aria-label="סינון צפי זכאות"><option value="all">כל הסטטוסים</option></select>
       <select id="bagrutSubjectDrillSelect" data-bagrut-only class="hidden inp max-w-[12rem]" aria-label="מבט לפי מקצוע"><option value="all">📊 מבט על – כל המקצועות</option></select>
-      <label class="flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
+      <div id="searchWrap" class="relative flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
         <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
-        <input id="globalSearch" type="search" class="inp w-44 lg:w-52" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off"></label>
+        <div class="relative">
+          <input id="globalSearch" type="search" class="inp w-44 lg:w-52 pl-7" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchSuggestPopup">
+          <button type="button" id="searchClear" class="hidden absolute left-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full text-[#355747] hover:bg-[#EBF2EC] leading-none" data-act="searchClear" aria-label="ניקוי החיפוש">×</button>
+        </div>
+        <div id="searchSuggestPopup" class="hidden" role="listbox" aria-label="הצעות חיפוש"></div>
+      </div>
       <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
       <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1">
         <details class="relative" id="bagrutSimulation">
@@ -373,9 +402,7 @@
         <input type="file" class="hidden" id="file-bagrutData" data-file-input="bagrutData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציוני בגרות">
       </div>
       <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1" role="group" aria-label="בחירת חניך">
-        <button type="button" id="profPrev" class="btn btn-ghost btn-sm" aria-label="החניך הקודם">הקודם</button>
         <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
-        <button type="button" id="profNext" class="btn btn-ghost btn-sm" aria-label="החניך הבא">הבא</button>
       </div>
       <div id="groupActions" data-groups-only class="hidden flex-wrap items-center gap-1">
         <div class="flex items-center gap-1" role="group" aria-label="תצוגת קבוצות">
@@ -475,6 +502,7 @@
     <!-- 2. סייר קבוצות (קריאה בלבד) -->
     <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
       <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
+      <div id="searchLockPill" class="hidden mb-2"></div>
       <div id="groups-kpis" class="hidden grid-cols-2 lg:grid-cols-5 gap-2 mb-2"></div>
       <div id="groups-strip" class="hidden" aria-label="סינון חריגים למקצוע"></div>
       <div id="groups-explorer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0" aria-label="סייר קבוצות">
@@ -493,6 +521,14 @@
 
     <!-- 4. כרטיס חניך 360° -->
     <section id="panel-profile" class="panel space-y-3" role="tabpanel" aria-labelledby="tab-profile" hidden>
+      <div id="profNav" class="flex flex-wrap items-center gap-3">
+        <button type="button" id="profBack" class="nav-back hidden" data-act="profBack" title="חזרה למסך הקודם (Esc)"></button>
+        <div id="profStepper" class="flex items-center gap-2" role="group" aria-label="מעבר בין חניכים">
+          <button type="button" id="profPrev" class="btn btn-ghost btn-sm" aria-label="החניך הקודם">‹ החניך הקודם</button>
+          <span id="profPos" class="text-xs font-semibold text-slate-600" role="status" aria-live="polite"></span>
+          <button type="button" id="profNext" class="btn btn-ghost btn-sm" aria-label="החניך הבא">החניך הבא ›</button>
+        </div>
+      </div>
       <div class="card px-5 py-4">
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div class="min-w-0">
@@ -678,12 +714,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_6"></script>
-  <script src="js/storage.js?v=20261117_6"></script>
-  <script src="js/mockData.js?v=20261117_6"></script>
-  <script src="js/parser.js?v=20261117_6"></script>
-  <script src="js/bagrutEngine.js?v=20261117_6"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_6"></script>
-  <script src="js/app.js?v=20261117_6"></script>
+  <script src="js/config.js?v=20261117_8"></script>
+  <script src="js/storage.js?v=20261117_8"></script>
+  <script src="js/mockData.js?v=20261117_8"></script>
+  <script src="js/parser.js?v=20261117_8"></script>
+  <script src="js/bagrutEngine.js?v=20261117_8"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_8"></script>
+  <script src="js/app.js?v=20261117_8"></script>
 </body>
 </html>

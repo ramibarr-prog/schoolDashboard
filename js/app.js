@@ -38,7 +38,8 @@ const App = {
     bagrut: { chip: 'all', sort: 'class', dir: 1, drill: 'all', mxSort: 'class', mxDir: 1 },
     groups: { view: 'explorer', subject: 'all', teacher: 'all', kind: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false },
     sadin: { subject: 'all', teacher: 'all', view: 'sheet', strip: 'all', alertBy: 'teacher', initials: false },
-    profileTz: null
+    profileTz: null,
+    selectedSearchTz: null
   },
   evals: new Map(),
   lastFiles: {},
@@ -175,6 +176,8 @@ const App = {
 
   showTab(name) {
     if (!TABS.includes(name)) return;
+    /* יציאה מהכרטיס בדרך אחרת מהחזרה (למשל מהתפריט הצדדי) מבטלת את הקשר המקור */
+    if (name !== 'profile' && this.state.navOrigin) { this.state.navOrigin = null; this._histPushed = false; this.dirty.add('profile'); }
     const changed = this.state.tab !== name;
     this.state.tab = name;
     document.body.classList.toggle('sadin-active', name === 'sadin');
@@ -190,6 +193,8 @@ const App = {
     this.syncGroupLayout();
     if (changed && $('mainContent')) $('mainContent').scrollTop = 0;
     document.body.classList.remove('nav-open');
+    this.hideSuggestions();
+    this.renderSearchChrome();
     if ($('navScrim')) $('navScrim').classList.add('hidden');
     const search = $('globalSearch');
     if (search) search.placeholder = name === 'groups' ? 'חיפוש חניך לפי שם, ת.ז או קוד קבוצה' : 'חיפוש חניך לפי שם או ת.ז';
@@ -212,15 +217,36 @@ const App = {
     return list.sort((a, b) => Util.ord(a.gradeKey) - Util.ord(b.gradeKey) || natural(a.classKey, b.classKey) || a.name.localeCompare(b.name, 'he'));
   },
 
-  filtered(includeSearch = true, ignoreClass = false) {
+  passesFilters(t, ignoreClass = false) {
     const f = this.state.filters;
-    const q = includeSearch ? Util.norm(f.q) : '', digits = q.replace(/\D/g, '');
+    if (f.grade !== 'all' && t.gradeKey !== f.grade) return false;
+    if (!ignoreClass && f.cls !== 'all' && t.classKey !== f.cls) return false;
+    return f.track === 'all' || this.trackOf(t) === f.track;
+  },
+
+  /** חיפוש טקסט חי פעיל רק בלשוניות שבהן כל שורה היא חניך; בשאר הלשוניות הטקסט מזין רק את חלון ההשלמה */
+  searchQuery() { return this.LIVE_SEARCH_TABS.includes(this.state.tab) ? this.state.filters.q : ''; },
+  LIVE_SEARCH_TABS: ['bagrut', 'sadin'],
+
+  lockedTrainee() { return this.state.selectedSearchTz ? Store.trainees.get(this.state.selectedSearchTz) || null : null; },
+
+  /** התאמת חניך לטקסט: השם והשאילתה מנורמלים (גרשיים וגרשיים כפולים), בלי תלות בסדר שם פרטי/משפחה; ת.ז לפי ספרות */
+  matchTrainee(t, query) {
+    const q = Util.norm(query).toLocaleLowerCase();
+    if (!q) return true;
+    const digits = q.replace(/\D/g, '');
+    if (digits.length >= 3 && t.tz.includes(digits)) return true;
+    const name = Util.norm(t.name).toLocaleLowerCase();
+    return q.split(' ').every(token => name.includes(token));
+  },
+
+  filtered(includeSearch = true, ignoreClass = false) {
+    const lock = includeSearch ? this.state.selectedSearchTz : null;
+    const q = includeSearch && !lock ? this.searchQuery() : '';
     return this.sortTrainees(Store.traineeList().filter(t => {
-      if (f.grade !== 'all' && t.gradeKey !== f.grade) return false;
-      if (!ignoreClass && f.cls !== 'all' && t.classKey !== f.cls) return false;
-      if (f.track !== 'all' && this.trackOf(t) !== f.track) return false;
-      if (q && !(t.name.includes(q) || (digits.length >= 3 && t.tz.includes(digits)))) return false;
-      return true;
+      if (!this.passesFilters(t, ignoreClass)) return false;
+      if (lock) return t.tz === lock;
+      return !q || this.matchTrainee(t, q);
     }));
   },
 
@@ -235,10 +261,154 @@ const App = {
     setHtml('fGrade', opt('all', 'הכל', f.grade) + grades.map(g => opt(g, Util.gl(g), f.grade)).join(''));
     setHtml('fHomeroom', opt('all', 'כל הכיתות', f.cls) + classes.map(c => opt(c, Config.classLabel(c), f.cls)).join(''));
     setVal('fTrack', f.track);
-    setVal('globalSearch', f.q);
+    /* חניך נעול שנפל מחוץ לסינון (או נמחק מהמצבת) משחרר את הנעילה */
+    const locked = this.lockedTrainee();
+    if (this.state.selectedSearchTz && (!locked || !this.passesFilters(locked))) { this.state.selectedSearchTz = null; f.q = ''; }
+    setVal('globalSearch', this.state.selectedSearchTz ? locked.name : f.q);
+    this.renderSearchChrome();
+  },
+
+  /* ------------------------------------------------------------------
+     חיפוש חכם: חלון השלמה אוטומטית, בחירת חניך נעולה (selectedSearchTz) וקפיצה לקבוצה
+     ------------------------------------------------------------------ */
+  _sg: { items: [], active: -1 },
+
+  /** מדגיש בטקסט את האותיות התואמות לשאילתה (גרשיים בשם אינם מפריעים להתאמה) */
+  highlightMatch(text, query) {
+    const raw = String(text ?? '');
+    const quote = '[\'"״׳”“’‘`]*';
+    const ranges = [];
+    Util.norm(query).toLocaleLowerCase().replace(/[\[\]]/g, '').split(' ').filter(Boolean).forEach(token => {
+      const re = new RegExp([...token].map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join(quote), 'gi');
+      let m;
+      while ((m = re.exec(raw)) && m[0]) ranges.push([m.index, m.index + m[0].length]);
+    });
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    ranges.forEach(r => { const last = merged[merged.length - 1]; if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push([...r]); });
+    let out = '', pos = 0;
+    merged.forEach(([s, e]) => { out += E(raw.slice(pos, s)) + `<b class="sg-hit">${E(raw.slice(s, e))}</b>`; pos = e; });
+    return out + E(raw.slice(pos));
+  },
+
+  /** קבוצות (קוד, מקצוע או מורה) התואמות לטקסט שהוקלד; כל מילה בשאילתה חייבת להופיע */
+  matchGroups(raw) {
+    const tokens = Util.norm(raw).toLocaleLowerCase().replace(/[\[\]]/g, '').split(' ').filter(Boolean);
+    if (!tokens.length) return [];
+    return GroupAnalyzer.explorerModel().groups.filter(g => {
+      const hay = Util.norm(`${g.subject} ${g.teacher || ''} ${g.groupId}`).toLocaleLowerCase();
+      return tokens.every(token => hay.includes(token));
+    }).sort((a, b) => (tokens.includes(String(b.groupId).toLocaleLowerCase()) ? 1 : 0) - (tokens.includes(String(a.groupId).toLocaleLowerCase()) ? 1 : 0));
+  },
+
+  hideSuggestions() {
+    const pop = $('searchSuggestPopup');
+    if (pop) { pop.classList.add('hidden'); pop.innerHTML = ''; }
+    const input = $('globalSearch');
+    if (input) { input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); }
+    this._sg = { items: [], active: -1 };
+  },
+
+  showSuggestions() {
+    const input = $('globalSearch'), pop = $('searchSuggestPopup');
+    if (!input || !pop) return;
+    const raw = input.value;
+    if (this.state.selectedSearchTz || !Util.norm(raw) || !Store.hasData()) return this.hideSuggestions();
+    const first = Util.norm(raw).toLocaleLowerCase().split(' ')[0];
+    const rank = t => { const n = Util.norm(t.name).toLocaleLowerCase(); return n.startsWith(first) ? 0 : n.split(' ').some(w => w.startsWith(first)) ? 1 : 2; };
+    const students = this.filtered(false).filter(t => this.matchTrainee(t, raw)).sort((a, b) => rank(a) - rank(b));
+    let groups = [];
+    if (this.state.tab === 'groups' && Store.loaded.groups) groups = this.matchGroups(raw).slice(0, 5);
+    const SHOWN = 8, shown = students.slice(0, SHOWN);
+    const items = [...shown.map(t => ({ kind: 's', tz: t.tz })), ...groups.map(g => ({ kind: 'g', id: g.groupId }))];
+    let i = 0;
+    const row = (inner, kind) => `<div id="sg-${i}" class="sg-item" role="option" aria-selected="false" data-act="sgPick" data-i="${i++}" data-kind="${kind}">${inner}</div>`;
+    const studentRows = shown.map(t => row(`<span class="sg-name">${this.highlightMatch(t.name, raw)}</span>
+      <span class="sg-badge">${E(Config.classLabel(t.classKey))}</span><span class="sg-tz" dir="ltr">${E(t.tz)}</span>`, 's')).join('');
+    const groupRows = groups.map(g => row(`<span class="sg-name">${this.highlightMatch(`${g.subject} • ${g.teacher || 'ללא מורה'}`, raw)}</span>
+      <span class="sg-tz" dir="ltr">[${E(g.groupId)}]</span>`, 'g')).join('');
+    pop.innerHTML = `<div class="sg-head">חניכים${students.length ? ` (${students.length})` : ''}</div>${studentRows || '<div class="sg-empty">לא נמצאו חניכים תואמים</div>'}
+      ${students.length > SHOWN ? `<div class="sg-empty">ועוד ${students.length - SHOWN} – המשיכו להקליד לצמצום</div>` : ''}
+      ${groups.length ? `<div class="sg-head">קבוצות ומורים תואמים</div>${groupRows}` : ''}`;
+    pop.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+    this._sg = { items, active: -1 };
+  },
+
+  moveSuggestion(delta) {
+    const n = this._sg.items.length;
+    if (!n) return;
+    const a = this._sg.active;
+    this._sg.active = a < 0 ? (delta > 0 ? 0 : n - 1) : (a + delta + n) % n;
+    document.querySelectorAll('#searchSuggestPopup .sg-item').forEach((el, i) => {
+      const on = i === this._sg.active;
+      el.classList.toggle('active', on);
+      el.setAttribute('aria-selected', String(on));
+      if (on) { el.scrollIntoView({ block: 'nearest' }); $('globalSearch').setAttribute('aria-activedescendant', el.id); }
+    });
+  },
+
+  pickSuggestion(i) {
+    const item = this._sg.items[i];
+    if (!item) return;
+    this.hideSuggestions();
+    if (item.kind === 's') this.selectStudent(item.tz); else this.selectGroup(item.id);
+  },
+
+  /** נעילת הסינון לחניך אחד: טבלאות מסוננות אליו, בקבוצות מוצגות קבוצותיו בלבד, ובשאר הלשוניות נפתח כרטיס ה-360° שלו */
+  selectStudent(tz) {
+    const t = Store.trainees.get(tz);
+    if (!t) return;
+    clearTimeout(this._searchTimer);
+    this.state.selectedSearchTz = tz;
+    this.state.filters.q = '';
+    setVal('globalSearch', t.name);
+    FILTERED_TABS.forEach(tab => this.dirty.add(tab));
+    this.renderSearchChrome();
+    if (['groups', 'bagrut', 'sadin'].includes(this.state.tab)) this.renderTab(this.state.tab);
+    else this.openProfile(tz);
+  },
+
+  selectGroup(groupId) {
+    Object.assign(this.state.groups, { view: 'explorer', subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId, missingSelected: false });
+    this.state.selectedSearchTz = null;
+    this.state.filters.q = '';
+    setVal('globalSearch', '');
+    FILTERED_TABS.forEach(tab => this.dirty.add(tab));
+    this.renderSearchChrome();
+    this.syncGroupLayout();
+    this.groupsRerender();
+  },
+
+  clearSearch() {
+    clearTimeout(this._searchTimer);
+    const st = this.state, had = st.selectedSearchTz || st.filters.q;
+    st.selectedSearchTz = null;
+    st.filters.q = '';
+    setVal('globalSearch', '');
+    this.hideSuggestions();
+    this.renderSearchChrome();
+    if (had) { FILTERED_TABS.forEach(tab => this.dirty.add(tab)); this.renderTab(st.tab); }
+    const input = $('globalSearch');
+    if (input) input.focus();
+  },
+
+  /** כפתור ה-× בתיבת החיפוש, וכמוהו הכותרת "מציג חניך" בראש לשונית הקבוצות */
+  renderSearchChrome() {
+    const input = $('globalSearch'), st = this.state;
+    const clear = $('searchClear');
+    if (clear) clear.classList.toggle('hidden', !(input && input.value) && !st.selectedSearchTz);
+    const pill = $('searchLockPill'), t = this.lockedTrainee();
+    if (pill) {
+      const show = !!t && st.tab === 'groups';
+      pill.classList.toggle('hidden', !show);
+      pill.innerHTML = show ? `<span class="ov-pill">מציג חניך: <b>${E(t.name)}</b></span><button type="button" class="ov-pill sg-x" data-act="searchClear" aria-label="הסרת הבחירה והצגת כל החניכים">×</button>` : '';
+    }
   },
 
   onFilterChange() {
+    /* סינון חדש מחליף את רשימת הניווט שנשמרה מהטבלה ברשימת החניכים שבסינון הנוכחי */
+    if (this.state.navOrigin) this.state.navOrigin.orderedTzList = null;
     this.syncFilters();
     FILTERED_TABS.forEach(t => this.dirty.add(t));
     this.alertOut = [];
@@ -1125,8 +1295,9 @@ const App = {
   renderGroupsExplorer() {
     const st = this.state.groups, f = this.state.filters;
     const groups = GroupAnalyzer.explorerModel().groups;
-    const population = this.filtered(false), populationIds = new Set(population.map(t => t.tz));
-    const scoped = f.grade !== 'all' || f.cls !== 'all' || f.track !== 'all';
+    const lockT = this.lockedTrainee();
+    const population = lockT ? [lockT] : this.filtered(false), populationIds = new Set(population.map(t => t.tz));
+    const scoped = !!lockT || f.grade !== 'all' || f.cls !== 'all' || f.track !== 'all';
     const visible = groups.filter(g => !scoped || g.members.some(m => populationIds.has(m.t.tz)));
     const cats = new Map();
     groups.forEach(g => { const c = cats.get(g.cat.key) || { ...g.cat, n: 0 }; c.n++; cats.set(c.key, c); });
@@ -1149,10 +1320,8 @@ const App = {
     this._boardCategory = cat ? cat.label : '';
     const health = cat ? GroupAnalyzer.subjectHealth(cat, groups, population, f.grade !== 'all' || f.cls !== 'all') : null;
     this.renderGroupsStrip(cat, health);
-    const q = Util.norm(f.q).toLocaleLowerCase(), code = q.replace(/^\[|\]$/g, '');
-    const hit = t => !!q && (Util.norm(t.name).toLocaleLowerCase().includes(q) || t.tz.includes(q));
+    const hit = t => !!lockT && t.tz === lockT.tz;
     let scope = visible.filter(g => (st.subjectKey === 'all' || g.cat.key === st.subjectKey) && (st.teacher === 'all' || g.teacher === st.teacher));
-    if (q) scope = scope.filter(g => (code && g.groupId.toLocaleLowerCase().includes(code)) || g.members.some(m => hit(m.t)));
     const dupGroups = new Set(health ? health.dup.flatMap(d => d.groups.map(g => g.groupId)) : []);
     const strayIds = new Set(health ? health.stray.map(s => `${s.g.groupId}\u0000${s.t.tz}`) : []);
     if (st.strip === 'missing') scope = [];
@@ -1160,7 +1329,7 @@ const App = {
     if (st.strip === 'stray') scope = scope.filter(g => g.members.some(m => strayIds.has(`${g.groupId}\u0000${m.t.tz}`)));
     scope.sort((a, b) => a.cat.order - b.cat.order || a.subject.localeCompare(b.subject, 'he') || (a.teacher || 'תת').localeCompare(b.teacher || 'תת', 'he') || natural(a.groupId, b.groupId));
     this._explorerView = scope;
-    const missing = health && (st.strip === 'all' || st.strip === 'missing') ? health.missing.filter(t => !q || hit(t)) : [];
+    const missing = health && (st.strip === 'all' || st.strip === 'missing') ? health.missing.filter(t => !lockT || hit(t)) : [];
     this._boardMissing = missing;
     if (st.strip === 'missing') st.missingSelected = true;
     if (st.missingSelected && !missing.length && st.strip !== 'missing') st.missingSelected = false;
@@ -1561,14 +1730,22 @@ const App = {
     return [...new Set(items)];
   },
 
+  /** רשימת הניווט בכרטיס: הסדר שנראה בטבלת המקור (navOrigin.orderedTzList), ובהיעדרו החניכים שבסינון הנוכחי */
+  profileList() {
+    const o = this.state.navOrigin;
+    const ordered = o && o.orderedTzList ? o.orderedTzList.map(tz => Store.trainees.get(tz)).filter(Boolean) : [];
+    return ordered.length ? ordered : this.filtered(false);
+  },
+
   renderTrainee360Panel() {
-    const list = this.filtered();
+    const list = this.profileList();
     const sel = $('profSelect');
     if (!Store.hasData() || !list.length) {
       if (sel) sel.innerHTML = '';
       setText('profName', Store.hasData() ? 'אין חניכים בסינון הנוכחי' : 'טרם נטענה מצבת חניכים');
       ['profMeta', 'profBadges', 'profBody', 'profKpis'].forEach(id => setHtml(id, ''));
       ['profPrev', 'profNext', 'excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = true; });
+      this.renderProfileNav(0, 0);
       return;
     }
     let idx = list.findIndex(t => t.tz === this.state.profileTz);
@@ -1582,8 +1759,9 @@ const App = {
     const prev = $('profPrev'), next = $('profNext');
     if (prev) prev.disabled = idx === 0;
     if (next) next.disabled = idx === list.length - 1;
+    this.renderProfileNav(idx + 1, list.length);
     setText('profName', t.name);
-    setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))} · ${idx + 1} מתוך ${list.length}`);
+    setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
     const units = this.profileUnits(t.tz, ev, rules);
     setHtml('profBadges', `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>
       <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>`);
@@ -1711,7 +1889,45 @@ const App = {
     ].join(''));
   },
 
-  openProfile(tz) {
+  NAV_LABELS: { overview: 'חדר בקרה', bagrut: 'צפי זכאות לבגרות', groups: 'בקרת קבוצות', sadin: 'סדין ציונים', settings: 'הגדרות ומצבת' },
+
+  /** מכל הלשוניות: האלמנט הפנימי שגולל (עטיפת הטבלה עם הכותרת הצמודה) */
+  navScrollTarget(tab) {
+    if (tab === 'bagrut') return $('bagrut-table');
+    if (tab === 'sadin') return document.querySelector('#sadin-table .sticky-scroll') || $('sadin-table');
+    if (tab === 'groups') return document.querySelector(this.state.groups.view === 'explorer' ? '#groups-detail .sticky-scroll' : '#groups-table .sticky-scroll');
+    return null;
+  },
+
+  /** שומר את הקשר המקור לפני מעבר לכרטיס: לשונית, תצוגה, גלילות, החניך והסדר הנראה של החניכים בטבלה שממנה לחצו */
+  captureNavOrigin(tz, el) {
+    const st = this.state, tab = st.tab;
+    const root = (el && el.closest && el.closest('table')) || $(`panel-${tab}`);
+    const SEL = '[data-act="openProfile"][data-tz], [data-act="openBoardProfile"][data-tz]';
+    let list = [...new Set([...(root ? root.querySelectorAll(SEL) : [])].map(n => n.dataset.tz))];
+    if (list.length < 2 || !list.includes(tz)) {
+      list = this.filtered(false).map(t => t.tz);
+      if (!list.includes(tz)) list = [tz];
+    }
+    const scroller = this.navScrollTarget(tab), master = $('groups-master'), main = $('mainContent');
+    st.navOrigin = {
+      tab, tz, orderedTzList: list,
+      subView: tab === 'groups' ? st.groups.view : tab === 'sadin' ? st.sadin.view : tab === 'bagrut' ? st.bagrut.drill : '',
+      label: tab === 'sadin' && st.sadin.view === 'flat' ? 'פירוט ציונים' : this.NAV_LABELS[tab] || 'מסך קודם',
+      scrollTop: main ? main.scrollTop : 0, windowScrollTop: window.scrollY,
+      containerScrollTop: scroller ? scroller.scrollTop : 0, masterScrollTop: tab === 'groups' && master ? master.scrollTop : 0
+    };
+    /* רשומת היסטוריה אחת לכל כניסה לכרטיס: כפתור "אחורה" בדפדפן או בעכבר חוזר למסך המקור */
+    try { history.pushState({ sdProfile: true }, ''); this._histPushed = true; } catch (e) { this._histPushed = false; }
+  },
+
+  openProfile(tz, el) {
+    const o = this.state.navOrigin;
+    if (this.state.tab !== 'profile') this.captureNavOrigin(tz, el);
+    else if (o) {
+      o.tz = tz;
+      if (o.orderedTzList && !o.orderedTzList.includes(tz)) o.orderedTzList = null;
+    }
     this.state.profileTz = tz;
     this.dirty.add('profile');
     this.closeModal();
@@ -1719,10 +1935,67 @@ const App = {
     this.scrollToTop();
   },
 
+  /** מעבר לחניך אחר בכרטיס; מעדכן את navOrigin.tz כדי שהחזרה לטבלה תגלול ותדגיש את החניך האחרון שנצפה */
+  setProfile(tz) {
+    this.state.profileTz = tz;
+    if (this.state.navOrigin) this.state.navOrigin.tz = tz;
+    this.dirty.add('profile');
+    this.renderTab('profile');
+    this.scrollToTop();
+  },
+
   profileStep(d) {
-    const list = this.filtered();
+    const list = this.profileList();
     const i = list.findIndex(t => t.tz === this.state.profileTz) + d;
-    if (list[i]) { this.state.profileTz = list[i].tz; this.dirty.add('profile'); this.renderTab('profile'); this.scrollToTop(); }
+    if (list[i]) this.setProfile(list[i].tz);
+  },
+
+  renderProfileNav(pos, total) {
+    const o = this.state.navOrigin, back = $('profBack');
+    if (back) {
+      back.classList.toggle('hidden', !o);
+      if (o) back.textContent = `→ חזרה ל${o.label}`;
+    }
+    setText('profPos', total ? `חניך ${pos} מתוך ${total} בסינון הנוכחי` : '');
+  },
+
+  /** כפתור/Esc: דרך ההיסטוריה, כדי שמחסנית הדפדפן תישאר עקבית; popstate מבצע את החזרה בפועל */
+  profBack() {
+    if (!this.state.navOrigin) return;
+    if (this._histPushed) {
+      history.back();
+      setTimeout(() => { if (this.state.tab === 'profile' && this.state.navOrigin) this.returnToOrigin(); }, 400);
+    } else this.returnToOrigin();
+  },
+
+  returnToOrigin() {
+    const o = this.state.navOrigin;
+    if (!o) return;
+    this.state.navOrigin = null;
+    this._histPushed = false;
+    this.dirty.add('profile');
+    this.showTab(o.tab);
+    const main = $('mainContent');
+    const apply = () => {
+      if (main) main.scrollTop = o.scrollTop;
+      window.scrollTo(0, o.windowScrollTop);
+      const scroller = this.navScrollTarget(o.tab);
+      if (scroller) scroller.scrollTop = o.containerScrollTop;
+      const master = $('groups-master');
+      if (master && o.tab === 'groups') master.scrollTop = o.masterScrollTop;
+    };
+    apply();
+    setTimeout(() => {
+      apply();
+      const panel = $(`panel-${o.tab}`);
+      const hit = panel && [...panel.querySelectorAll('[data-tz]')].find(n => n.dataset.tz === o.tz && /^(openProfile|openBoardProfile)$/.test(n.dataset.act));
+      const row = hit && (hit.closest('tr') || hit);
+      if (!row) return;
+      const box = (this.navScrollTarget(o.tab) || main).getBoundingClientRect(), r = row.getBoundingClientRect();
+      if (r.top < box.top + 40 || r.bottom > box.bottom) row.scrollIntoView({ block: 'center' });
+      row.classList.add('nav-flash');
+      setTimeout(() => row.classList.remove('nav-flash'), 2600);
+    }, 30);
   },
 
   scrollToTop() { $('mainContent').scrollTop = 0; window.scrollTo({ top: 0 }); },
@@ -2007,17 +2280,32 @@ const App = {
     on('fHomeroom', 'change', e => { this.state.filters.cls = e.target.value; this.onFilterChange(); });
     on('fTrack', 'change', e => { this.state.filters.track = e.target.value; this.onFilterChange(); });
     on('globalSearch', 'input', e => {
-      const value = e.target.value;
+      const st = this.state, hadLock = !!st.selectedSearchTz;
       clearTimeout(this._searchTimer);
-      const applySearch = () => {
-        this.state.filters.q = value;
-        FILTERED_TABS.forEach(t => this.dirty.add(t));
-        this.renderTab(this.state.tab);
-      };
-      if (this.state.tab === 'groups' && this.state.groups.view === 'explorer') applySearch();
-      else this._searchTimer = setTimeout(applySearch, 180);
+      st.selectedSearchTz = null;
+      st.filters.q = e.target.value;
+      const live = this.LIVE_SEARCH_TABS.includes(st.tab);
+      /* הקלדה מעדכנת רק את חלון ההשלמה; הטבלאות מתעדכנות חיות רק בבגרות ובסדין, או כשמשחררים נעילה של חניך */
+      FILTERED_TABS.forEach(t => { if (t !== st.tab || live || hadLock) this.dirty.add(t); });
+      this.renderSearchChrome();
+      this.showSuggestions();
+      if (live) this._searchTimer = setTimeout(() => this.renderTab(st.tab), 180);
+      else if (hadLock) this.renderTab(st.tab);
     });
-    on('fClear', 'click', () => { clearTimeout(this._searchTimer); this.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '' }; this.onFilterChange(); });
+    on('globalSearch', 'focus', () => this.showSuggestions());
+    on('globalSearch', 'keydown', e => {
+      const open = !$('searchSuggestPopup').classList.contains('hidden');
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (open) this.moveSuggestion(e.key === 'ArrowDown' ? 1 : -1); else this.showSuggestions();
+      } else if (e.key === 'Enter' && open) {
+        const idx = this._sg.active >= 0 ? this._sg.active : (this.LIVE_SEARCH_TABS.includes(this.state.tab) ? -1 : 0);
+        if (this._sg.items[idx]) { e.preventDefault(); this.pickSuggestion(idx); }
+      } else if (e.key === 'Escape' && open) { e.stopPropagation(); this.hideSuggestions(); }
+    });
+    on('searchSuggestPopup', 'mousedown', e => e.preventDefault());
+    document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) this.hideSuggestions(); });
+    on('fClear', 'click', () => { clearTimeout(this._searchTimer); this.state.selectedSearchTz = null; this.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '' }; this.hideSuggestions(); this.onFilterChange(); });
     on('bagrutStatusSelect', 'change', e => {
       this.state.bagrut.chip = e.target.value;
       this.dirty.add('bagrut'); this.renderTab('bagrut');
@@ -2085,7 +2373,7 @@ const App = {
     /* כרטיס חניך */
     on('profPrev', 'click', () => this.profileStep(-1));
     on('profNext', 'click', () => this.profileStep(1));
-    on('profSelect', 'change', e => { this.state.profileTz = e.target.value; this.dirty.add('profile'); this.renderTab('profile'); });
+    on('profSelect', 'change', e => this.setProfile(e.target.value));
     on('excTrack', 'change', e => this.saveProfileField({ trackOverride: e.target.value }));
     on('excNote', 'change', e => this.saveProfileField({ note: e.target.value.trim() }));
 
@@ -2148,7 +2436,17 @@ const App = {
       this.toast('ההגדרות אופסו', 'ok');
     });
 
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') { this.closeModal(); this.hideMxPop(); this.hideSadinPop(); } });
+    /* Esc בכרטיס חניך (כשאין חלון פתוח ולא מקלידים בשדה) חוזר למסך המקור; נבדק בשלב ה-capture לפני שחלונות נסגרים */
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      const mapping = $('mappingModal');
+      const modalOpen = !!($('modal-root') && $('modal-root').children.length) || !!(mapping && !mapping.classList.contains('hidden'));
+      const active = document.activeElement;
+      const typing = !!active && (/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) || active.isContentEditable);
+      this.closeModal(); this.hideMxPop(); this.hideSadinPop();
+      if (this.state.tab === 'profile' && this.state.navOrigin && !modalOpen && !typing) this.profBack();
+    }, true);
+    window.addEventListener('popstate', () => { if (this.state.tab === 'profile' && this.state.navOrigin) this.returnToOrigin(); });
     /* חלון הפירוט של גיליון השליטה: ריחוף / מיקוד מקלדת זמניים, לחיצה מקבעת */
     const mxEl = e => e.target.closest && e.target.closest('[data-act="mxPop"]');
     document.addEventListener('mouseover', e => { const el = mxEl(e); if (el && !this._mxPinned) this.showMxPop(el, false); });
@@ -2495,6 +2793,8 @@ const App = {
       else this.showSadinPop(el, true);
     },
     goSettings() { this.showTab('settings'); },
+    sgPick(el) { this.pickSuggestion(+el.dataset.i); },
+    searchClear() { this.clearSearch(); },
     /** ניווט מכרטיסי חדר הבקרה ללשונית מסוננת מראש */
     ovGo(el) {
       const { go, chip, strip, view } = el.dataset;
@@ -2586,7 +2886,8 @@ const App = {
     },
     remap(el) { this.remapColumns(el.dataset.key); },
     loadMock() { this.loadMock(); },
-    openProfile(el) { this.openProfile(el.dataset.tz); },
+    openProfile(el) { this.openProfile(el.dataset.tz, el); },
+    profBack() { this.profBack(); },
     bagrutSort(el) {
       const st = this.state.bagrut, k = el.dataset.key;
       if (st.sort === k) st.dir *= -1; else { st.sort = k; st.dir = 1; }
@@ -2690,7 +2991,7 @@ const App = {
       if (!this.filtered().some(person => person.tz === t.tz)) f.q = '';
       this.syncFilters();
       FILTERED_TABS.forEach(tab => this.dirty.add(tab));
-      this.openProfile(t.tz);
+      this.openProfile(t.tz, el);
     },
     showMissed() { this.showMissed(); },
     copyAlert(el) {
