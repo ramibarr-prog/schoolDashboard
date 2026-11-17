@@ -9,32 +9,61 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Rubik', 'sans-serif'] } } } };</script>
+  <script>
+    /* פלטת "ירוק מרווה ואחרה": כל סולמות ה-Tailwind שבשימוש בתבניות ממופים לפלטה החמה של חדר הבקרה */
+    tailwind.config = { theme: { extend: {
+      fontFamily: { sans: ['Rubik', 'sans-serif'] },
+      colors: {
+        slate: { 50: '#FAF8F0', 100: '#E8F0E5', 200: '#D9E6D5', 300: '#CBD5E1', 400: '#7F9188', 500: '#5F7068', 600: '#4B5E56', 700: '#3F554C', 800: '#344E45', 900: '#344E45' },
+        indigo: { 50: '#E8F0E5', 100: '#E8F0E5', 300: '#A8C5A5', 400: '#A8C5A5', 500: '#668F78', 600: '#668F78', 700: '#344E45', 800: '#344E45', 900: '#2A4038' },
+        sky: { 100: '#E8F0E5', 400: '#A8C5A5', 600: '#668F78', 800: '#344E45' },
+        emerald: { 600: '#668F78', 700: '#344E45', 800: '#344E45' },
+        rose: { 400: '#B85D3B', 600: '#B85D3B', 800: '#B85D3B', 900: '#B85D3B' },
+        red: { 600: '#B85D3B' },
+        amber: { 50: '#FBF3DF', 300: '#E7BD65', 400: '#E7BD65', 500: '#E7BD65', 600: '#B45309', 700: '#B45309', 800: '#B45309', 900: '#8A4309' },
+        violet: { 50: '#E8F0E5', 800: '#344E45', 950: '#344E45' },
+        yellow: { 100: '#F6E7BD' }
+      }
+    } } };
+  </script>
   <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
+    :root {
+      --forest: #344E45; --sage: #668F78; --sage-soft: #A8C5A5; --sage-tint: #E8F0E5; --cream-bg: #FAF8F0;
+      --mustard: #E7BD65; --terracotta: #B85D3B; --amber-dark: #B45309; --ink: #2A3A34; --muted: #5F7068; --sidebar-w: 250px;
+    }
     html, body { font-family: 'Rubik', sans-serif; }
-    body { background: #e8eef5; color: #0f172a; }
-    .card { background: #fff; border: 1px solid #cbd5e1; border-radius: .875rem; box-shadow: 0 4px 12px -2px rgba(15, 23, 42, .08), 0 2px 4px -2px rgba(15, 23, 42, .04); }
+    body { background: var(--cream-bg); color: var(--ink); }
+    .card { background: #fff; border: 1px solid var(--sage-tint); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(52, 78, 69, .12); }
     .btn { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .9rem; border-radius: .6rem; font-size: .875rem; font-weight: 500; transition: background .15s, box-shadow .15s; cursor: pointer; }
-    .btn:focus-visible, .inp:focus-visible, .tab-btn:focus-visible, .chip:focus-visible, .gstat:focus-visible, [data-act="gPick"]:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+    .btn:focus-visible, .inp:focus-visible, .side-tab:focus-visible, .chip:focus-visible, .gstat:focus-visible, [data-act="gPick"]:focus-visible, .ov-card:focus-visible, .ov-bar:focus-visible, .ov-row:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
     .btn:disabled { opacity: .5; cursor: not-allowed; }
-    .btn-primary { background: #4338ca; color: #fff; }
-    .btn-primary:hover:not(:disabled) { background: #3730a3; }
-    .btn-ghost { background: #f8fafc; color: #1e293b; border: 1px solid #94a3b8; }
-    .btn-ghost:hover:not(:disabled) { background: #e0e7ff; }
-    .btn-danger { background: #fee2e2; color: #b91c1c; }
-    .btn-danger:hover:not(:disabled) { background: #fecaca; }
+    .btn-primary { background: var(--sage); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #547B65; }
+    .btn-ghost { background: #fff; color: var(--forest); border: 1px solid var(--sage-soft); }
+    .btn-ghost:hover:not(:disabled) { background: var(--sage-tint); }
+    .btn-danger { background: #fff; color: var(--terracotta); border: 1px solid rgba(184, 93, 59, .4); }
+    .btn-danger:hover:not(:disabled) { background: rgba(184, 93, 59, .08); }
     .btn-sm { padding: .25rem .6rem; font-size: .8rem; }
-    .inp { border: 1px solid #94a3b8; border-radius: .55rem; padding: .35rem .6rem; background: #fff; color: #0f172a; font-size: .875rem; font-weight: 600; min-width: 0; box-shadow: 0 1px 3px rgba(15, 23, 42, .1); }
-    .inp:focus { border-color: #4f46e5; }
-    .inp::placeholder { color: #64748b; font-weight: 400; }
-    .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .75rem; border-radius: 999px; font-size: .8rem; background: #fff; border: 1px solid #cbd5e1; cursor: pointer; }
-    .chip[aria-pressed="true"] { background: #4338ca; color: #fff; border-color: #4338ca; }
-    .tab-btn { display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .8rem; font-size: .9rem; font-weight: 500; color: #cbd5e1; border-bottom: 3px solid transparent; white-space: nowrap; }
-    .tab-btn:hover { color: #fff; }
-    .tab-btn[aria-selected="true"] { color: #fff; border-bottom-color: #38bdf8; }
-    .tbl-wrap { overflow: auto; border-radius: .75rem; border: 1px solid #cbd5e1; background: #fff; }
+    .inp { border: 1px solid var(--sage-soft); border-radius: .55rem; padding: .35rem .6rem; background: #fff; color: var(--forest); font-size: .875rem; font-weight: 600; min-width: 0; }
+    .inp:focus { border-color: var(--sage); }
+    .inp::placeholder { color: var(--muted); font-weight: 400; }
+    .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .75rem; border-radius: 999px; font-size: .8rem; background: #fff; border: 1px solid var(--sage-soft); color: var(--forest); cursor: pointer; }
+    .chip[aria-pressed="true"], .chip[aria-selected="true"] { background: var(--sage); color: #fff; border-color: var(--sage); }
+    /* סרגל צד ימני (RTL) */
+    #sidebar { position: fixed; top: 0; right: 0; bottom: 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; overflow-y: auto; background: var(--forest); color: var(--cream-bg); transition: transform .2s ease; }
+    #sidebar .sync-badge { display: inline-flex; align-items: center; padding: .15rem .65rem; border-radius: 999px; font-size: .75rem; background: rgba(250, 248, 240, .14); color: var(--cream-bg); }
+    #sidebar .sync-badge:empty { display: none; }
+    .side-tab { display: flex; align-items: center; gap: .6rem; width: 100%; padding: .65rem .9rem; border-radius: 10px; font-size: .9rem; font-weight: 500; color: rgba(250, 248, 240, .85); text-align: right; transition: background .15s; }
+    .side-tab:hover { background: rgba(250, 248, 240, .12); color: #fff; }
+    .side-tab[aria-selected="true"] { background: var(--cream-bg); color: var(--forest); font-weight: 700; }
+    @media (max-width: 1023px) {
+      #sidebar { transform: translateX(100%); }
+      body.nav-open #sidebar { transform: none; box-shadow: -8px 0 24px rgba(0, 0, 0, .25); }
+    }
+    @media (min-width: 1024px) { #appShell { margin-right: var(--sidebar-w); } }
+    .tbl-wrap { overflow: auto; border-radius: 16px; border: 1px solid var(--sage-tint); background: #fff; }
     table { width: 100%; border-collapse: collapse; font-size: .85rem; }
     table.grid { display: table; width: 100%; border-collapse: collapse; font-size: .85rem; }
     table th, table td { text-align: right; }
@@ -42,83 +71,82 @@
     table.table-fixed th { white-space: normal; }
     .tz-col { white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; min-width: 95px; }
     table.table-fixed th.tz-col { white-space: nowrap; }
-    table.grid thead th { position: sticky; top: 0; z-index: 20; background: #1e293b; padding: .55rem .75rem; font-size: .75rem; letter-spacing: .025em; font-weight: 600; color: #f8fafc; border-bottom: 2px solid #0f172a; white-space: nowrap; }
-    table.grid td { padding: .5rem .75rem; border-bottom: 1px solid #e2e8f0; vertical-align: middle; overflow-wrap: anywhere; }
-    table.grid tr.room-divider td { background: #e0e7ff; color: #1e1b4b; font-weight: 700; border-block: 1px solid #a5b4fc; }
+    table.grid thead th { position: sticky; top: 0; z-index: 20; background: var(--forest); padding: .55rem .75rem; font-size: .75rem; letter-spacing: .025em; font-weight: 600; color: var(--cream-bg); border-bottom: 2px solid var(--forest); white-space: nowrap; }
+    table.grid td { padding: .5rem .75rem; border-bottom: 1px solid var(--sage-tint); vertical-align: middle; overflow-wrap: anywhere; }
+    table.grid tr.room-divider td { background: var(--sage-tint); color: var(--forest); font-weight: 700; border-block: 1px solid var(--sage-tint); }
     .fresh-compact { max-width: 10.5rem; }
     .card .chip { padding: .15rem .55rem; font-size: .75rem; }
     .fresh-compact .fresh-bar span { overflow: hidden; text-overflow: ellipsis; }
     .fresh-compact .fresh-bar { padding: .15rem .6rem; font-size: .78rem; border-radius: 999px; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    table.grid tbody tr:hover { background: #f8fafc; }
-    .dropzone { border: 2px dashed #cbd5e1; border-radius: .75rem; padding: 1.25rem; text-align: center; transition: background .15s, border-color .15s; }
-    .dropzone.over { background: #e0f2fe; border-color: #0284c7; }
+    table.grid tbody tr:hover { background: var(--cream-bg); }
+    .dropzone { border: 2px dashed var(--sage-soft); border-radius: 16px; padding: 1.25rem; text-align: center; transition: background .15s, border-color .15s; }
+    .dropzone.over { background: var(--sage-tint); border-color: var(--sage); }
     .badge { display: inline-flex; align-items: center; gap: .25rem; padding: .1rem .55rem; border: 1px solid transparent; border-radius: 999px; font-size: .75rem; font-weight: 700; }
     .badge.hidden { display: none; }
-    .tier-0, .gate-off { background: #e2e8f0; color: #1e293b; border-color: #94a3b8; }
-    .tier-1, .gate-ok { background: #d1fae5; color: #064e3b; border-color: #34d399; }
-    .tier-2 { background: #ecfccb; color: #365314; border-color: #84cc16; }
-    .tier-3, .gate-warn { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
-    .tier-4, .tier-5, .gate-bad { background: #ffe4e6; color: #881337; border-color: #fb7185; }
-    .badge-exc { background: #ede9fe; color: #4c1d95; border-color: #a78bfa; }
+    .tier-0, .tier-5, .gate-off { background: var(--cream-bg); color: var(--muted); border-color: var(--sage-tint); }
+    .tier-1, .tier-2, .gate-ok { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
+    .tier-3, .gate-warn { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); }
+    .tier-4, .gate-bad { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
+    .badge-exc { background: var(--sage-tint); color: var(--forest); border-color: var(--sage); }
     .fresh-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .85rem; border-radius: .7rem; font-size: .85rem; border: 1px solid; }
-    .fresh-emerald { background: #d1fae5; color: #064e3b; border-color: #34d399; }
-    .fresh-amber { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
-    .fresh-red { background: #ffe4e6; color: #881337; border-color: #fb7185; }
-    .fresh-slate { background: #f1f5f9; color: #1e293b; border-color: #94a3b8; }
-    .badge.bg-sky-100 { border-color: #38bdf8; color: #0c4a6e; }
+    .fresh-emerald { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
+    .fresh-amber { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); }
+    .fresh-red { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
+    .fresh-slate { background: var(--cream-bg); color: var(--forest); border-color: var(--sage-soft); }
+    .badge.bg-sky-100 { border-color: var(--sage-soft); color: var(--forest); }
     /* כפתורי כיתה וחלון שיוך מהיר: שטוחים וללא מסגרות */
-    .class-pill { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .7rem; border: 0; border-radius: 999px; background: #f1f5f9; color: #1e293b; font-size: .75rem; font-weight: 700; cursor: pointer; transition: background .15s; }
-    .class-pill:hover { background: #e0e7ff; color: #3730a3; }
-    .class-pill:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }
+    .class-pill { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .7rem; border: 0; border-radius: 999px; background: var(--sage-tint); color: var(--forest); font-size: .75rem; font-weight: 700; cursor: pointer; transition: background .15s; }
+    .class-pill:hover { background: var(--sage-soft); color: var(--forest); }
+    .class-pill:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
     .flat-modal { border: 0; }
-    .flat-sel { border: 0; border-radius: .5rem; background: #f1f5f9; color: #0f172a; padding: .3rem .5rem; font-size: .8rem; font-weight: 600; min-width: 0; cursor: pointer; }
-    .flat-sel:hover { background: #e0e7ff; }
-    .flat-sel:focus-visible { outline: 2px solid #4f46e5; outline-offset: 1px; }
+    .flat-sel { border: 0; border-radius: .5rem; background: var(--sage-tint); color: var(--forest); padding: .3rem .5rem; font-size: .8rem; font-weight: 600; min-width: 0; cursor: pointer; }
+    .flat-sel:hover { background: var(--sage-soft); }
+    .flat-sel:focus-visible { outline: 2px solid var(--sage); outline-offset: 1px; }
     .flat-tbl td, .flat-tbl th { padding: .4rem .6rem; text-align: right; }
-    table.grid.flat-tbl thead th { background: #fff; color: #475569; font-size: .75rem; font-weight: 600; border-bottom: 0; }
+    table.grid.flat-tbl thead th { background: #fff; color: var(--muted); font-size: .75rem; font-weight: 600; border-bottom: 1px solid var(--sage-tint); }
     table.grid.flat-tbl td { border-bottom: 0; }
-    .flat-tbl tbody tr:nth-child(odd) { background: #f8fafc; }
+    .flat-tbl tbody tr:nth-child(odd) { background: var(--cream-bg); }
     .panel[hidden] { display: none; }
     /* גיליון שליטה ויזואלי (לשונית בגרות) */
     table.mx { font-size: .8rem; }
     table.mx th { text-align: center; padding: .45rem .4rem; }
     table.mx td { padding: .3rem .4rem; text-align: center; overflow-wrap: normal; }
     table.mx th:first-child, table.mx tbody tr:not(.room-divider) td:first-child { position: sticky; right: 0; text-align: right; background: #fff; z-index: 2; min-width: 8.5rem; }
-    table.mx thead th:first-child { background: #1e293b; z-index: 30; }
-    table.mx tbody tr:not(.room-divider):hover td:first-child { background: #f8fafc; }
+    table.mx thead th:first-child { background: var(--forest); z-index: 30; }
+    table.mx tbody tr:not(.room-divider):hover td:first-child { background: var(--cream-bg); }
     table.mx td.mx-cell { cursor: pointer; min-width: 3.6rem; }
-    table.mx td.mx-cell:hover, table.mx td.mx-cell:focus-visible { outline: 2px solid #0284c7; outline-offset: -2px; }
+    table.mx td.mx-cell:hover, table.mx td.mx-cell:focus-visible { outline: 2px solid var(--sage); outline-offset: -2px; }
     table.mx td.mx-focus, table.mx th.mx-focus { text-align: right; min-width: 13rem; }
-    .pill-t0, .pill-t5 { background: #e2e8f0; color: #1e293b; border-color: #94a3b8; }
-    .pill-t1 { background: #d1fae5; color: #064e3b; border-color: #34d399; } .pill-t2 { background: #fef3c7; color: #78350f; border-color: #fbbf24; }
-    .pill-t3 { background: #ffedd5; color: #7c2d12; border-color: #fb923c; } .pill-t4 { background: #ffe4e6; color: #881337; border-color: #fb7185; }
-    #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(15, 23, 42, .3); text-align: right; pointer-events: none; }
-    #mxPop .h { font-weight: 700; color: #7dd3fc; margin-bottom: .15rem; }
-    #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: #0f172a; color: #f8fafc; border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(15,23,42,.3); pointer-events: none; white-space: pre-line; }
-    .sadin-score { display: inline; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 400; color: #1e293b; white-space: nowrap; }
-    .sadin-score.is-bad { font-weight: 500; color: #b91c1c; }
-    .sadin-score.is-empty { color: #cbd5e1; }
-    table.sadin-sheet td.font-semibold .sadin-score { font-weight: 600; }
-    .sticky-scroll { overflow: auto; max-height: calc(100vh - 185px); min-height: 12rem; }
+    .pill-t0, .pill-t5 { background: var(--cream-bg); color: var(--muted); border-color: var(--sage-tint); }
+    .pill-t1, .pill-t2 { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
+    .pill-t3 { background: rgba(231, 189, 101, .2); color: var(--amber-dark); border-color: var(--mustard); } .pill-t4 { background: #fff; color: var(--terracotta); border-color: rgba(184, 93, 59, .45); }
+    #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(52, 78, 69, .3); text-align: right; pointer-events: none; }
+    #mxPop .h { font-weight: 700; color: var(--mustard); margin-bottom: .15rem; }
+    #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(52, 78, 69, .3); pointer-events: none; white-space: pre-line; }
+    .sadin-score { display: inline; padding: 0; border: 0; background: none; border-radius: 0; font-weight: 400; color: var(--ink); white-space: nowrap; }
+    .sadin-score.is-bad { font-weight: 600; color: var(--terracotta); }
+    .sadin-score.is-empty { color: #CBD5E1; }
+    table.sadin-sheet td.font-semibold .sadin-score, table.sadin-sheet td.font-bold .sadin-score { font-weight: 700; }
+    .sticky-scroll { overflow: auto; max-height: calc(100vh - 180px); min-height: 12rem; }
     @media (min-width: 1024px) { #groups-detail .sticky-scroll { max-height: none; } }
-    table.grid.sadin-flat td { border-bottom: 1px solid #f1f5f9; }
-    table.grid.sadin-flat tr.student-end td { border-bottom: 1px solid #e2e8f0; }
-    table.grid tr.room-divider.anomaly-divider td { background: #fffbeb; color: #78350f; border-block: 1px solid #fcd34d; }
-    .sadin-ok { color: #15803d; font-weight: 500; white-space: nowrap; }
-    .sadin-bad { color: #b91c1c; font-weight: 500; white-space: nowrap; }
+    table.grid.sadin-flat td { border-bottom: 1px solid #F3F6F0; }
+    table.grid.sadin-flat tr.student-end td { border-bottom: 2px solid var(--sage-tint); }
+    table.grid tr.room-divider.anomaly-divider td { background: var(--sage-tint); color: var(--forest); border-block: 1px solid var(--sage-tint); }
+    .sadin-ok { color: var(--forest); font-weight: 500; white-space: nowrap; }
+    .sadin-bad { color: var(--terracotta); font-weight: 600; white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td, table.sadin-sheet th span, table.sadin-sheet td span, table.sadin-sheet td button { white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td { text-align: center; }
     table.sadin-sheet th:first-child, table.sadin-sheet tbody tr:not(.room-divider) td:first-child { position: sticky; right: 0; z-index: 2; background: #fff; text-align: right; min-width: 10rem; }
-    table.sadin-sheet thead th:first-child { background: #1e293b; z-index: 30; }
-    table.sadin-sheet tbody tr:not(.room-divider):hover td:first-child { background: #f8fafc; }
-    .score-alert { display: inline-block; padding: .125rem .375rem; border-radius: .25rem; background: rgba(255, 241, 242, .8); color: #e11d48; font-weight: 700; white-space: nowrap; }
-    .seg { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 999px; overflow: hidden; background: #fff; }
-    .gstat { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border-radius: .5rem; border: 1px solid #cbd5e1; border-right-width: 4px; background: #fff; color: #0f172a; text-align: right; box-shadow: 0 4px 12px -2px rgba(15,23,42,.08); }
-    button.gstat { cursor: pointer; } button.gstat:hover { filter: brightness(.96); }
-    button.gstat[aria-pressed="true"] { box-shadow: 0 0 0 2px #4f46e5, 0 4px 12px -2px rgba(15,23,42,.12); }
-    .gstat-ok { border-right-color: #059669; } .gstat-bad { border-right-color: #e11d48; }
-    .gstat-violet { border-right-color: #7c3aed; } .gstat-amber { border-right-color: #f59e0b; }
-    .panel .text-slate-400, .panel .text-slate-500, #modal-root .text-slate-400, #modal-root .text-slate-500 { color: #475569; }
+    table.sadin-sheet thead th:first-child { background: var(--forest); z-index: 30; }
+    table.sadin-sheet tbody tr:not(.room-divider):hover td:first-child { background: var(--cream-bg); }
+    .score-alert { display: inline-block; color: var(--terracotta); font-weight: 600; white-space: nowrap; }
+    .seg { display: inline-flex; border: 1px solid var(--sage-soft); border-radius: 999px; overflow: hidden; background: #fff; }
+    .gstat { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; height: 2.25rem; padding: .375rem .75rem; border-radius: 10px; border: 1px solid var(--sage-tint); border-right-width: 4px; background: #fff; color: var(--forest); text-align: right; box-shadow: 0 2px 8px -3px rgba(52, 78, 69, .12); }
+    button.gstat { cursor: pointer; } button.gstat:hover { background: var(--cream-bg); }
+    button.gstat[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--sage), 0 2px 8px -3px rgba(52, 78, 69, .12); }
+    .gstat-ok { border-right-color: var(--sage); } .gstat-bad { border-right-color: var(--terracotta); }
+    .gstat-violet { border-right-color: var(--sage-soft); } .gstat-amber { border-right-color: var(--mustard); }
+    .panel .text-slate-400, .panel .text-slate-500, #modal-root .text-slate-400, #modal-root .text-slate-500 { color: var(--muted); }
     #globalFilterBar .inp { height: 2rem; padding: .2rem .5rem; font-size: .75rem; }
     #globalFilterBar .chip, #globalFilterBar .btn { padding: .25rem .5rem; font-size: .75rem; white-space: nowrap; }
     #globalFilterBar #sadinSubjectSelect, #globalFilterBar #sadinTeacherSelect { max-width: 6rem; }
@@ -138,7 +166,7 @@
     #bagrut-table table.grid td.mx-focus { white-space: nowrap; }
     #sadin-table table.grid td { padding: .35rem .5rem; }
     #sadin-table table.grid th, #bagrut-table table.grid th { padding: .35rem .5rem; }
-    #bagrut-table table.grid tr.room-divider td, #sadin-table table.grid tr.room-divider td { padding: .375rem 1rem; text-align: right; background: rgba(238, 242, 255, .9); color: #1e1b4b; border-block: 1px solid #c7d2fe; font-weight: 700; font-size: .75rem; }
+    #bagrut-table table.grid tr.room-divider td, #sadin-table table.grid tr.room-divider td { padding: .375rem 1rem; text-align: right; background: var(--sage-tint); color: var(--forest); border-block: 1px solid var(--sage-tint); font-weight: 700; font-size: .75rem; }
     #profile-academic table.grid { min-width: 860px; }
     #profile-academic table.grid th, #profile-academic table.grid td { padding: .2rem .45rem; font-size: .75rem; line-height: 1.1rem; }
     #profile-academic table.grid tr.room-divider td { padding: .15rem .45rem; }
@@ -149,45 +177,79 @@
       body.group-explorer #panel-groups:not([hidden]) { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: .5rem; }
       body.group-explorer #groups-explorer:not(.hidden) { flex: 1; min-height: 0; }
     }
-    .seg button { padding: .2rem .8rem; font-size: .78rem; color: #475569; }
-    .seg button[aria-pressed="true"] { background: #4338ca; color: #fff; }
+    .seg button { padding: .2rem .8rem; font-size: .78rem; color: var(--muted); }
+    .seg button[aria-pressed="true"] { background: var(--sage); color: #fff; }
     details > summary { cursor: pointer; }
     #rulesDrawer { transition: max-height .25s ease; }
     #toast-root { position: fixed; bottom: 1rem; right: 1rem; z-index: 70; display: flex; flex-direction: column; gap: .5rem; }
-    ::-webkit-scrollbar { height: 10px; width: 10px; } ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+    ::-webkit-scrollbar { height: 10px; width: 10px; } ::-webkit-scrollbar-thumb { background: var(--sage-soft); border-radius: 6px; }
+    /* חדר בקרה */
+    .ov-card { display: flex; flex-direction: column; gap: .35rem; width: 100%; padding: 1rem 1.15rem; text-align: right; background: #fff; border: 1px solid var(--sage-tint); border-radius: 16px; box-shadow: 0 2px 10px -3px rgba(52, 78, 69, .12); cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+    .ov-card:hover { border-color: var(--sage-soft); box-shadow: 0 6px 16px -6px rgba(52, 78, 69, .25); }
+    .ov-label { font-size: .85rem; font-weight: 600; color: var(--muted); }
+    .ov-value { font-size: 2.4rem; font-weight: 800; line-height: 1; color: var(--forest); }
+    .ov-sub { font-size: .75rem; color: var(--muted); line-height: 1.4; }
+    .ov-bar { display: grid; grid-template-columns: minmax(7rem, 11rem) 1fr; align-items: center; gap: .75rem; width: 100%; padding: .2rem .25rem; border-radius: 8px; text-align: right; }
+    button.ov-bar:hover { background: var(--cream-bg); }
+    .ov-track { height: .7rem; border-radius: 999px; background: var(--sage-tint); overflow: hidden; }
+    .ov-fill { display: block; height: 100%; border-radius: 999px; background: var(--sage); }
+    .ov-fill.mustard { background: var(--mustard); }
+    .ov-bar[aria-pressed="true"] { background: var(--sage-tint); }
+    .ov-table { width: 100%; font-size: .85rem; border-collapse: collapse; }
+    .ov-table th { padding: .35rem .5rem; font-size: .75rem; font-weight: 600; color: var(--muted); text-align: right; }
+    .ov-table td { padding: .5rem; vertical-align: top; text-align: right; border-top: 1px solid var(--sage-tint); }
+    .ov-row { cursor: pointer; }
+    .ov-row:hover td { background: var(--cream-bg); }
+    .ov-pill { display: inline-flex; align-items: center; padding: .15rem .7rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--sage-tint); color: var(--forest); }
+    .prof-status { font-size: .9rem; padding: .3rem 1rem; }
+    .prof-kpi { padding: .75rem 1rem; border-radius: 12px; background: var(--cream-bg); border: 1px solid var(--sage-tint); }
+    .prof-kpi .k { font-size: .75rem; font-weight: 600; color: var(--muted); }
+    .prof-kpi .v { font-size: 1.6rem; font-weight: 800; line-height: 1.2; color: var(--forest); }
+    .prof-kpi .s { font-size: .75rem; color: var(--muted); }
+    .txt-bad { color: var(--terracotta); } .txt-warn { color: var(--amber-dark); } .txt-ok { color: var(--forest); }
   </style>
 </head>
-<body class="min-h-screen flex flex-col lg:h-screen lg:overflow-hidden">
+<body class="min-h-screen lg:h-screen lg:overflow-hidden">
 
-  <!-- כותרת ראשית וניווט -->
-  <header class="bg-slate-900 text-white sticky top-0 z-40 shadow shrink-0">
-    <div class="max-w-[1600px] mx-auto px-4">
-      <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
-        <div class="flex items-center gap-3">
-          <i data-lucide="graduation-cap" class="w-8 h-8 text-sky-400" aria-hidden="true"></i>
-          <div>
-            <h1 class="text-lg font-semibold leading-tight">לוח בקרה פדגוגי – בגרות ושיבוצים</h1>
-            <p class="text-xs text-slate-400">נתוני בית הספר · סנכרון ענן אוטומטי</p>
-          </div>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <span id="syncStatus" class="text-xs text-slate-300" role="status" aria-live="polite"></span>
-          <div id="statusLine" class="text-xs text-slate-300" role="status" aria-live="polite">0 חניכים במצבת</div>
+  <div id="navScrim" class="hidden fixed inset-0 z-40 bg-slate-900/50 lg:hidden"></div>
+
+  <!-- סרגל צד ימני: כותרת, סטטוס סנכרון וניווט ראשי -->
+  <aside id="sidebar" aria-label="תפריט ראשי">
+    <div class="px-4 pt-5 pb-4 border-b border-white/10">
+      <div class="flex items-center gap-3">
+        <i data-lucide="graduation-cap" class="w-8 h-8 shrink-0 text-[#E7BD65]" aria-hidden="true"></i>
+        <div>
+          <h1 class="text-base font-bold leading-tight">לוח בקרה פדגוגי – בגרות ושיבוצים</h1>
+          <p class="text-xs mt-1 opacity-75">נתוני בית הספר • סנכרון ענן אוטומטי</p>
         </div>
       </div>
-      <nav id="tabs" class="flex gap-1 overflow-x-auto" role="tablist" aria-label="תצוגות ראשיות">
-        <button class="tab-btn" role="tab" id="tab-bagrut" data-tab="bagrut" aria-controls="panel-bagrut" aria-selected="true"><i data-lucide="award" class="w-4 h-4" aria-hidden="true"></i>צפי זכאות לבגרות</button>
-        <button class="tab-btn" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="false"><i data-lucide="users" class="w-4 h-4" aria-hidden="true"></i>בקרת קבוצות ושיבוצים</button>
-        <button class="tab-btn" role="tab" id="tab-sadin" data-tab="sadin" aria-controls="panel-sadin" aria-selected="false"><i data-lucide="line-chart" class="w-4 h-4" aria-hidden="true"></i>מוניטור ציונים שוטפים</button>
-        <button class="tab-btn" role="tab" id="tab-profile" data-tab="profile" aria-controls="panel-profile" aria-selected="false"><i data-lucide="user-round" class="w-4 h-4" aria-hidden="true"></i>כרטיס חניך 360°</button>
-        <button class="tab-btn" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false"><i data-lucide="settings" class="w-4 h-4" aria-hidden="true"></i>הגדרות ומצבת חניכים <span id="tabOverridesBadge" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500"></span></button>
-      </nav>
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <span id="syncStatus" class="sync-badge" role="status" aria-live="polite"></span>
+        <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
+      </div>
+      <div id="statusLine" class="mt-2 text-xs opacity-75" role="status" aria-live="polite">0 חניכים במצבת</div>
     </div>
-  </header>
+    <nav id="tabs" class="p-3 flex flex-col gap-1" role="tablist" aria-orientation="vertical" aria-label="תצוגות ראשיות">
+      <button class="side-tab" role="tab" id="tab-overview" data-tab="overview" aria-controls="panel-overview" aria-selected="true">🏠 חדר בקרה</button>
+      <button class="side-tab" role="tab" id="tab-bagrut" data-tab="bagrut" aria-controls="panel-bagrut" aria-selected="false">🎓 צפי זכאות לבגרות</button>
+      <button class="side-tab" role="tab" id="tab-groups" data-tab="groups" aria-controls="panel-groups" aria-selected="false">👥 בקרת קבוצות ושיבוצים</button>
+      <button class="side-tab" role="tab" id="tab-sadin" data-tab="sadin" aria-controls="panel-sadin" aria-selected="false">📊 מוניטור ציונים שוטפים</button>
+      <button class="side-tab" role="tab" id="tab-profile" data-tab="profile" aria-controls="panel-profile" aria-selected="false">👤 כרטיס חניך 360°</button>
+      <button class="side-tab" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false">⚙️ הגדרות ומצבת</button>
+    </nav>
+  </aside>
+
+  <div id="appShell" class="flex flex-col min-h-screen lg:h-screen">
+
+  <!-- פס עליון למובייל: פתיחת סרגל הצד -->
+  <div class="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-3 py-2 bg-[#344E45] text-[#FAF8F0] shrink-0">
+    <button type="button" id="navToggle" class="btn !px-2 !py-1 text-[#FAF8F0]" aria-controls="sidebar" aria-expanded="false" aria-label="פתיחת תפריט ניווט">☰</button>
+    <span class="font-semibold text-sm">לוח בקרה פדגוגי</span>
+  </div>
 
   <!-- סרגל סינון גלובלי -->
-  <div id="globalFilterBar" class="bg-white border-b border-slate-200 sticky z-30 shrink-0" style="top: var(--hdr-h, 92px)">
-    <div class="max-w-[1600px] mx-auto px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
+  <div id="globalFilterBar" class="bg-white border-b border-[#E8F0E5] z-20 shrink-0">
+    <div class="px-4 py-2 flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
           <option value="all">הכל</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option>
@@ -269,10 +331,16 @@
     </div>
   </div>
 
-  <main id="mainContent" class="w-full max-w-[1600px] mx-auto px-4 py-3 lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain">
+  <main id="mainContent" class="w-full px-4 py-4 lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain">
+
+    <!-- 0. חדר בקרה פדגוגי (ברירת מחדל) -->
+    <section id="panel-overview" class="panel" role="tabpanel" aria-labelledby="tab-overview">
+      <div id="overview-body" class="space-y-4"></div>
+    </section>
+
 
     <!-- 1. צפי זכאות לבגרות -->
-    <section id="panel-bagrut" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-bagrut">
+    <section id="panel-bagrut" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-bagrut" hidden>
       <div id="stale-bagrutData" class="hidden card p-5 text-center" data-stale-overlay="bagrutData"></div>
 
       <!-- מגירת עריכת כללי זכאות ומשקלים -->
@@ -353,11 +421,11 @@
 
     <!-- 4. כרטיס חניך 360° -->
     <section id="panel-profile" class="panel space-y-3" role="tabpanel" aria-labelledby="tab-profile" hidden>
-      <div class="card px-4 py-3">
+      <div class="card px-5 py-4">
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div class="min-w-0">
-            <div id="profName" class="text-lg font-extrabold">—</div>
-            <div id="profMeta" class="text-sm text-slate-500"></div>
+            <div id="profName" class="text-2xl font-extrabold text-[#344E45]">—</div>
+            <div id="profMeta" class="text-sm text-slate-500 mt-0.5"></div>
           </div>
           <div id="profBadges" class="flex flex-wrap items-center gap-2"></div>
           <div class="flex flex-wrap items-center gap-2 mr-auto">
@@ -366,13 +434,14 @@
             <button type="button" id="excOpen" class="btn btn-ghost btn-sm" data-act="excModal" data-tz="">⚡ הגדר מצב חריג</button>
           </div>
         </div>
+        <div id="profKpis" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4"></div>
       </div>
       <div id="profBody" class="space-y-3"></div>
     </section>
 
-    <!-- 5. הגדרות ומצבת חניכים -->
+    <!-- 5. הגדרות ומצבת -->
     <section id="panel-settings" class="panel space-y-4" role="tabpanel" aria-labelledby="tab-settings" hidden>
-      <h2 class="text-xl font-semibold">הגדרות ומצבת חניכים</h2>
+      <h2 class="text-xl font-semibold text-[#344E45]">הגדרות ומצבת</h2>
       <div class="grid xl:grid-cols-2 gap-4">
         <div class="card p-4 space-y-3">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="clipboard-list" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>מצבת חניכים עליונה</div>
@@ -432,7 +501,7 @@
 
         <div class="card p-4 space-y-3 xl:col-span-2" id="dataToolsCard">
           <div class="font-semibold">🛠️ כלים טכניים לקובצי נתונים</div>
-          <p class="text-xs text-slate-500">מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). טעינת הקבצים עצמה מתבצעת מכפתור "📂 טעינת קובץ" בכל לשונית.</p>
+          <p class="text-xs text-slate-500">טעינת קובצי נתונים, מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). אפשר לטעון קובץ גם מכפתור "📂 טעינת קובץ" בכל לשונית.</p>
           <div id="dataTools" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
         </div>
 
@@ -461,6 +530,7 @@
       </div>
     </section>
   </main>
+  </div>
 
   <!-- חלון מיפוי עמודות (לשימוש חוזר בכל טעינת קובץ) -->
   <div id="mappingModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 overflow-auto p-4" role="dialog" aria-modal="true" aria-labelledby="mappingTitle">
@@ -499,11 +569,15 @@
         });
       });
       var mappingModal = document.getElementById('mappingModal');
-      var header = document.querySelector('header');
-      /* גובה הכותרת (גם כשהיא נשברת לשתי שורות) קובע את היסט סרגל הסינון הצמוד */
-      function syncHeaderHeight() { document.documentElement.style.setProperty('--hdr-h', header.offsetHeight + 'px'); }
-      syncHeaderHeight();
-      if (window.ResizeObserver) new ResizeObserver(syncHeaderHeight).observe(header); else window.addEventListener('resize', syncHeaderHeight);
+      /* סרגל הצד במובייל: פתיחה וסגירה */
+      function setNav(open) {
+        document.body.classList.toggle('nav-open', open);
+        document.getElementById('navScrim').classList.toggle('hidden', !open);
+        document.getElementById('navToggle').setAttribute('aria-expanded', String(open));
+      }
+      document.getElementById('navToggle').addEventListener('click', function () { setNav(!document.body.classList.contains('nav-open')); });
+      document.getElementById('navScrim').addEventListener('click', function () { setNav(false); });
+      document.getElementById('tabs').addEventListener('click', function () { setNav(false); });
       function closeMapping() { mappingModal.classList.add('hidden'); }
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMapping(); });
       document.getElementById('mappingClose').addEventListener('click', closeMapping);
@@ -513,12 +587,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_2"></script>
-  <script src="js/storage.js?v=20261117_2"></script>
-  <script src="js/mockData.js?v=20261117_2"></script>
-  <script src="js/parser.js?v=20261117_2"></script>
-  <script src="js/bagrutEngine.js?v=20261117_2"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_2"></script>
-  <script src="js/app.js?v=20261117_2"></script>
+  <script src="js/config.js?v=20261117_3"></script>
+  <script src="js/storage.js?v=20261117_3"></script>
+  <script src="js/mockData.js?v=20261117_3"></script>
+  <script src="js/parser.js?v=20261117_3"></script>
+  <script src="js/bagrutEngine.js?v=20261117_3"></script>
+  <script src="js/groupAnalyzer.js?v=20261117_3"></script>
+  <script src="js/app.js?v=20261117_3"></script>
 </body>
 </html>

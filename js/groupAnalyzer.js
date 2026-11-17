@@ -7,6 +7,9 @@
    ת.ז בקובצי המשנה שאינן בה אינן הופכות לחניכים: הן נרשמות ב-Store.unknown בלבד.
    ===================================================================== */
 
+/* ציון עובר בציונים שוטפים: מתחתיו המקצוע נחשב נכשל (טקסט אדמדם בלבד, ללא אייקונים) */
+const SADIN_PASS = 55;
+
 const Store = {
   raw: { groups: [], grades: [], bagrut: [], roster: [] },
   loaded: { groups: false, grades: false, bagrut: false, roster: false },
@@ -516,7 +519,7 @@ const GroupAnalyzer = {
 
   /** גיליון רוחבי: ממוצע משוקלל לאירועים בכל מקצוע, וממוצע כללי שווה-משקל למקצועות. */
   sadinSheet(roster, filters = {}) {
-    const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = 55;
+    const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = SADIN_PASS;
     const teacherOf = e => (Store.groups.get(e.groupId) || {}).teacher || e.teacher || '';
     const eventKey = (groupId, subjectName, teacherName, name, date, weight) => JSON.stringify([groupId || '', subjectName, teacherName, name || '', date || '', weight]);
     const matches = (s, t) => (subject === 'all' || subject === s) && (teacher === 'all' || teacher === t);
@@ -566,6 +569,40 @@ const GroupAnalyzer = {
       rows.push({ t, subjects, overall, failing, missed });
     });
     return rows;
+  },
+
+  /** מקצוע בסדין נחשב חוסם לחניך: ממוצע מתחת לציון עובר או אירוע הערכה שהוחמץ */
+  isRiskSubject(s) { return (s.avg != null && s.avg < SADIN_PASS) || s.missed.size > 0; },
+
+  riskSubjects(row) { return [...row.subjects.values()].filter(s => this.isRiskSubject(s)); },
+
+  /** מקצועות חוסמים: לכל מקצוע – כמה חניכים רשומים בו וכמה מהם נכשלים או חסרים; ממוין לפי כמות, אחר כך אחוז */
+  blockingSubjects(sheetRows, limit = 5) {
+    const by = new Map();
+    sheetRows.forEach(r => r.subjects.forEach(s => {
+      if (!(s.entries.length || s.events.length || s.missed.size)) return;
+      const e = by.get(s.name) || { name: s.name, enrolled: 0, bad: 0 };
+      e.enrolled++;
+      if (this.isRiskSubject(s)) e.bad++;
+      by.set(s.name, e);
+    }));
+    return [...by.values()].filter(e => e.bad > 0).map(e => ({ ...e, pct: Math.round((e.bad / e.enrolled) * 100) }))
+      .sort((a, b) => b.bad - a.bad || b.pct - a.pct || natural(a.name, b.name)).slice(0, limit);
+  },
+
+  ANOMALY_LABEL: { none: 'חוסר שיבוץ', dup: 'כפילות שיבוץ', nomajor: 'ללא מגמה' },
+
+  /** חריגות שיבוץ מקובצות לפי חניך: Map(tz ← { items, severe, text }); "ללא מגמה" נחשב בינוני, השאר חמורות */
+  anomaliesByTrainee(analysis) {
+    const by = new Map();
+    analysis.items.forEach(a => {
+      if (!by.has(a.tz)) by.set(a.tz, { tz: a.tz, items: [], severe: false, text: '' });
+      const e = by.get(a.tz);
+      e.items.push(a);
+      if (a.kind !== 'nomajor') e.severe = true;
+    });
+    by.forEach(e => { e.text = e.items.map(a => `${this.ANOMALY_LABEL[a.kind]}: ${a.subject}`).join(' • '); });
+    return by;
   },
 
   /**
