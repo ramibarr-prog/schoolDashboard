@@ -137,6 +137,20 @@ const DEFAULT_CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxlDpyyPhmfIu
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
 const RULES_VERSION = 3;
 
+/* מחזורי לימוד ברירת מחדל ושיוך שכבות אליהם (מפתח השכבה: 12 / 11 / 10) */
+const COHORT_SEED = [
+  { id: 'mahzor_5', name: "מחזור ה' (תשפ\"ז)", grade: '12' },
+  { id: 'mahzor_6', name: "מחזור ו' (תשפ\"ח)", grade: '11' },
+  { id: 'mahzor_7', name: "מחזור ז' (תשפ\"ט)", grade: '10' }
+];
+function defaultGradeCohortMap() {
+  return Object.fromEntries(COHORT_SEED.map(c => [c.grade, c.id]));
+}
+/** שלושת המחזורים ההתחלתיים, כל אחד עם עותק עמוק של אותו תבנית כללים */
+function defaultCohortProfiles(rules) {
+  return Object.fromEntries(COHORT_SEED.map(c => [c.id, { id: c.id, name: c.name, rules: Util.clone(rules) }]));
+}
+
 function defaultBagrutRules() {
   const q = (name, expectedGrade) => ({ name, expectedGrade });
   const on = list => list.map(c => ({ enabled: true, ...c }));
@@ -282,7 +296,34 @@ const Config = {
 
   /* ---------- טעינה ושמירה ---------- */
   defaults() {
-    return { version: 2, classNicknames: {}, specialEdClasses: {}, mappingProfiles: {}, bagrutRules: defaultBagrutRules(), traineeExceptions: {}, rosterOverrides: {}, rosterMismatchDismissed: {} };
+    return {
+      version: 2, classNicknames: {}, specialEdClasses: {}, mappingProfiles: {},
+      cohortProfiles: defaultCohortProfiles(defaultBagrutRules()), gradeCohortMap: defaultGradeCohortMap(),
+      traineeExceptions: {}, rosterOverrides: {}, rosterMismatchDismissed: {}
+    };
+  },
+
+  /**
+   * מנרמל מחזורי כללים ושיוך שכבות. תאימות לאחור: הגדרות ישנות (כללים בודדים ב-bagrutRules) הופכות לעותק בכל המחזורים;
+   * מחזור פגום נזרק, ושכבה ששויכה למחזור שאינו קיים חוזרת לברירת המחדל שלה.
+   */
+  normalizeCohorts(profiles, map, legacyRules) {
+    const out = {};
+    const list = Array.isArray(profiles) ? profiles : profiles && typeof profiles === 'object' ? Object.values(profiles) : [];
+    list.forEach(p => {
+      if (!p || typeof p !== 'object' || !p.id || this.validateRules(p.rules)) return;
+      const id = String(p.id);
+      out[id] = { id, name: String(p.name || '').trim() || id, rules: p.rules };
+    });
+    if (!Object.keys(out).length) {
+      Object.assign(out, defaultCohortProfiles(legacyRules && !this.validateRules(legacyRules) ? legacyRules : defaultBagrutRules()));
+    }
+    const fallback = defaultGradeCohortMap(), ids = Object.keys(out), result = {};
+    ['12', '11', '10'].forEach(g => {
+      const want = map && typeof map === 'object' ? map[g] : '';
+      result[g] = out[want] ? want : out[fallback[g]] ? fallback[g] : ids[0];
+    });
+    return { profiles: out, map: result };
   },
 
   load() {
@@ -295,9 +336,13 @@ const Config = {
       d.traineeExceptions = stored.traineeExceptions && typeof stored.traineeExceptions === 'object' ? stored.traineeExceptions : {};
       d.rosterOverrides = stored.rosterOverrides && typeof stored.rosterOverrides === 'object' ? stored.rosterOverrides : {};
       d.rosterMismatchDismissed = stored.rosterMismatchDismissed && typeof stored.rosterMismatchDismissed === 'object' ? stored.rosterMismatchDismissed : {};
-      if (stored.bagrutRules && !this.validateRules(stored.bagrutRules)) d.bagrutRules = stored.bagrutRules;
+      const cohorts = this.normalizeCohorts(stored.cohortProfiles, stored.gradeCohortMap, stored.bagrutRules);
+      d.cohortProfiles = cohorts.profiles;
+      d.gradeCohortMap = cohorts.map;
     }
     this.data = d;
+    this._activeCohort = d.gradeCohortMap['12'];
+    this._rulesOverride = null;
     this._syncQuestionnaires();
     this._cache = {};
     this._ignoredCache = null;
@@ -314,6 +359,7 @@ const Config = {
 
   reset(opts = {}) {
     this.data = this.defaults();
+    this._activeCohort = this.data.gradeCohortMap['12'];
     this._invalidateRoster();
     this._syncQuestionnaires();
     this.save();
@@ -960,7 +1006,98 @@ const Config = {
   exceptionCount() { return Object.values(this.data.traineeExceptions).filter(e => e && e.isException).length; },
 
   /* ---------- כללי זכאות ---------- */
-  rules() { return this.data.bagrutRules; },
+  /**
+   * כללי הזכאות הפעילים: בזמן הערכת חניך (withRulesForGrade) – כללי המחזור של שכבתו;
+   * אחרת – המחזור הנערך כעת בהגדרות (ברירת מחדל: מחזור שכבת י"ב). כך כל הקוראים הקיימים ממשיכים לעבוד.
+   */
+  rules() { return this._rulesOverride || this._editProfile().rules; },
+
+  /* ---------- מחזורי לימוד ושיוך שכבות ---------- */
+  getCohortProfiles() { return this.data.cohortProfiles; },
+
+  /** מקבל אובייקט (id ← מחזור) או מערך; מחזורים פגומים נזרקים ושיוך שכבות מתוקן בהתאם */
+  saveCohortProfiles(profiles) {
+    const n = this.normalizeCohorts(profiles, this.data.gradeCohortMap, null);
+    const provided = Array.isArray(profiles) ? profiles : Object.values(profiles || {});
+    if (!provided.length) return { ok: false, error: 'נדרש לפחות מחזור אחד' };
+    this.data.cohortProfiles = n.profiles;
+    this.data.gradeCohortMap = n.map;
+    if (!n.profiles[this._activeCohort]) this._activeCohort = n.map['12'];
+    return this._afterCohortChange();
+  },
+
+  getGradeCohortMap() { return { ...this.data.gradeCohortMap }; },
+
+  /** מפתח שכבה מספרי ('12' / '11' / '10') מכל כתיבה: י"ב / יב / י' / 11. שכבה לא מוכרת – מחרוזת ריקה */
+  gradeNum(gradeStr) {
+    const k = Util.normGrade(gradeStr);
+    return k && Util.ord(k) >= 10 ? String(Util.ord(k)) : '';
+  },
+
+  setGradeCohort(gradeKey, cohortId) {
+    const g = this.gradeNum(gradeKey);
+    if (!g) return { ok: false, error: 'שכבה לא תקינה' };
+    if (!this.data.cohortProfiles[cohortId]) return { ok: false, error: 'מחזור לא קיים' };
+    this.data.gradeCohortMap[g] = cohortId;
+    return this._afterCohortChange();
+  },
+
+  _afterCohortChange() {
+    this._syncQuestionnaires();
+    const res = this.save();
+    this.emit('rules-changed');
+    return res;
+  },
+
+  _cohortOfGrade(gradeStr) {
+    const d = this.data, map = d.gradeCohortMap;
+    const id = map[this.gradeNum(gradeStr) || '12'] || map['12'];
+    return d.cohortProfiles[id] || Object.values(d.cohortProfiles)[0];
+  },
+
+  /** כללי המחזור המשויך לשכבה; שכבה לא מוכרת נופלת למחזור י"ב */
+  rulesForGrade(gradeStr) { return this._cohortOfGrade(gradeStr).rules; },
+  getCohortNameForGrade(gradeStr) { return this._cohortOfGrade(gradeStr).name; },
+  getCohortIdForGrade(gradeStr) { return this._cohortOfGrade(gradeStr).id; },
+
+  /** מריץ פונקציה כשכל הקריאות ל-Config.rules() מחזירות את כללי המחזור של השכבה (תומך בקריאות מקוננות) */
+  withRulesForGrade(gradeStr, fn) {
+    const restore = this.pushRulesForGrade(gradeStr);
+    try { return fn(); } finally { restore(); }
+  },
+  pushRulesForGrade(gradeStr) {
+    const prev = this._rulesOverride;
+    this._rulesOverride = this.rulesForGrade(gradeStr);
+    return () => { this._rulesOverride = prev; };
+  },
+
+  /* המחזור הנערך בהגדרות (בזיכרון בלבד; אינו מסונכרן לענן) */
+  _editProfile() {
+    const d = this.data;
+    return d.cohortProfiles[this._activeCohort] || d.cohortProfiles[d.gradeCohortMap['12']] || Object.values(d.cohortProfiles)[0];
+  },
+  getActiveCohortId() { return this._editProfile().id; },
+  setActiveCohort(id) { if (this.data.cohortProfiles[id]) this._activeCohort = id; },
+
+  /** מעתיק את כללי מחזור המקור אל מחזור היעד (דורס אותם) */
+  copyCohortRules(fromId, toId) {
+    const from = this.data.cohortProfiles[fromId], to = this.data.cohortProfiles[toId];
+    if (!from || !to || fromId === toId) return { ok: false, error: 'מחזור מקור או יעד לא תקין' };
+    to.rules = Util.clone(from.rules);
+    return this._afterCohortChange();
+  },
+
+  /** מוסיף מחזור חדש כעותק של כללי מחזור קיים (ברירת מחדל: הנערך כעת). מחזיר { ok, id } */
+  addCohort(name, fromId) {
+    const label = String(name || '').trim();
+    if (!label) return { ok: false, error: 'נדרש שם למחזור' };
+    if (Object.values(this.data.cohortProfiles).some(c => c.name === label)) return { ok: false, error: 'כבר קיים מחזור בשם זה' };
+    const from = this.data.cohortProfiles[fromId] || this._editProfile();
+    const id = Util.uid('mahzor');
+    this.data.cohortProfiles[id] = { id, name: label, rules: Util.clone(from.rules) };
+    const res = this._afterCohortChange();
+    return res.ok ? { ok: true, id } : res;
+  },
 
   /** חוזר מנכ"ל: פיצוי נקודות למקצוע בציון 5–44. מתמזג עם ברירות המחדל, כך שכללים ישנים שנשמרו ממשיכים לעבוד */
   pointsCompensation() {
@@ -1010,7 +1147,10 @@ const Config = {
   },
 
   _syncQuestionnaires() {
-    const r = this.data.bagrutRules;
+    Object.values(this.data.cohortProfiles).forEach(p => this._syncQuestionnairesOf(p.rules));
+  },
+
+  _syncQuestionnairesOf(r) {
     r.questionnaires = r.questionnaires || {};
     const add = (code, name, expectedGrade) => {
       if (!code || code === 'פנימי') return;
@@ -1023,15 +1163,16 @@ const Config = {
     r.internals.forEach(i => i.codes.forEach(code => add(code, i.name, i.expectedGrade)));
   },
 
-  /** מחיל שינוי על הכללים, שומר מיידית ומשדר 'sd:rules-changed' לחישוב מחדש */
+  /** מחיל שינוי על כללי המחזור הנערך, שומר מיידית ומשדר 'sd:rules-changed' לחישוב מחדש */
   updateRules(mutator) {
-    const backup = Util.clone(this.data.bagrutRules);
+    const profile = this._editProfile();
+    const backup = Util.clone(profile.rules);
     try {
-      mutator(this.data.bagrutRules);
-      const err = this.validateRules(this.data.bagrutRules);
+      mutator(profile.rules);
+      const err = this.validateRules(profile.rules);
       if (err) throw new Error(err);
     } catch (e) {
-      this.data.bagrutRules = backup;
+      profile.rules = backup;
       return { ok: false, error: e.message };
     }
     this._syncQuestionnaires();
@@ -1153,12 +1294,26 @@ const Config = {
     return this.updateRules(r => { delete r.questionnaires[code]; });
   },
 
+  /**
+   * משחזר מחזורים משחזור / סנכרון ענן. גיבוי ישן (כללים בודדים בלבד) הופך לעותק בכל המחזורים;
+   * ללא אף אחד מהשדות – ההגדרות הקיימות נשמרות כפי שהן.
+   */
+  applyCohortState(profiles, map, legacyRules) {
+    if (!profiles && !legacyRules) return;
+    const n = this.normalizeCohorts(profiles, map, legacyRules);
+    this.data.cohortProfiles = n.profiles;
+    this.data.gradeCohortMap = n.map;
+    if (!n.profiles[this._activeCohort]) this._activeCohort = n.map['12'];
+  },
+
   /* ---------- גיבוי ושחזור ---------- */
   exportObject() {
     return {
       app: 'schoolDashboard', version: 2, exportedAt: new Date().toISOString(),
       classNicknames: this.data.classNicknames, specialEdClasses: this.data.specialEdClasses, mappingProfiles: this.data.mappingProfiles,
-      bagrutRules: this.data.bagrutRules, traineeExceptions: this.data.traineeExceptions,
+      cohortProfiles: this.data.cohortProfiles, gradeCohortMap: this.data.gradeCohortMap,
+      /* שדה תאימות לגרסאות קודמות: כללי מחזור י"ב */
+      bagrutRules: this.rulesForGrade('12'), traineeExceptions: this.data.traineeExceptions,
       rosterOverrides: this.data.rosterOverrides, rosterMismatchDismissed: this.data.rosterMismatchDismissed,
       masterRoster: this.getRosterEntry()
     };
@@ -1183,6 +1338,11 @@ const Config = {
       const err = this.validateRules(obj.bagrutRules);
       if (err) throw new Error(`כללי הזכאות בגיבוי לא תקינים: ${err}`);
     }
+    if (obj.cohortProfiles) {
+      const list = Array.isArray(obj.cohortProfiles) ? obj.cohortProfiles : Object.values(obj.cohortProfiles || {});
+      const bad = list.find(p => p && p.rules && this.validateRules(p.rules));
+      if (bad) throw new Error(`כללי המחזור "${bad.name || bad.id}" בגיבוי לא תקינים: ${this.validateRules(bad.rules)}`);
+    }
     if (obj.masterRoster && !(Array.isArray(obj.masterRoster.data))) throw new Error('מצבת החניכים בגיבוי לא תקינה');
     const d = this.data;
     if (obj.classNicknames && typeof obj.classNicknames === 'object') d.classNicknames = obj.classNicknames;
@@ -1197,7 +1357,7 @@ const Config = {
       });
       d.traineeExceptions = exceptions;
     }
-    if (obj.bagrutRules) d.bagrutRules = obj.bagrutRules;
+    this.applyCohortState(obj.cohortProfiles, obj.gradeCohortMap, obj.bagrutRules);
     if (obj.rosterOverrides && typeof obj.rosterOverrides === 'object') {
       /* מפתחות מנורמלים; שכבה / כיתה / מסלול לא תקינים מנוקים, ודריסה ריקה נזרקת */
       const overrides = {};

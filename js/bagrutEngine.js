@@ -87,6 +87,10 @@ const BagrutEngine = (() => {
 
   /** כל הרכיבים הידועים בכללים (ליבה/פנימיות) והאם נבחנו בשכבה: activeCohortQuestionnaires לשכבה */
   function activeCohortQuestionnaires(gradeKey) {
+    return Config.withRulesForGrade(gradeKey, () => activeCohortQuestionnairesOf(gradeKey));
+  }
+
+  function activeCohortQuestionnairesOf(gradeKey) {
     const rules = Config.rules(), out = [];
     const add = (subject, label, codes, weight, scope) => {
       if (!codes || !codes.length) return;
@@ -824,10 +828,44 @@ const BagrutEngine = (() => {
     return items;
   }
 
-  /* ---------- הערכה מלאה לחניך ---------- */
+  /**
+   * הערה מייעצת בלבד: מקצוע ליבה שהחניך נכשל / חסר בו לפי מחזור שכבתו, אך ציוניו בפועל עומדים בדרישות לפי מחזור אחר
+   * (ציון >= ציון עובר וכל שאלוני המקצוע במחזור האחר קיימים). אינה משנה את סטטוס הזכאות – ההכרעה נשארת למרכזת.
+   */
+  function advisoryHints(tz, ctx, subjects) {
+    const own = Config.getCohortIdForGrade(ctx.gradeKey);
+    const weak = subjects.filter(s => ['fail', 'severe', 'missing', 'await'].includes(s.status));
+    const out = [];
+    weak.forEach(s => Object.values(Config.getCohortProfiles()).forEach(p => {
+      if (p.id === own) return;
+      const subj = (p.rules.coreSubjects || []).find(x => x.id === s.id && x.enabled !== false);
+      if (!subj || !passesUnder(tz, subj, p.rules)) return;
+      out.push({ subject: s.name, subjectId: s.id, cohortId: p.id, cohortName: p.name, text: `לבדיקה: עומד בדרישות ${s.name} לפי ${p.name}` });
+    }));
+    return out;
+  }
+
+  function passesUnder(tz, subj, rules) {
+    const { comps } = componentsOf(tz, subj);
+    if (!comps.length) return false;
+    let sum = 0, w = 0, nPass = 0;
+    for (const c of comps) {
+      const b = Store.bagrutBest(tz, c.codes), weight = Number(c.weight) || 0;
+      if (b && b.kind === 'num') { sum += b.num * weight; w += weight; }
+      else if (b && b.kind === 'pass') nPass++;
+      else return false;
+    }
+    return w > 0 ? Math.round(sum / w) >= rules.passGrade : nPass > 0;
+  }
+
+  /* ---------- הערכה מלאה לחניך (לפי כללי המחזור המשויך לשכבתו) ---------- */
   function evaluate(tz, userOpts) {
     const t = Store.trainees.get(tz);
     if (!t) return null;
+    return Config.withRulesForGrade(t.gradeKey, () => evaluateWithRules(tz, t, userOpts));
+  }
+
+  function evaluateWithRules(tz, t, userOpts) {
     const opts = normalizeOpts(userOpts);
     const ctx = buildCtx(t, opts);
     const rules = ctx.rules;
@@ -883,6 +921,8 @@ const BagrutEngine = (() => {
     return {
       tz, mode: ctx.mode, adaptive: ctx.adaptive, tier, autoTier, manual, exception: ex,
       rank: ctx.rank, paceInfo, paceStatus, paceText: paceText(paceStatus, t.gradeKey), atRisk,
+      cohortId: Config.getCohortIdForGrade(t.gradeKey), cohortName: Config.getCohortNameForGrade(t.gradeKey),
+      advisoryHints: noBagrut ? [] : advisoryHints(tz, ctx, subjects),
       overrideStatus: manual ? overrideKey(ex.overrideStatus) : '', exceptionReason: manual ? ex.reason : '',
       isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons,
       tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : (ctx.adaptive ? TIER_TEXT.adaptive : TIER_TEXT[ctx.mode])[tier],
@@ -956,8 +996,16 @@ const BagrutEngine = (() => {
     return out;
   }
 
-  /** מחזיר { name, questionnaires, rows } עבור בחירה מ-drillOptions; trainees = רשימת חניכים לאחר סינון גלובלי */
+  /**
+   * מחזיר { name, questionnaires, rows } עבור בחירה מ-drillOptions; trainees = רשימת חניכים לאחר סינון גלובלי.
+   * העמודות נקבעות לפי כללי המחזור של השכבה (כשהרשימה מכילה שכבה אחת), ואחרת לפי מחזור י"ב.
+   */
   function subjectMatrix(sel, trainees) {
+    const grades = [...new Set(trainees.map(t => t.gradeKey))];
+    return Config.withRulesForGrade(grades.length === 1 ? grades[0] : 'יב', () => subjectMatrixOf(sel, trainees));
+  }
+
+  function subjectMatrixOf(sel, trainees) {
     const rules = Config.rules(), pass = Number(rules.passGrade) || 55;
     const [kind, id, lv] = String(sel).split(':');
     const hasCodes = (tz, lists) => lists.some(codes => Store.attemptsOf(tz).some(a => codes.map(String).includes(String(a.code))));

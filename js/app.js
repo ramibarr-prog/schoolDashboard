@@ -910,8 +910,9 @@ const App = {
     if (!Store.hasData() || !info.show) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} (${info.counts[id]})</button>`;
     box.classList.remove('hidden');
+    const cohort = gk => ` • ${E(Config.getCohortNameForGrade(gk))}`;
     box.innerHTML = `<div class="scope-bar" role="group" aria-label="היקף שכבות בצפי הזכאות">
-      ${pill('12', '🎓 שכבת י"ב – זכאות מלאה')}${pill('11', '📈 שכבת י"א – תקינות צבירה')}${pill('10', "🌱 שכבת י' – מעקב ראשוני")}${pill('all', '📋 כל השכבות')}</div>`;
+      ${pill('12', `🎓 שכבת י"ב${cohort('יב')}`)}${pill('11', `📈 שכבת י"א${cohort('יא')}`)}${pill('10', `🌱 שכבת י'${cohort('י')}`)}${pill('all', '📋 כל השכבות')}</div>`;
   },
 
   chipMatch(r, chip) {
@@ -1115,6 +1116,12 @@ const App = {
     ).join('');
   },
 
+  /** הערות מייעצות בין-מחזוריות (אינן משנות סטטוס): תגית עדינה לכל מקצוע שעומד בדרישות לפי מחזור אחר */
+  advisoryHtml(ev) {
+    const hints = ev.advisoryHints || [];
+    return hints.map(h => `<span class="adv-hint" title="${E(`הציונים בפועל עומדים בדרישות ${h.subject} לפי ${h.cohortName}. הסטטוס לא שונה אוטומטית – ההכרעה בידי המרכזת (חריג ידני)`)}">💡 ${E(h.text)}</span>`).join('');
+  },
+
   /** תג תקינות צבירה לשכבות י' / י"א (במקום "לא זכאי"): ירוק – תקין, חרדל – חסם יחיד, טרקוטה – פיגור, אפור – טרם החלו */
   paceBadge(ev) {
     const pi = ev.paceInfo;
@@ -1179,7 +1186,7 @@ const App = {
         const more = items.length - MAX;
         body = items.slice(0, MAX).map(b).join(' ') + (more > 0 ? ` <span class="badge fresh-slate border" title="${E(items.slice(MAX).map(x => x.text).join(' · '))}">+${more}</span>` : '');
       }
-      return `<td class="mx-focus" title="${E(items.map(x => x.text).join(' · '))}">${body}</td>`;
+      return `<td class="mx-focus" title="${E(items.map(x => x.text).join(' · '))}">${body}${this.advisoryHtml(ev)}</td>`;
     };
     const pill = ev => {
       let text = ev.tierText;
@@ -1236,7 +1243,35 @@ const App = {
     if (res && res.ok === false) { this.toast(res.error || 'השינוי נדחה', 'error'); this.renderRulesDrawer(); }
   },
 
+  /** שיוך שכבות למחזורי לימוד + בורר המחזור הנערך עם כפתורי העתקה והוספה */
+  renderCohortUi() {
+    const cohorts = Object.values(Config.getCohortProfiles()), map = Config.getGradeCohortMap();
+    const active = Config.getActiveCohortId();
+    const GRADES = [['12', 'יב'], ['11', 'יא'], ['10', 'י']];
+    setHtml('cohortAssign', `<div class="cohort-card">
+      <div class="flex flex-wrap items-baseline gap-x-3"><span class="font-bold text-[#355747]">שיוך שכבות למחזורי לימוד</span>
+        <span class="text-xs text-slate-500">כל חניך נבדק לפי כללי הבגרות של המחזור המשויך לשכבתו</span></div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 mt-2">${GRADES.map(([n, key]) => `
+        <label class="flex items-center gap-2 text-sm font-semibold text-[#355747]">שכבת ${E(Util.gl(key))}:
+          <select class="inp" data-chg="gradeCohort" data-grade="${n}" aria-label="${E(`מחזור לשכבת ${Util.gl(key)}`)}">${cohorts.map(c => `<option value="${E(c.id)}" ${map[n] === c.id ? 'selected' : ''}>${E(c.name)}</option>`).join('')}</select></label>`).join('')}
+      </div></div>`);
+    const gradesOf = id => GRADES.filter(([n]) => map[n] === id).map(([, key]) => `שכבת ${Util.gl(key)}`).join(', ');
+    setHtml('cohortBar', `<div class="flex flex-wrap items-center justify-between gap-2">
+      <div><div class="text-xs font-semibold text-[#75977D] mb-1">בחירת מחזור לעריכת חוקי בגרות ושאלונים</div>
+        <div class="flex flex-wrap gap-1.5" role="tablist" aria-label="מחזורים">${cohorts.map(c => {
+          const g = gradesOf(c.id);
+          return `<button type="button" role="tab" class="chip cohort-tab" data-act="cohortEdit" data-id="${E(c.id)}" aria-selected="${c.id === active}" aria-pressed="${c.id === active}">${E(c.name)}${g ? ` <span class="text-[11px] opacity-80">[${E(g)}]</span>` : ''}</button>`;
+        }).join('')}</div></div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn btn-ghost btn-sm" data-act="cohortCopy">📋 העתק חוקים ממחזור אחר...</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="cohortAdd">➕ הוסף מחזור חדש</button>
+      </div></div>`);
+  },
+
+  cohortName(id) { const c = Config.getCohortProfiles()[id]; return c ? c.name : ''; },
+
   renderRulesDrawer() {
+    this.renderCohortUi();
     const r = Config.rules();
     const warnings = Config.rulesWarnings(r);
     setHtml('rulesWarnings', warnings.map(w => `<div>${E(w)}</div>`).join(''));
@@ -2009,7 +2044,15 @@ const App = {
     return ordered.length ? ordered : this.filtered(false);
   },
 
+  /** כרטיס 360°: כל התצוגה מחושבת לפי כללי המחזור המשויך לשכבת החניך */
   renderTrainee360Panel() {
+    const list = this.profileList();
+    const t = list.find(x => x.tz === this.state.profileTz) || list[0];
+    const restore = Config.pushRulesForGrade(t ? t.gradeKey : '');
+    try { this.renderTrainee360Inner(); } finally { restore(); }
+  },
+
+  renderTrainee360Inner() {
     const list = this.profileList();
     const sel = $('profSelect');
     if (!Store.hasData() || !list.length) {
@@ -2036,7 +2079,8 @@ const App = {
     setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
     const units = this.profileUnits(t.tz, ev, rules);
     setHtml('profBadges', `${this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
-      <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>`);
+      <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>
+      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>`);
     this.renderProfileKpis(t);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));
     const groupText = groups => groups.length ? `<span class="flex max-w-[9rem] items-center gap-1" title="${E(groups.map(g => `${g.teacher || 'ללא מורה'} [${g.groupId}]`).join(' · '))}"><span class="truncate min-w-0">${E(groups[0].teacher || 'ללא מורה')}</span>${groups.length > 1 ? `<span class="shrink-0">(+${groups.length - 1})</span>` : ''}</span>` : '<span class="text-slate-500">—</span>';
@@ -2113,7 +2157,7 @@ const App = {
           </tbody></table></div>
         </div>
         <div class="lg:col-span-4 space-y-3">
-          <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${paceLine}${focusHtml}</div></div>
+          <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${paceLine}${focusHtml}${this.advisoryHtml(ev)}</div></div>
           <div class="card p-3"><h3 class="font-bold mb-2">שער 3 – יחידות פנימיות</h3><ul class="space-y-1.5 text-xs">${g3}</ul></div>
         </div>
       </div>
@@ -2614,7 +2658,7 @@ const App = {
       Store.refresh();
       return res;
     });
-    on('rulesReset', 'click', () => { if (confirm('לשחזר את כללי הזכאות והמשקלים לברירת המחדל?')) this.applyRule(Config.resetRules()); });
+    on('rulesReset', 'click', () => { if (confirm(`לשחזר את כללי הזכאות והמשקלים של ${this.cohortName(Config.getActiveCohortId())} לברירת המחדל?`)) this.applyRule(Config.resetRules()); });
 
     /* קבוצות */
     /* מקצוע ומורה מתואמים: בחירת מקצוע מאפסת מורה שאינו מלמד אותו; בחירת מורה מציגה את כל קבוצותיו בכל המקצועות */
@@ -3199,6 +3243,37 @@ const App = {
     },
     profTab(el) { this.state.profTab = el.dataset.sub; this.dirty.add('profile'); this.renderTab('profile'); },
     rulesTab(el) { this.state.rulesTab = el.dataset.sub; this.renderRulesDrawer(); },
+    cohortEdit(el) {
+      Config.setActiveCohort(el.dataset.id);
+      ['settings'].forEach(t => this.dirty.add(t));
+      this.renderTab('settings');
+    },
+    cohortCopy() {
+      const to = Config.getActiveCohortId();
+      const others = Object.values(Config.getCohortProfiles()).filter(c => c.id !== to);
+      if (!others.length) return this.toast('אין מחזור אחר להעתיק ממנו', 'warn');
+      this.formModal(`העתקת חוקים אל ${this.cohortName(to)}`, [
+        { key: 'from', label: 'העתק חוקים ממחזור', type: 'select', value: others[0].id, options: others.map(c => ({ value: c.id, label: c.name })) }
+      ], v => {
+        if (!confirm(`כל חוקי הבגרות והשאלונים של ${this.cohortName(to)} יוחלפו בעותק של ${this.cohortName(v.from)}. להמשיך?`)) return { ok: false, error: 'ההעתקה בוטלה' };
+        const res = Config.copyCohortRules(v.from, to);
+        if (res.ok !== false) this.toast(`החוקים הועתקו מ-${this.cohortName(v.from)}`, 'ok');
+        return res;
+      }, 'העתקה');
+    },
+    cohortAdd() {
+      const from = Config.getActiveCohortId();
+      this.formModal('הוספת מחזור חדש', [
+        { key: 'name', label: 'שם המחזור', placeholder: 'מחזור ח\' (תש"צ)' }
+      ], v => {
+        const res = Config.addCohort(v.name, from);
+        if (res.ok) {
+          Config.setActiveCohort(res.id);
+          this.toast(`נוסף ${v.name.trim()} כעותק של ${this.cohortName(from)}. אפשר לשייך אליו שכבה בראש המסך.`, 'ok');
+        }
+        return res;
+      }, 'הוספה');
+    },
     dismissStale(el) { Config.dismissStale(el.dataset.key); this.renderChrome(); },
     showUnknown(el) {
       const rc = Config.reconcile(el.dataset.key);
@@ -3331,6 +3406,12 @@ const App = {
     },
     sim(el) { this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab); },
     anSubject(el) { this.state.anomalySubject = el.value; this.dirty.add('groups'); this.renderTab('groups'); },
+    gradeCohort(el) {
+      const res = Config.setGradeCohort(el.dataset.grade, el.value);
+      if (res.ok === false) this.toast(res.error, 'error');
+      else this.toast(`שכבת ${Util.gl(Util.GRADE_KEYS.find(k => String(Util.ord(k)) === el.dataset.grade))} נבדקת כעת לפי ${this.cohortName(el.value)}`, 'ok');
+      this.renderRulesDrawer();
+    },
     compEnabled(el) { this.patchComp(el, { enabled: el.checked }); },
     compCodes(el) { this.patchComp(el, { codes: el.value.split(',').map(x => x.trim()).filter(Boolean) }); },
     compWeight(el) { this.patchComp(el, { weight: Number(el.value) }); },

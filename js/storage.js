@@ -64,7 +64,8 @@ const CloudSync = {
       bagrutData: ds('bagrutData'), groupsData: ds('groupsData'), sadinData: ds('sadinData'),
       rosterOverrides: Config.data.rosterOverrides,
       studentMeta: Config.data.traineeExceptions,
-      customQuestionnaires: Config.data.bagrutRules,
+      customQuestionnaires: Config.rulesForGrade('12'),
+      cohortProfiles: Config.data.cohortProfiles, gradeCohortMap: Config.data.gradeCohortMap,
       classNicknames: Config.data.classNicknames, specialEdClasses: Config.data.specialEdClasses,
       rosterMismatchDismissed: Config.data.rosterMismatchDismissed,
       fileTimestamps: Object.fromEntries(['masterRoster', ...Config.DATASET_KEYS].map(k => {
@@ -80,6 +81,11 @@ const CloudSync = {
       const err = Config.validateRules(s.customQuestionnaires);
       if (err) throw new Error(`כללי הזכאות בתמונת המצב לא תקינים: ${err}`);
     }
+    if (s.cohortProfiles) {
+      const list = Array.isArray(s.cohortProfiles) ? s.cohortProfiles : Object.values(s.cohortProfiles || {});
+      const bad = list.find(p => p && p.rules && Config.validateRules(p.rules));
+      if (bad) throw new Error(`כללי המחזור "${bad.name || bad.id}" בתמונת המצב לא תקינים: ${Config.validateRules(bad.rules)}`);
+    }
     this._suppress++;
     try {
       const d = Config.data;
@@ -89,7 +95,7 @@ const CloudSync = {
       d.classNicknames = obj(s.classNicknames);
       d.specialEdClasses = obj(s.specialEdClasses);
       d.rosterMismatchDismissed = obj(s.rosterMismatchDismissed);
-      if (s.customQuestionnaires) d.bagrutRules = s.customQuestionnaires;
+      Config.applyCohortState(s.cohortProfiles, s.gradeCohortMap, s.customQuestionnaires);
       Config._syncQuestionnaires();
       const saved = Config.save();
       if (!saved.ok) throw new Error(saved.error);
@@ -257,7 +263,7 @@ const CloudSync = {
   async importBackup(text) {
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
-    const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
+    const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'cohortProfiles', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
     /* config.json ישן (גרסה 2): מצבת והגדרות בלבד, בלי המפתחות של תמונת המצב המלאה */
     const isFull = s && typeof s === 'object' && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
     if (s && typeof s === 'object' && !Array.isArray(s) && !isFull && LEGACY_KEYS.some(k => k in s)) {
