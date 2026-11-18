@@ -152,6 +152,40 @@
     .pill-t0, .pill-t5 { background: var(--cream-bg); color: var(--muted); border-color: var(--sage-tint); }
     .pill-t1, .pill-t2 { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); }
     .pill-t3 { background: rgba(243, 161, 111, .18); color: var(--peach-ink); border-color: var(--peach); } .pill-t4 { background: #fff; color: var(--terracotta); border-color: rgba(200, 100, 50, .45); }
+    /* תקינות צבירה לשכבות י' / י"א ותאי שאלונים עתידיים */
+    .badge.pace-badge, table .badge.pace-badge { display: inline-flex; align-items: center; padding: .1rem .6rem; border: 1px solid; border-radius: 999px; font-size: .75rem; font-weight: 700; white-space: nowrap; }
+    .badge.pace-on_track { background: rgba(117, 151, 125, .16); color: #3F6249; border-color: #75977D; }
+    .badge.pace-pace_warning { background: rgba(232, 185, 95, .22); color: #7A5612; border-color: #E8B95F; }
+    .badge.pace-pace_lag { background: rgba(200, 100, 50, .1); color: #C86432; border-color: #C86432; }
+    .badge.pace-not_started, .badge.pace-no_data { background: #F1F3F2; color: #5F7068; border-color: #D5DAD7; }
+    .future-cell, .panel .future-cell { color: #9CA39E; font-size: .75rem; }
+    .scope-bar { display: inline-flex; flex-wrap: wrap; gap: .25rem; padding: .2rem; border: 1px solid var(--sage-soft); border-radius: 999px; background: #fff; }
+    .scope-bar button { padding: .3rem .95rem; border-radius: 999px; font-size: .8rem; font-weight: 600; color: var(--forest); white-space: nowrap; }
+    .scope-bar button:hover { background: var(--sage-tint); }
+    .scope-bar button:focus-visible { outline: 2px solid var(--sage); outline-offset: 1px; }
+    .scope-bar button[aria-pressed="true"] { background: var(--forest); color: var(--cream-bg); }
+    .scope-bar.lg button { padding: .5rem 1.3rem; font-size: .95rem; font-weight: 700; display: inline-flex; align-items: center; gap: .5rem; }
+    .mode-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.5rem; height: 1.5rem; padding: 0 .45rem; border-radius: 999px; background: var(--mustard); color: var(--forest); font-size: .78rem; font-weight: 800; }
+    /* מוקד חריגי שיבוץ ובדיקת קבוצת יעד */
+    .an-card { display: flex; flex-direction: column; gap: .1rem; text-align: right; padding: .7rem .95rem; border-radius: 14px; border: 1px solid var(--card-border); border-right-width: 5px; background: #fff; cursor: pointer; box-shadow: 0 2px 8px -3px rgba(120, 92, 50, .14); }
+    .an-card:hover { background: var(--cream-bg); }
+    .an-card:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+    .an-card[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--sage), 0 2px 8px -3px rgba(120, 92, 50, .14); background: var(--cream-bg); }
+    .an-card .t { font-size: .85rem; font-weight: 700; color: var(--forest); }
+    .an-card .n { font-size: 1.75rem; font-weight: 800; line-height: 1.1; color: var(--forest); }
+    .an-card .s { font-size: .72rem; color: var(--muted); }
+    .an-forest { border-right-color: #355747; } .an-sage { border-right-color: #75977D; } .an-mustard { border-right-color: #E8B95F; } .an-peach { border-right-color: #F3A16F; }
+    .an-k { font-size: .8rem; font-weight: 600; }
+    .an-k-missing { color: var(--terracotta); } .an-k-duplicate { color: var(--amber-dark); } .an-k-suspect { color: var(--forest); }
+    tr.an-row td { background: rgba(232, 185, 95, .12); }
+    .ti-banner { padding: .6rem .9rem; border-radius: .7rem; background: var(--sage-tint); color: var(--forest); font-weight: 600; font-size: .9rem; border: 1px solid var(--sage-soft); }
+    .ti-card { padding: .75rem .9rem; border: 1px solid var(--card-border); border-right: 4px solid var(--sage-soft); border-radius: .8rem; background: #fff; }
+    .ti-card.is-current { border-right-color: var(--forest); background: var(--cream-bg); }
+    .ti-match { display: inline-block; padding: .15rem .65rem; border-radius: 999px; background: var(--sage-tint); color: var(--forest); border: 1px solid var(--sage); font-size: .8rem; font-weight: 700; }
+    .ti-tag { display: inline-block; margin-top: .2rem; padding: .05rem .5rem; border-radius: 999px; background: var(--forest); color: var(--cream-bg); font-size: .7rem; font-weight: 700; }
+    .ti-tag.sadin { background: var(--mustard); color: var(--forest); }
+    .ti-roster summary { cursor: pointer; font-size: .8rem; font-weight: 600; color: var(--sage); }
+    .ti-same { background: rgba(117, 151, 125, .16); border-radius: .3rem; padding: 0 .3rem; }
     #mxPop { position: fixed; z-index: 80; max-width: 22rem; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .55rem .75rem; font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); text-align: right; pointer-events: none; }
     #mxPop .h { font-weight: 700; color: var(--mustard); margin-bottom: .15rem; }
     #sadinPop { position: fixed; z-index: 80; max-width: 24rem; max-height: 60vh; overflow-y: auto; background: var(--forest); color: var(--cream-bg); border-radius: .6rem; padding: .65rem .8rem; font-size: .78rem; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); pointer-events: none; white-space: pre-line; }
@@ -403,9 +437,6 @@
           <select id="groupSubjectSelect" class="inp font-bold max-w-[10rem]" aria-label="מקצוע"><option value="all">כל המקצועות</option></select>
           <select id="groupTeacherSelect" class="inp font-bold max-w-[10rem]" aria-label="מורה"><option value="all">כל המורים</option></select>
         </div>
-        <div id="gctl-anomalies" class="hidden">
-          <select id="groupsSubject" class="inp max-w-[10rem]" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option></select>
-        </div>
       </div>
       <span data-sadin-only class="hidden h-5 w-px bg-slate-300" aria-hidden="true"></span>
       <div data-sadin-only class="hidden">
@@ -448,10 +479,6 @@
         <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
       </div>
       <div id="groupActions" data-groups-only class="hidden flex-wrap items-center gap-1">
-        <div class="flex items-center gap-1" role="group" aria-label="תצוגת קבוצות">
-          <button type="button" class="chip" data-gview="explorer" aria-pressed="true" title="קבוצות ורשימות שמיות">📋 קבוצות</button>
-          <button type="button" class="chip" data-gview="anomalies" aria-pressed="false" title="טבלת חריגי שיבוץ לכלל המקצועות">חריגים</button>
-        </div>
         <button type="button" class="btn btn-primary btn-sm" data-upload="groupsData" title="טען קובץ קבוצות ושיבוצים" aria-label="טען קובץ קבוצות ושיבוצים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-groupsData" data-file-input="groupsData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ קבוצות ושיבוצים">
       </div>
@@ -485,6 +512,7 @@
     <section id="panel-bagrut" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-bagrut" hidden>
       <div id="stale-bagrutData" class="hidden card p-5 text-center" data-stale-overlay="bagrutData"></div>
 
+      <div id="bagrut-scope" class="hidden" aria-label="היקף שכבות"></div>
       <div id="bagrut-kpis" class="hidden" aria-label="סיכום זכאות"></div>
       <div id="bagrut-table" class="tbl-wrap sticky-scroll w-full"></div>
       <div id="mxPop" class="hidden" role="tooltip"></div>
@@ -493,8 +521,9 @@
     <!-- 2. סייר קבוצות (קריאה בלבד) -->
     <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
       <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
+      <div id="groups-mode" class="hidden lg:mb-2" aria-label="מצב תצוגה"></div>
       <div id="groups-student-map" class="hidden space-y-3" aria-live="polite"></div>
-      <div id="groups-kpis" class="hidden grid-cols-2 lg:grid-cols-5 gap-2 mb-2"></div>
+      <div id="groups-kpis" class="hidden grid-cols-2 lg:grid-cols-4 gap-2 mb-2"></div>
       <div id="groups-strip" class="hidden" aria-label="סינון חריגים למקצוע"></div>
       <div id="groups-explorer" class="grid grid-cols-1 lg:grid-cols-12 gap-3 min-h-0" aria-label="סייר קבוצות">
         <div id="groups-master" class="lg:col-span-4 lg:h-full lg:min-h-0 lg:overflow-y-auto overscroll-contain lg:pl-1 space-y-1.5" aria-label="רשימת קבוצות"></div>
@@ -680,7 +709,6 @@
               <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
             <button type="button" id="btnClearData" class="btn btn-danger"><i data-lucide="trash-2" class="w-4 h-4" aria-hidden="true"></i>ניקוי קובצי משנה</button>
             <button type="button" id="btnResetConfig" class="btn btn-danger"><i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i>איפוס הגדרות</button>
-            <button type="button" class="btn btn-ghost" data-act="loadMock">🧪 טעינת נתוני דמו</button>
           </div>
           <div id="configSummary" class="text-xs text-slate-400"></div>
         </div>
@@ -778,12 +806,11 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261117_13"></script>
-  <script src="js/storage.js?v=20261117_13"></script>
-  <script src="js/mockData.js?v=20261117_13"></script>
-  <script src="js/parser.js?v=20261117_13"></script>
-  <script src="js/bagrutEngine.js?v=20261117_13"></script>
-  <script src="js/groupAnalyzer.js?v=20261117_13"></script>
-  <script src="js/app.js?v=20261117_13"></script>
+  <script src="js/config.js?v=20261118_2"></script>
+  <script src="js/storage.js?v=20261118_2"></script>
+  <script src="js/parser.js?v=20261118_2"></script>
+  <script src="js/bagrutEngine.js?v=20261118_2"></script>
+  <script src="js/groupAnalyzer.js?v=20261118_2"></script>
+  <script src="js/app.js?v=20261118_2"></script>
 </body>
 </html>

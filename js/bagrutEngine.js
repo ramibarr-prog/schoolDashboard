@@ -33,6 +33,19 @@ const BagrutEngine = (() => {
   const NO_BAGRUT_TEXT = 'טרם נטען קובץ בגרויות';
   const GATE_KEY = { 1: 'core', 2: 'major', 3: 'internal' };
 
+  /** דרגת שכבה מספרית (10 / 11 / 12) מכל כתיבה: י' / י / י"א / יא / י"ב / 12. שכבה חסרה או לא מוכרת נחשבת י"ב */
+  function gradeRank(g) {
+    const k = Util.normGrade(g);
+    return k ? Util.ord(k) : 12;
+  }
+
+  /* סטטוס תקינות צבירה לשכבות י' / י"א (לשכבת י"ב נגזר מצפי הזכאות המלא) */
+  const PACE_TEXT = { on_track: '✓ תקין לקצב שכבה', pace_warning: 'חסם צבירה יחיד', pace_lag: 'בפיגור צבירה', not_started: 'טרם החלו היבחנות', no_data: NO_BAGRUT_TEXT };
+  const paceText = (status, gradeKey) => (status === 'on_track' ? `✓ תקין לקצב ${Util.gl(gradeKey)}` : PACE_TEXT[status] || '');
+  /* דרגת צפי מקבילה לצורך מיון בלבד */
+  const PACE_TIER = { on_track: 1, not_started: 1, pace_warning: 3, pace_lag: 4, no_data: 0 };
+  const SENIOR_STATUS = { 0: 'no_data', 1: 'eligible', 2: 'eligible', 3: 'nearly', 4: 'blocked', 5: 'twelve_years' };
+
   const rnd = n => (n == null ? '—' : String(Math.round(n)));
   const activeOnly = list => (list || []).filter(c => c.enabled !== false);
   const expOrd = code => {
@@ -165,7 +178,8 @@ const BagrutEngine = (() => {
       return { ...base, state: 'num', num: b.num, code: b.code };
     }
     if (b && b.kind === 'pass') return { ...base, state: 'pass', code: b.code };
-    return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block) };
+    /* רכיב עתידי: שאלון שמועדו בשכבה גבוהה משל החניך וטרם דווח לו ציון – אינו חוסר */
+    return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block), targetRank: ord, future: ord > ctx.rank };
   }
 
   /**
@@ -464,14 +478,18 @@ const BagrutEngine = (() => {
     return { cands, chosen: null };
   }
 
+  /* שני מקצועות מדעיים מורחבים (פיזיקה, ביולוגיה, כימיה, מדעי המחשב) פוטרים ממבוא למדעים */
+  const SCIENCE_IDS = ['physics', 'biology', 'chemistry', 'cs'];
+  function scienceMajorCount(rules, majorCands) {
+    const isScience = id => { const m = rules.majors.find(x => x.id === id); return !!(m && (m.science ?? SCIENCE_IDS.includes(id))); };
+    return (majorCands || []).filter(c => isScience(c.id)).length;
+  }
+
   /* ---------- שער 3: יחידות פנימיות (ציון מספרי או "בוצע" / "עמד בדרישות" / "עבודה עיונית") ---------- */
   function gate3(tz, ctx, B, majorCands) {
     const rules = ctx.rules;
     const full = ctx.mode === 'full';
-    /* שני מקצועות מדעיים מורחבים (פיזיקה, ביולוגיה, כימיה, מדעי המחשב) פוטרים ממבוא למדעים */
-    const SCIENCE_IDS = ['physics', 'biology', 'chemistry', 'cs'];
-    const isScience = id => { const m = rules.majors.find(x => x.id === id); return !!(m && (m.science ?? SCIENCE_IDS.includes(id))); };
-    const scienceMajors = (majorCands || []).filter(c => isScience(c.id)).length;
+    const scienceMajors = scienceMajorCount(rules, majorCands);
     return rules.internals.filter(it => it.enabled !== false).map(it => {
       const b = Store.bagrutBest(tz, it.codes);
       const ord = Util.ord(it.expectedGrade) || 12;
@@ -529,6 +547,74 @@ const BagrutEngine = (() => {
     }
   }
 
+  /**
+   * תקינות צבירה לשכבה: כל שאלוני הליבה והיחידות הפנימיות של החניך, מול השכבה שבה הם אמורים להיבחן.
+   * שאלון "מועדו הגיע" (isDueForGrade) אם שכבת היעד שלו <= שכבת החניך, או שכבר דווח לחניך ציון בו.
+   * שאלון עתידי (isFutureForGrade) – שכבת היעד גבוהה משל החניך וטרם דווח בו ציון.
+   * "פעיל לקצב" = מועדו הגיע וגם נבחן בפועל: דווח לו ציון, מועדו בשכבה קודמת, מצב תעודה סופית,
+   * או שהשכבה שלו כבר קיבלה בו ציונים (סף הדיווח השכבתי) – כך שאלון שהשכבה טרם נבחנה בו אינו חוסר.
+   */
+  function computePace(tz, ctx, subjects, majorCands, gateOn) {
+    const rules = ctx.rules, pass = rules.passGrade, rank = ctx.rank;
+    const items = [];
+    if (gateOn(1)) {
+      subjects.forEach(s => s.comps.forEach(c => items.push({
+        subject: s.name, code: c.codes[0], target: expOrd(c.codes[0]), cohortTaken: c.takenByCohort,
+        kind: c.state === 'num' ? 'num' : c.state === 'pass' ? 'pass' : c.failed || c.blocked ? 'fail' : 'none',
+        score: c.state === 'num' ? (c.reportedNum ?? c.num) : null
+      })));
+    }
+    if (gateOn(3) && !ctx.ignoreInternals) {
+      const scienceMajors = scienceMajorCount(rules, majorCands);
+      activeOnly(rules.internals).forEach(it => {
+        if ((it.exemptWithScienceMajors ?? it.id === 'science') && scienceMajors >= 2) return;
+        const b = Store.bagrutBest(tz, it.codes);
+        items.push({
+          subject: it.name, code: it.codes[0], target: Util.ord(it.expectedGrade) || 12, cohortTaken: cohortOf(ctx.gradeKey, it.codes).taken,
+          kind: b && ['num', 'pass', 'fail'].includes(b.kind) ? b.kind : 'none', score: b && b.kind === 'num' ? b.num : null
+        });
+      });
+    }
+
+    items.forEach(it => {
+      it.has = it.kind !== 'none';
+      it.failed = it.kind === 'fail' || (it.kind === 'num' && it.score < pass);
+      it.due = it.target <= rank || it.has;
+      it.future = !it.due;
+      it.active = it.due && (it.has || it.target < rank || ctx.strict || it.cohortTaken);
+      it.missing = it.active && !it.has;
+    });
+    const active = items.filter(it => it.active);
+    const failed = items.filter(it => it.failed);
+    const missing = items.filter(it => it.missing);
+    const label = it => `${it.subject} (שאלון ${it.code})`;
+    return {
+      isSenior: rank >= 12, rank,
+      dueCount: active.length,
+      passedDueCount: active.filter(it => it.has && !it.failed).length,
+      failedActualCount: failed.length,
+      missingDueList: missing.map(it => ({ subject: it.subject, code: it.code, label: label(it) })),
+      futureCount: items.filter(it => it.future).length,
+      failedList: failed.map(it => ({ subject: it.subject, code: it.code, label: label(it), score: it.score })),
+      focus: [
+        ...failed.map(it => ({ text: `נכשל ב${it.subject} (שאלון ${it.code}${it.score != null ? ` · ${Math.round(it.score)}` : ''})`, hard: true })),
+        ...missing.map(it => ({ text: `חסר שאלון ${it.code} ב${it.subject}`, hard: false }))
+      ],
+      /* חוסמים לפי מקצוע: כשלים בפועל ושאלונים חסרים שמועדם הגיע – שאלונים עתידיים אינם נספרים */
+      blockedSubjects: [...new Set([...failed, ...missing].map(it => it.subject))],
+      subjects: [...new Set(items.map(it => it.subject))]
+    };
+  }
+
+  function paceStatusOf(pi, tier, noBagrut) {
+    if (noBagrut) return 'no_data';
+    if (pi.isSenior) return SENIOR_STATUS[tier] || 'no_data';
+    if (pi.dueCount === 0 && pi.failedActualCount === 0) return 'not_started';
+    const blocks = pi.failedActualCount + pi.missingDueList.length;
+    if (blocks === 0) return 'on_track';
+    return blocks === 1 ? 'pace_warning' : 'pace_lag';
+  }
+
   /* ---------- סיווג וטקסט אבחוני ---------- */
   function classify(B, hasComp) {
     const hard = B.filter(b => b.hard), minor = B.filter(b => !b.hard && !b.info);
@@ -562,7 +648,7 @@ const BagrutEngine = (() => {
     const rules = Config.rules();
     const mode = t.gradeKey === 'יב' || opts.fullMode ? 'full' : 'ontrack';
     return {
-      mode, rules, ord: Util.ord(t.gradeKey), gradeKey: t.gradeKey, useCurrent: opts.useCurrent,
+      mode, rules, ord: Util.ord(t.gradeKey), rank: gradeRank(t.gradeKey), gradeKey: t.gradeKey, useCurrent: opts.useCurrent,
       plus5: opts.plus5, ignoreInternals: opts.ignoreInternals, hasGroups: Store.loaded.groups || Store.loaded.grades,
       /* fullMode = "מצב תעודה סופית": כל השאלונים נדרשים; אחרת צפי מותאם לשלב בשנה לפי מה שהשכבה כבר נבחנה בו */
       strict: !!opts.fullMode, adaptive: !opts.fullMode
@@ -613,7 +699,7 @@ const BagrutEngine = (() => {
   /* ---------- תאי הגיליון הוויזואלי: טקסט, תת-כיתוב, צבע ופירוט לחלון המידע ---------- */
   const CELL_CLS = {
     pass: 'bg-emerald-50 text-emerald-800 font-bold', sky: 'bg-sky-50 text-sky-800', amber: 'bg-amber-50 text-amber-800 font-bold',
-    rose: 'bg-rose-50 text-rose-700 font-bold', neutral: 'text-slate-400 text-xs'
+    rose: 'bg-rose-50 text-rose-700 font-bold', neutral: 'text-slate-400 text-xs', future: 'text-xs'
   };
   const INTERNAL_ICON = { social: '🤝', pe: '🏃', science: '🔬', general: '📚', traffic: '🚦' };
   const fv = v => (v == null || v === '' ? '—' : String(v));
@@ -651,7 +737,11 @@ const BagrutEngine = (() => {
     else if (s.noShow && !hasNum) set('rose', 'לא ניגש', '', 'noshow');
     else if (s.learning && !hasNum) set('amber', 'לומד', 'טרם נבחן', 'learning');
     else if (s.status === 'pending' || s.status === 'nodata') {
-      set('neutral', s.group ? 'לומד' : '—', ctx.useCurrent && s.current != null ? `שוטף ${Math.round(s.current)}` : '', 'pending');
+      const future = s.comps.length > 0 && s.comps.every(c => c.future);
+      if (future) {
+        const next = Util.GRADE_KEYS.find(k => Util.ord(k) === Math.min(...s.comps.map(c => c.targetRank)));
+        set('future', s.group ? 'לומד' : `עתידי ל${Util.gl(next)}`, '', 'future');
+      } else set('neutral', s.group ? 'לומד' : '—', ctx.useCurrent && s.current != null ? `שוטף ${Math.round(s.current)}` : '', 'pending');
     } else if (s.status === 'pass') {
       const cur = s.source === 'current';
       set('pass', s.allPass ? 'עבר' : String(score), s.partial && s.partial.donePct ? `(${s.partial.donePct}%)` : cur ? '(שוטף)' : '', 'pass');
@@ -780,16 +870,27 @@ const BagrutEngine = (() => {
     const cells = {};
     subjects.forEach(s => { cells[s.id] = subjectCell(tz, s, ctx); });
 
+    /* שכבות י' / י"א נשפטות לפי קצב הצבירה לשכבה ולא לפי זכאות מלאה; י"ב – לפי הצפי המלא */
+    const paceInfo = computePace(tz, ctx, subjects, major.cands, gateOn);
+    /* ללא נתוני בגרות כל השאלונים "חסרים", ולכן אין מה לשפוט */
+    if (noBagrut) Object.assign(paceInfo, { dueCount: 0, passedDueCount: 0, failedActualCount: 0, missingDueList: [], failedList: [], focus: [], blockedSubjects: [] });
+    const paceStatus = paceStatusOf(paceInfo, tier, noBagrut);
+    paceInfo.paceStatus = paceStatus;
+    const juniorPace = !paceInfo.isSenior && !manual && !noBagrut;
+    const atRisk = juniorPace ? paceInfo.failedActualCount > 0 || paceInfo.missingDueList.length > 0 : tier === 4;
+    const focus = juniorPace ? [...paceInfo.focus, ...focusItems([], reverse)] : focusItems(blockers, reverse);
+
     return {
       tz, mode: ctx.mode, adaptive: ctx.adaptive, tier, autoTier, manual, exception: ex,
+      rank: ctx.rank, paceInfo, paceStatus, paceText: paceText(paceStatus, t.gradeKey), atRisk,
       overrideStatus: manual ? overrideKey(ex.overrideStatus) : '', exceptionReason: manual ? ex.reason : '',
       isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons,
       tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : (ctx.adaptive ? TIER_TEXT.adaptive : TIER_TEXT[ctx.mode])[tier],
       gates: { 1: gateStatus(1), 2: gateStatus(2), 3: gateStatus(3) },
       subjects, major, internals, blockers, notes, usedForecast, reverse, savable, compensation: real.length ? null : (ctx.compensation || null),
-      cells, majorCell: majorCell(tz, major, blockers, ctx), internalCells: internalCells(internals), focus: focusItems(blockers, reverse),
+      cells, majorCell: majorCell(tz, major, blockers, ctx), internalCells: internalCells(internals), focus,
       reverseText: reverse.map(r => `${r.subject}: ${r.text}`).join(' | '),
-      singleBlocker: !manual && !noBagrut && real.length === 1,
+      singleBlocker: juniorPace ? paceStatus === 'pace_warning' : !manual && !noBagrut && real.length === 1,
       diagnostic: manual
         ? `⚡ ${ov.label}${ex.reason ? ` – ${ex.reason}` : ''} | חישוב אוטומטי: ${autoDiag}`
         : noBagrut ? NO_BAGRUT_TEXT : autoDiag
@@ -814,6 +915,26 @@ const BagrutEngine = (() => {
       exceptions: evals.filter(e => e.manual).length,
       savable: evals.filter(e => e.savable).length,
       potentialExceptions: evals.filter(e => !e.manual && e.isPotentialException).length
+    };
+  }
+
+  /** תקינות צבירה מצטברת: י' / י"א לפי paceStatus; חניכי י"ב (אם נכללו) לפי צפי הזכאות הרגיל */
+  function summarizePace(evals) {
+    const special = Config.SPECIAL_ED;
+    const counted = evals.filter(e => e.tier !== 5 && e.paceStatus !== 'no_data' && e.paceStatus !== 'twelve_years');
+    const ok = e => e.paceStatus === 'on_track' || e.paceStatus === 'not_started' || e.paceStatus === 'eligible';
+    const noSp = counted.filter(e => trackOf(e.tz) !== special);
+    const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const count = (...st) => counted.filter(e => st.includes(e.paceStatus)).length;
+    return {
+      total: evals.length,
+      counted: counted.length,
+      onTrack: count('on_track', 'eligible'),
+      notStarted: count('not_started'),
+      warning: count('pace_warning', 'nearly'),
+      lag: count('pace_lag', 'blocked'),
+      pctInclSpecialEd: pct(counted.filter(ok).length, counted.length),
+      pctExSpecialEd: pct(noSp.filter(ok).length, noSp.length)
     };
   }
 
@@ -899,8 +1020,11 @@ const BagrutEngine = (() => {
         else if (b && b.kind === 'pass') { cells[key] = { state: 'pass' }; complete = false; anyPass = true; }
         else {
           complete = false;
-          const coh = cohortOf(t.gradeKey, c.codes, scope);
-          cells[key] = { state: b && b.kind === 'fail' ? 'fail' : coh.taken ? 'missed' : 'pending' };
+          const target = expOrd(c.codes[0]);
+          if (b && b.kind === 'fail') cells[key] = { state: 'fail' };
+          /* שאלון שמועדו בשכבה גבוהה משל החניך וטרם דווח לו ציון: עתידי, לא חסר */
+          else if (target > gradeRank(t.gradeKey)) cells[key] = { state: 'future', target };
+          else cells[key] = { state: cohortOf(t.gradeKey, c.codes, scope).taken ? 'missed' : 'pending' };
         }
       });
       const accumulated = Math.round(acc);
@@ -913,5 +1037,5 @@ const BagrutEngine = (() => {
     return { name, questionnaires, rows, pass };
   }
 
-  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, isInternalComp, drillOptions, subjectMatrix, evaluate, summarize, detectPotentialException, activeCohortQuestionnaires, cohortOf };
+  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, drillOptions, subjectMatrix, evaluate, summarize, summarizePace, detectPotentialException, activeCohortQuestionnaires, cohortOf };
 })();

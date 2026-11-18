@@ -36,7 +36,15 @@ const App = {
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
     sim: { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false },
     bagrut: { chip: 'all', sort: 'class', dir: 1, drill: 'all', mxSort: 'class', mxDir: 1 },
-    groups: { view: 'explorer', subject: 'all', teacher: 'all', kind: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false },
+    /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
+    bagrutScope: '12',
+    bagrutScopeSet: false,
+    groups: { subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false, rosterSort: 'room' },
+    /* בקרת קבוצות: 'anomalies' (מוקד חריגי שיבוץ, ברירת מחדל) / 'explorer' (סייר קבוצות ובדיקת תפוסה) */
+    groupsViewMode: 'anomalies',
+    /* קטגוריית חריגים במוקד: 'all' / 'missing' / 'duplicate' / 'suspect', וסינון מקצוע (תווית מקצוע או 'all') */
+    anomalyCategoryFilter: 'all',
+    anomalySubject: 'all',
     sadin: { subject: 'all', teacher: 'all', view: 'sheet', strip: 'all', alertBy: 'teacher', initials: false },
     profileTz: null,
     selectedSearchTz: null,
@@ -80,20 +88,16 @@ const App = {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
-    let seeded = false;
     if (CloudSync.url()) {
       try {
         const r = await CloudSync.pullCloudState();
         if (r === 'kept-local') this.toast('נשמרו שינויים מקומיים הממתינים לסנכרון; הם יישלחו לענן אוטומטית.', 'info');
       } catch (e) { console.warn('cloud pull', e); this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
     }
-    try { if (!CloudSync.url() && typeof initMockDataIfEmpty === 'function') seeded = await initMockDataIfEmpty(); }
-    catch (e) { console.error(e); this.toast(`טעינת נתוני הדמו נכשלה: ${e.message}`, 'error'); }
     Store.refresh();
     this.bindEvents();
     this.syncFilters();
     this.showTab(this.state.tab);
-    if (seeded) this.toast('המצבת הייתה ריקה – נטענו נתוני דמו. אפשר להחליף אותם בהגדרות ומצבת חניכים.', 'info');
     if ((Config.rules().version || 0) < RULES_VERSION) {
       this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ הגדרות ומצבת ← חוקי בגרות ושאלונים ← שחזור ברירות מחדל.', 'info');
     }
@@ -230,7 +234,7 @@ const App = {
   },
 
   syncGroupLayout() {
-    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groups.view === 'explorer' && Store.hasData() && Store.loaded.groups && !this.lockedTrainee());
+    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groupsViewMode === 'explorer' && Store.hasData() && Store.loaded.groups && !this.lockedTrainee());
   },
 
   /* ------------------------------------------------------------------
@@ -395,7 +399,8 @@ const App = {
   },
 
   selectGroup(groupId) {
-    Object.assign(this.state.groups, { view: 'explorer', subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId, missingSelected: false });
+    Object.assign(this.state.groups, { subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId, missingSelected: false });
+    this.state.groupsViewMode = 'explorer';
     this.state.selectedSearchTz = null;
     this.state.filters.q = '';
     setVal('globalSearch', '');
@@ -665,10 +670,9 @@ const App = {
     setHtml(mainId, `
       <div class="p-10 text-center">
         <h3 class="text-lg font-semibold mb-1">טרם נטענה מצבת חניכים</h3>
-        <p class="text-slate-500 text-sm mb-4">המצבת העליונה קובעת מי החניכים הפעילים, באיזו שכבה ובאיזו כיתת אם. אפשר לטעון אותה במסך "הגדרות ומצבת חניכים", או לנסות נתוני דמו.</p>
+        <p class="text-slate-500 text-sm mb-4">המצבת העליונה קובעת מי החניכים הפעילים, באיזו שכבה ובאיזו כיתת אם. אפשר לטעון אותה במסך "הגדרות ומצבת חניכים".</p>
         <div class="flex gap-2 justify-center">
-          <button type="button" class="btn btn-primary" data-act="loadMock">טעינת נתוני דמו</button>
-          <button type="button" class="btn btn-ghost" data-act="goSettings">מעבר להגדרות ומצבת</button>
+          <button type="button" class="btn btn-primary" data-act="goSettings">מעבר להגדרות ומצבת</button>
         </div>
       </div>`);
   },
@@ -680,14 +684,18 @@ const App = {
   overviewModel() {
     const list = this.filtered();
     const rows = list.map(t => ({ t, ev: this.getEval(t.tz) }));
-    const stats = BagrutEngine.summarize(rows.map(r => r.ev));
+    const bench = this.bagrutBenchmark(rows);
+    const benchEvals = bench.rows.map(r => r.ev);
+    const stats = bench.pace ? BagrutEngine.summarizePace(benchEvals) : BagrutEngine.summarize(benchEvals);
     const sheet = Store.loaded.grades ? GroupAnalyzer.sadinSheet(list, {}) : [];
+    const benchSheet = !Store.loaded.grades ? [] : bench.rows.length === rows.length ? sheet : GroupAnalyzer.sadinSheet(bench.rows.map(r => r.t), {});
     const analysis = Store.loaded.groups ? GroupAnalyzer.analyzeGroupAnomalies(list, 'all') : null;
-    const bagrutRisk = rows.filter(r => r.ev.tier === 4);
+    const bagrutRisk = rows.filter(r => r.ev.atRisk);
     const multi = sheet.filter(r => GroupAnalyzer.riskSubjects(r).length >= 2);
     const graded = sheet.filter(r => r.overall != null);
     return {
-      list, rows, stats, sheet, analysis, bagrutRisk, multi, graded,
+      list, rows, bench, stats, sheet, benchSheet, analysis, bagrutRisk, multi, graded,
+      bagrutOn: Store.loaded.bagrut && stats.counted > 0,
       anomalies: analysis ? GroupAnalyzer.anomaliesByTrainee(analysis) : new Map(),
       attention: new Set([...bagrutRisk.map(r => r.t.tz), ...multi.map(r => r.t.tz)]),
       avg: graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null,
@@ -695,38 +703,82 @@ const App = {
     };
   },
 
-  /** מקצועות חוסמים: מהסדין כשנטען, אחרת ממקצועות הליבה הנכשלים/החסרים בצפי הבגרות */
+  /**
+   * אוכלוסיית הייחוס לצפי הבגרות בחדר הבקרה. בסינון "הכל": שכבת י"ב (ללא י"ב – י"א, ואם גם היא ריקה – כל החניכים).
+   * שכבה שנבחרה במפורש קובעת. כשכל האוכלוסייה מתחת לי"ב מוצגת תקינות צבירה לשכבה ולא זכאות מלאה.
+   */
+  bagrutBenchmark(rows) {
+    const explicit = this.state.filters.grade !== 'all';
+    const byRank = rank => rows.filter(r => r.ev.rank === rank);
+    const cohort = explicit ? rows : byRank(12).length ? byRank(12) : byRank(11).length ? byRank(11) : rows;
+    const grades = Util.GRADE_KEYS.filter(g => cohort.some(r => r.t.gradeKey === g));
+    return {
+      rows: cohort,
+      pace: cohort.length > 0 && cohort.every(r => r.ev.rank < 12),
+      grades: new Set(grades),
+      scope: grades.length === 1 ? String(Util.ord(grades[0])) : 'all',
+      label: grades.length ? `שכבת ${grades.map(g => Util.gl(g)).join(', ')}` : 'שכבת י"ב'
+    };
+  },
+
+  /** מקצועות חוסמים: מהסדין כשנטען (אוכלוסיית הייחוס בלבד), אחרת מהבגרות. בתקינות צבירה: רק כשלים בפועל ושאלונים שמועדם הגיע */
   overviewBlockers(m) {
-    if (m.sheet.length) return { source: 'sadin', items: GroupAnalyzer.blockingSubjects(m.sheet, 5) };
+    if (m.bench.pace && m.bagrutOn) {
+      const bySubject = new Map();
+      m.bench.rows.forEach(r => r.ev.paceInfo.subjects.forEach(name => {
+        const e = bySubject.get(name) || { name, enrolled: 0, bad: 0 };
+        e.enrolled++;
+        if (r.ev.paceInfo.blockedSubjects.includes(name)) e.bad++;
+        bySubject.set(name, e);
+      }));
+      const items = [...bySubject.values()].filter(x => x.bad > 0).map(x => ({ ...x, pct: Math.round((x.bad / x.enrolled) * 100) }))
+        .sort((a, b) => b.bad - a.bad || b.pct - a.pct).slice(0, 5);
+      return { source: 'pace', items };
+    }
+    if (m.benchSheet.length) return { source: 'sadin', items: GroupAnalyzer.blockingSubjects(m.benchSheet, 5) };
     const failing = ['fail', 'lost', 'missing', 'noshow'];
     const items = BAGRUT_CORE.map(([id, name]) => {
-      const cells = m.rows.map(r => r.ev.cells[id]).filter(c => c && c.state !== 'noenroll');
+      const cells = m.bench.rows.map(r => r.ev.cells[id]).filter(c => c && c.state !== 'noenroll');
       const bad = cells.filter(c => failing.includes(c.state)).length;
       return { name, enrolled: cells.length, bad, pct: cells.length ? Math.round((bad / cells.length) * 100) : 0 };
     }).filter(x => x.bad > 0).sort((a, b) => b.bad - a.bad || b.pct - a.pct).slice(0, 5);
     return { source: 'bagrut', items };
   },
 
-  /** תלמידים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות, מהחמור לקל */
+  /**
+   * תלמידים בחריגת שיבוץ או בחסם בגרות, מהחמור לקל. י"ב: חסם יחיד לזכאות כרגיל.
+   * י' / י"א: רק כשל בפועל, שאלון חסר שמועדו הגיע או סיכון בציונים שוטפים – לא בגלל שאלוני י"ב עתידיים.
+   */
   overviewIssues(m) {
     const issues = new Map();
+    const entry = (t, rank) => issues.get(t.tz) || { t, rank, parts: [] };
     m.anomalies.forEach(a => {
       const t = Store.trainees.get(a.tz);
       if (t) issues.set(a.tz, { t, rank: a.severe ? 0 : 1, parts: [{ text: a.text, severe: a.severe }] });
     });
-    m.rows.filter(r => r.ev.singleBlocker).forEach(r => {
-      const first = r.ev.focus[0];
-      const e = issues.get(r.t.tz) || { t: r.t, rank: 2, parts: [] };
-      e.parts.push({ text: `חסם יחיד לזכאות: ${first ? first.text : r.ev.diagnostic}`, severe: false });
-      issues.set(r.t.tz, e);
+    const multiTz = new Set(m.multi.map(r => r.t.tz));
+    m.rows.forEach(({ t, ev }) => {
+      const parts = [];
+      if (ev.rank >= 12 || ev.manual) {
+        if (ev.singleBlocker) parts.push({ text: `חסם יחיד לזכאות: ${ev.focus[0] ? ev.focus[0].text : ev.diagnostic}`, severe: false });
+      } else {
+        const pi = ev.paceInfo;
+        pi.focus.slice(0, 2).forEach(x => parts.push({ text: `חסם בגרות לשכבה: ${x.text}`, severe: x.hard }));
+        if (pi.focus.length > 2) parts.push({ text: `ועוד ${pi.focus.length - 2} חסמי בגרות לשכבה`, severe: false });
+        if (multiTz.has(t.tz)) parts.push({ text: 'ציונים שוטפים: 2+ מקצועות בסיכון', severe: false });
+      }
+      if (!parts.length) return;
+      const e = entry(t, parts.some(p => p.severe) ? 1 : 2);
+      e.parts.push(...parts);
+      issues.set(t.tz, e);
     });
     return [...issues.values()].sort((a, b) => a.rank - b.rank || b.parts.length - a.parts.length || natural(a.t.name, b.t.name));
   },
 
   renderOverviewPanel() {
     if (!Store.hasData()) return this.noRoster([], 'overview-body');
-    const m = this.overviewModel(), f = this.state.filters, st = m.stats;
-    const bagrutOn = Store.loaded.bagrut && st.counted > 0, sadinOn = m.sheet.length > 0;
+    const m = this.overviewModel(), f = this.state.filters, st = m.stats, bench = m.bench;
+    const bagrutOn = m.bagrutOn, sadinOn = m.sheet.length > 0;
     const missing = Object.keys(DATASETS).filter(key => !Config.getDataset(key));
 
     const card = (data, label, value, sub, extra = '', icon = '') => `<button type="button" class="ov-card" data-act="ovGo" ${data}>
@@ -738,30 +790,35 @@ const App = {
       grad: badge('i-ok', '<path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/>'),
       alert: badge('i-bad', '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>')
     };
-    const donut = pct => {
+    const donut = (pct, title) => {
       const c = 2 * Math.PI * 30;
-      return `<svg viewBox="0 0 80 80" class="w-20 h-20 shrink-0" role="img" aria-label="${E(`צפי זכאות ${pct}%`)}">
+      return `<svg viewBox="0 0 80 80" class="w-20 h-20 shrink-0" role="img" aria-label="${E(`${title} ${pct}%`)}">
         <circle cx="40" cy="40" r="30" fill="none" stroke="#ECEFE9" stroke-width="10"/>
         <circle cx="40" cy="40" r="30" fill="none" stroke="#75977D" stroke-width="10" stroke-linecap="round" stroke-dasharray="${(c * pct / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 40 40)"/></svg>`;
     };
 
     const notLoaded = 'טרם נטען קובץ';
-    const attentionGo = Store.loaded.bagrut && (!m.multi.length || m.bagrutRisk.length >= m.multi.length) ? 'data-go="bagrut" data-chip="notok"' : 'data-go="sadin" data-strip="multiple"';
+    const attentionGo = Store.loaded.bagrut && (!m.multi.length || m.bagrutRisk.length >= m.multi.length) ? 'data-go="bagrut" data-chip="notok" data-scope="all"' : 'data-go="sadin" data-strip="multiple"';
     const card1 = card(attentionGo, 'חניכים במעקב / דורש תשומת לב', m.attention.size,
       bagrutOn || sadinOn ? `${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ ציונים שליליים או חסרים · מתוך ${m.list.length}` : notLoaded, '', ICONS.attn);
     const card2 = card('data-go="sadin" data-strip="all"', 'ממוצע הישגים שוטפים', m.avg == null ? '—' : Util.fmt(m.avg, 1),
       sadinOn ? `${m.clean} חניכים עם 100% ציונים עוברים (מתוך ${m.graded.length} עם ציונים)` : notLoaded, '', ICONS.trophy);
-    const card3 = card('data-go="bagrut" data-chip="all"', 'צפי זכאות לבגרות', '', bagrutOn
-      ? `ללא חנ"מ: ${st.eligibilityExSpecialEd}% • כולל חנ"מ: ${st.eligibilityInclSpecialEd}%<br>${st.singleBlocker} חניכים במרחק מקצוע אחד מזכאות` : notLoaded,
-      `<span class="flex items-center justify-between gap-3"><span class="ov-value">${bagrutOn ? `${st.eligibilityInclSpecialEd}%` : '—'}</span>${bagrutOn ? donut(st.eligibilityInclSpecialEd) : ''}</span>`, ICONS.grad);
+    const kpiPct = bench.pace ? st.pctInclSpecialEd : st.eligibilityInclSpecialEd;
+    const kpiTitle = bench.pace ? `תקינות צבירה לבגרות (${bench.label})` : `צפי זכאות לבגרות (${bench.label})`;
+    const kpiSub = bench.pace
+      ? `ללא חנ"מ: ${st.pctExSpecialEd}% • כולל חנ"מ: ${st.pctInclSpecialEd}%<br>${st.warning} בחסם צבירה יחיד · ${st.lag} בפיגור צבירה`
+      : `ללא חנ"מ: ${st.eligibilityExSpecialEd}% • כולל חנ"מ: ${st.eligibilityInclSpecialEd}%<br>${st.singleBlocker} חניכים במרחק מקצוע אחד מזכאות`;
+    const card3 = card(`data-go="bagrut" data-chip="all" data-scope="${bench.scope}"`, kpiTitle, '', bagrutOn ? kpiSub : notLoaded,
+      `<span class="flex items-center justify-between gap-3"><span class="ov-value">${bagrutOn ? `${kpiPct}%` : '—'}</span>${bagrutOn ? donut(kpiPct, bench.pace ? 'תקינות צבירה' : 'צפי זכאות') : ''}</span>`, ICONS.grad);
     const c = m.analysis ? m.analysis.counts : null;
     const card4 = card('data-go="groups" data-view="anomalies"', 'חריגות שיבוץ בקבוצות', '',
       m.analysis ? `${m.anomalies.size} חניכים · חוסר ${c.none} • כפילות ${c.dup} • ללא מגמה ${c.nomajor}` : notLoaded,
       `<span class="ov-value warm">${m.analysis ? m.analysis.items.length : '—'}</span>`, ICONS.alert);
 
-    /* אחוז זכאות לפי כיתות (או ממוצע שוטף כשקובץ הבגרות טרם נטען); הסינון לפי כיתה אינו מצמצם את הגרף כדי שאפשר יהיה לעבור בין כיתות */
+    /* אחוז זכאות / תקינות צבירה לפי כיתות של אוכלוסיית הייחוס (או ממוצע שוטף כשקובץ הבגרות טרם נטען); הסינון לפי כיתה אינו מצמצם את הגרף כדי שאפשר יהיה לעבור בין כיתות */
     const pool = f.cls === 'all' ? m.list : this.filtered(true, true);
-    const poolRows = f.cls === 'all' ? m.rows : pool.map(t => ({ t, ev: this.getEval(t.tz) }));
+    let poolRows = f.cls === 'all' ? m.rows : pool.map(t => ({ t, ev: this.getEval(t.tz) }));
+    if (bagrutOn) poolRows = poolRows.filter(r => bench.grades.has(r.t.gradeKey));
     const poolGraded = f.cls === 'all' ? m.graded : (sadinOn ? GroupAnalyzer.sadinSheet(pool, {}).filter(r => r.overall != null) : []);
     const byClass = new Map();
     poolRows.forEach(r => { const k = r.t.classKey || ''; if (!byClass.has(k)) byClass.set(k, []); byClass.get(k).push(r); });
@@ -769,8 +826,9 @@ const App = {
     poolGraded.forEach(r => { const k = r.t.classKey || ''; if (!sheetByClass.has(k)) sheetByClass.set(k, []); sheetByClass.get(k).push(r.overall); });
     const classBars = [...byClass.entries()].sort((a, b) => Util.ord(a[1][0].t.gradeKey) - Util.ord(b[1][0].t.gradeKey) || natural(a[0], b[0])).map(([key, members]) => {
       if (bagrutOn) {
-        const s = BagrutEngine.summarize(members.map(r => r.ev));
-        return { key, value: s.counted ? s.eligibilityInclSpecialEd : null, text: s.counted ? `${s.eligibilityInclSpecialEd}%` : '—' };
+        const s = bench.pace ? BagrutEngine.summarizePace(members.map(r => r.ev)) : BagrutEngine.summarize(members.map(r => r.ev));
+        const pct = bench.pace ? s.pctInclSpecialEd : s.eligibilityInclSpecialEd;
+        return { key, value: s.counted ? pct : null, text: s.counted ? `${pct}%` : '—' };
       }
       const scores = sheetByClass.get(key) || [];
       const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
@@ -812,8 +870,8 @@ const App = {
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${card1}${card2}${card3}${card4}</div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <div class="card p-5 lg:col-span-7 space-y-5">
-          <div><h3 class="font-bold text-[#355747] mb-2">${bagrutOn ? 'אחוז זכאות שכבתי לפי כיתות' : 'ממוצע הישגים שוטפים לפי כיתות'}</h3><div class="space-y-1">${classHtml}</div></div>
-          <div class="border-t border-[#E6ECE6] pt-4"><h3 class="font-bold text-[#355747] mb-2">התפלגות החוסמים ביותר <span class="text-xs font-normal text-slate-500">${blockers.source === 'sadin' ? 'מקצועות עם ציון נכשל או חסר' : 'מקצועות ליבה בבגרות'}</span></h3><div class="space-y-1">${blockerHtml}</div></div>
+          <div><h3 class="font-bold text-[#355747] mb-2">${bagrutOn ? (bench.pace ? `תקינות צבירה לבגרות לפי כיתות (${E(bench.label)})` : `אחוז זכאות לבגרות לפי כיתות (${E(bench.label)})`) : 'ממוצע הישגים שוטפים לפי כיתות'}</h3><div class="space-y-1">${classHtml}</div></div>
+          <div class="border-t border-[#E6ECE6] pt-4"><h3 class="font-bold text-[#355747] mb-2">התפלגות החוסמים ביותר <span class="text-xs font-normal text-slate-500">${E(({ sadin: 'מקצועות עם ציון נכשל או חסר', pace: 'כשלים ושאלונים שמועדם הגיע לשכבה' }[blockers.source] || 'מקצועות ליבה בבגרות') + (bagrutOn || sadinOn ? ` · ${bench.label}` : ''))}</span></h3><div class="space-y-1">${blockerHtml}</div></div>
         </div>
         <div class="card p-5 lg:col-span-5"><h3 class="font-bold text-[#355747] mb-2">חניכים בחריגה וצווארי בקבוק</h3>${issueHtml}</div>
       </div>`);
@@ -833,14 +891,39 @@ const App = {
      ================================================================== */
   dashRows() { return this.filtered().map(t => ({ t, ev: this.getEval(t.tz) })); },
 
+  /** י"ב, חריג ידני או ללא נתוני בגרות: נשפטים לפי צפי הזכאות המלא; י' / י"א: לפי תקינות צבירה לשכבה */
+  tierBased(ev) { return ev.rank >= 12 || ev.manual || ev.tier === 0; },
+
+  /** היקף השכבות בלשונית הבגרות. סינון שכבה גלובלי קובע לבדו; חניך שננעל בחיפוש מוצג תמיד. אם אין חניכים בהיקף ברירת המחדל – השכבה הגבוהה הראשונה שיש בה חניכים */
+  bagrutScopeInfo(rows) {
+    const counts = { 12: 0, 11: 0, 10: 0, all: rows.length };
+    rows.forEach(r => { if (counts[r.ev.rank] !== undefined) counts[r.ev.rank]++; });
+    let scope = this.state.bagrutScope;
+    if (!this.state.bagrutScopeSet && scope !== 'all' && !counts[scope]) scope = ['12', '11', '10'].find(k => counts[k]) || 'all';
+    const show = this.state.filters.grade === 'all' && !this.lockedTrainee();
+    return { counts, scope, show, rows: show && scope !== 'all' ? rows.filter(r => r.ev.rank === +scope) : rows };
+  },
+
+  renderBagrutScope(info) {
+    const box = $('bagrut-scope');
+    if (!box) return;
+    if (!Store.hasData() || !info.show) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} (${info.counts[id]})</button>`;
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="scope-bar" role="group" aria-label="היקף שכבות בצפי הזכאות">
+      ${pill('12', '🎓 שכבת י"ב – זכאות מלאה')}${pill('11', '📈 שכבת י"א – תקינות צבירה')}${pill('10', "🌱 שכבת י' – מעקב ראשוני")}${pill('all', '📋 כל השכבות')}</div>`;
+  },
+
   chipMatch(r, chip) {
-    if (chip === 'exception') return r.ev.manual;
-    if (chip === 'suspect') return !r.ev.manual && r.ev.isPotentialException;
-    if (chip === 'near') return r.ev.singleBlocker;
-    if (chip === 'notok') return r.ev.tier === 4;
-    if (chip === 'eligible') return r.ev.tier === 1 || r.ev.tier === 2;
-    if (chip === 'savable') return r.ev.savable;
-    if (/^tier[0-5]$/.test(chip)) return r.ev.tier === +chip.slice(4);
+    const ev = r.ev;
+    if (chip === 'exception') return ev.manual;
+    if (chip === 'suspect') return !ev.manual && ev.isPotentialException;
+    if (chip === 'near') return ev.singleBlocker;
+    if (chip === 'notok') return ev.atRisk;
+    if (chip === 'eligible') return this.tierBased(ev) && (ev.tier === 1 || ev.tier === 2);
+    if (chip === 'savable') return ev.savable;
+    if (/^tier[0-5]$/.test(chip)) return this.tierBased(ev) && ev.tier === +chip.slice(4);
+    if (chip.startsWith('pace:')) return !this.tierBased(ev) && ev.paceStatus === chip.slice(5);
     return true;
   },
 
@@ -855,22 +938,29 @@ const App = {
 
   renderBagrutPanel() {
     this.renderFreshnessBar('bagrut');
-    const rows = this.dashRows();
+    const scope = this.bagrutScopeInfo(this.dashRows());
+    this.renderBagrutScope(scope);
+    const rows = scope.rows;
     const st = this.state.bagrut, sim = this.state.sim;
-    const stats = BagrutEngine.summarize(rows.map(r => r.ev));
+    const evalRows = rows.filter(r => this.tierBased(r.ev)), paceRows = rows.filter(r => !this.tierBased(r.ev));
+    const stats = BagrutEngine.summarize(evalRows.map(r => r.ev));
+    const all = BagrutEngine.summarize(rows.map(r => r.ev));
     const list = this.bagrutList(rows);
     const tierCount = [0, 0, 0, 0, 0, 0];
-    rows.forEach(r => { tierCount[r.ev.tier]++; });
+    evalRows.forEach(r => { tierCount[r.ev.tier]++; });
     const TT = BagrutEngine.TIER_TEXT[sim.fullMode ? 'full' : 'adaptive'];
     const option = (id, label) => `<option value="${id}" ${st.chip === id ? 'selected' : ''}>${E(label)}</option>`;
+    const paceCount = status => paceRows.filter(r => r.ev.paceStatus === status).length;
     setHtml('bagrutStatusSelect',
       option('all', `כל הסטטוסים (${rows.length})`) +
-      option('eligible', `✅ זכאים (${tierCount[1] + tierCount[2]})`) +
-      [1, 2, 3, 4, 5, 0].map(i => option(`tier${i}`, `${['⚪', '🟢', '🟡', '🟠', '🔴', '⚪'][i]} ${i === 0 ? 'ללא נתוני בגרות' : TT[i]} (${tierCount[i]})`)).join('') +
-      option('savable', `🎯 הצלה ב-30% (${stats.savable})`) +
-      option('near', `חסם בודד (${stats.singleBlocker})`) +
-      option('exception', `⚡ חריג ידני (${stats.exceptions})`) +
-      option('suspect', `חשד לחריג (${stats.potentialExceptions})`));
+      (evalRows.length || !paceRows.length ? option('eligible', `✅ זכאים (${tierCount[1] + tierCount[2]})`) +
+        [1, 2, 3, 4, 5, 0].map(i => option(`tier${i}`, `${['⚪', '🟢', '🟡', '🟠', '🔴', '⚪'][i]} ${i === 0 ? 'ללא נתוני בגרות' : TT[i]} (${tierCount[i]})`)).join('') : '') +
+      (paceRows.length ? [['on_track', '🟢 תקין לקצב שכבה'], ['not_started', '⚪ טרם החלו היבחנות'], ['pace_warning', '🟡 חסם צבירה יחיד'], ['pace_lag', '🔴 בפיגור צבירה']]
+        .map(([id, label]) => option(`pace:${id}`, `${label} (${paceCount(id)})`)).join('') : '') +
+      option('savable', `🎯 הצלה ב-30% (${all.savable})`) +
+      option('near', `חסם בודד (${all.singleBlocker})`) +
+      option('exception', `⚡ חריג ידני (${all.exceptions})`) +
+      option('suspect', `חשד לחריג (${all.potentialExceptions})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
     const modeBtn = (full, label, title) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${!!sim.fullMode === full}" title="${E(title)}">${label}</button>`;
@@ -879,7 +969,7 @@ const App = {
       sw('ignoreInternals', 'התעלם מחוסר יחידות פנימיות (חנ"ג, מעורבות, השכלה כללית ומדעים)') + sw('plus5', 'תוספת +5 לגבוליים 50-54') + sw('useCurrent', 'שלב ציונים שוטפים כתחזית (תצוגה מקדימה)'));
 
     this.renderCohortInfo(rows);
-    this.renderBagrutKpis(stats, tierCount, TT);
+    this.renderBagrutKpis(stats, tierCount, TT, paceRows);
     const drillOpts = BagrutEngine.drillOptions();
     if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
     setHtml('bagrutSubjectDrillSelect',
@@ -891,7 +981,7 @@ const App = {
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
-  renderBagrutKpis(stats, tierCount, TT) {
+  renderBagrutKpis(stats, tierCount, TT, paceRows = []) {
     const box = $('bagrut-kpis');
     if (!box) return;
     if (!Store.hasData() || !Store.loaded.bagrut) { box.classList.add('hidden'); box.innerHTML = ''; return; }
@@ -900,18 +990,36 @@ const App = {
     const quick = (id, cls, label, count, title) => `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(title)}">
       <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${count}</span></button>`;
     const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
-    box.classList.remove('hidden');
-    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">
+    const divider = '<span class="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true"></span>';
+    const eligible = stats.total > 0 || !paceRows.length ? `
       <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
         ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis)}
         ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis)}
-      </div>
-      <span class="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true"></span>
+      </div>${divider}
       <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי צפי">
         ${quick('eligible', 'gstat-ok', 'זכאים', tierCount[1] + tierCount[2], `${TT[1]} + ${TT[2]}`)}
         ${quick('tier3', 'gstat-amber', 'קרובים לזכאות', tierCount[3], TT[3])}
         ${quick('tier4', 'gstat-bad', 'בסיכון', tierCount[4], TT[4])}
-      </div></div>`;
+      </div>` : '';
+    let pace = '';
+    if (paceRows.length) {
+      const ps = BagrutEngine.summarizePace(paceRows.map(r => r.ev));
+      const grades = Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
+      const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}); שאלוני שכבות עליונות אינם נספרים כחוסר`;
+      pace = `${eligible ? divider : ''}
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
+        ${pct(ps.pctInclSpecialEd, `תקינות צבירה (${grades}) · כולל חנ"מ`, paceBasis)}
+        ${pct(ps.pctExSpecialEd, 'תקינות צבירה · ללא חנ"מ', paceBasis)}
+      </div>${divider}
+      <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי תקינות צבירה">
+        ${quick('pace:on_track', 'gstat-ok', 'תקין לקצב', ps.onTrack, 'ללא כשלים ושאלון חסר שמועדו הגיע')}
+        ${quick('pace:not_started', 'gstat-violet', 'טרם החלו', ps.notStarted, 'טרם החלו היבחנות')}
+        ${quick('pace:pace_warning', 'gstat-amber', 'חסם יחיד', ps.warning, 'חסם צבירה יחיד לשכבה')}
+        ${quick('pace:pace_lag', 'gstat-bad', 'בפיגור', ps.lag, 'בפיגור צבירה לשכבה')}
+      </div>`;
+    }
+    box.classList.remove('hidden');
+    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}</div>`;
   },
 
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
@@ -943,6 +1051,7 @@ const App = {
       if (c.state === 'pass') return '<td class="text-emerald-700 font-semibold">עבר</td>';
       if (c.state === 'fail') return '<td class="text-rose-600 font-bold">נכשל</td>';
       if (c.state === 'missed') return '<td class="text-rose-600 font-bold">חסר</td>';
+      if (c.state === 'future') return `<td class="future-cell" title="${E(`עתידי ל${Util.gl(Util.GRADE_KEYS.find(g => Util.ord(g) === c.target))}`)}">–</td>`;
       return '<td class="text-slate-300">–</td>';
     }).join('');
     const accTd = r => {
@@ -987,7 +1096,7 @@ const App = {
 
   bagrutList(rows) {
     const { chip, sort, dir } = this.state.bagrut;
-    const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: r.ev.tier, tz: r.t.tz, diag: r.ev.diagnostic })[sort];
+    const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: this.tierBased(r.ev) ? r.ev.tier : BagrutEngine.PACE_TIER[r.ev.paceStatus], tz: r.t.tz, diag: r.ev.diagnostic })[sort];
     return rows.filter(r => this.chipMatch(r, chip)).sort((a, b) => {
       const x = val(a), y = val(b);
       return ((typeof x === 'number' ? x - y : natural(x, y)) || natural(a.t.name, b.t.name)) * dir;
@@ -1004,6 +1113,17 @@ const App = {
     return [...rooms.entries()].map(([key, members]) =>
       `<tr class="room-divider"><td colspan="${cols}">כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${members.length})</td></tr>${members.map(render).join('')}`
     ).join('');
+  },
+
+  /** תג תקינות צבירה לשכבות י' / י"א (במקום "לא זכאי"): ירוק – תקין, חרדל – חסם יחיד, טרקוטה – פיגור, אפור – טרם החלו */
+  paceBadge(ev) {
+    const pi = ev.paceInfo;
+    const detail = [
+      `${ev.paceText} · ${pi.passedDueCount} מתוך ${pi.dueCount} שאלונים שמועדם הגיע עברו`,
+      ...pi.focus.map(x => x.text),
+      pi.futureCount ? `${pi.futureCount} שאלונים עתידיים לשכבות גבוהות אינם נספרים כחוסר` : ''
+    ].filter(Boolean).join(' · ');
+    return `<span class="badge pace-badge pace-${ev.paceStatus} whitespace-nowrap" title="${E(detail)}">${E(ev.paceText)}</span>`;
   },
 
   /** תגיות אבחון תמציתיות (עד 3) במקום מחרוזת האבחון המלאה; המלאה זמינה ב-title */
@@ -1035,7 +1155,7 @@ const App = {
         c.state === 'comp' ? `${c.text} ${c.sub.startsWith('פיצוי') ? 'פיצוי' : 'קיזוז'}` : c.text;
       const numeric = Number(c.text);
       const failed = ['fail', 'lost', 'missing', 'noshow'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
-      const style = c.state === 'comp' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
+      const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
         c.state === 'noenroll' || c.text === 'לומד' || c.text === '—' || c.text === 'בתהליך' ? 'text-slate-400' : 'text-slate-800 font-normal';
       return `<td class="mx-cell whitespace-nowrap" ${tip(c.tip)} tabindex="0" role="button" aria-label="${E(`${label}: ${value}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}">${E(value)}</span></td>`;
     };
@@ -1064,7 +1184,7 @@ const App = {
     const pill = ev => {
       let text = ev.tierText;
       if (ev.adaptive && ev.tier === 3 && !ev.manual) text += ` (חסם ${ev.blockers.filter(b => !b.info).length})`;
-      const status = ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
+      const status = !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
       return `<div>${status}</div>
@@ -1086,7 +1206,7 @@ const App = {
       </tr>`;
     });
     const coreHead = ([id, l]) => `<th><button type="button" class="font-semibold hover:underline" data-act="bagrutDrill" data-sel="core:${id}" title="מטריצת שאלונים – ${E(l)}">${l}</button></th>`;
-    return `<table class="grid mx w-full text-center"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('tier', 'צפי זכאות')}${coreCols.map(coreHead).join('')}${plain('מגמה 5 יח"ל')}${plain('פנימיים')}${plain('מיקוד פדגוגי (מה נדרש)', 'mx-focus')}</tr></thead>
+    return `<table class="grid mx w-full text-center"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('tier', 'סטטוס זכאות / צבירה')}${coreCols.map(coreHead).join('')}${plain('מגמה 5 יח"ל')}${plain('פנימיים')}${plain('מיקוד פדגוגי (מה נדרש)', 'mx-focus')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>`;
   },
 
@@ -1257,52 +1377,149 @@ const App = {
   renderGroupsPanel() {
     this.syncGroupLayout();
     this.renderFreshnessBar('groups');
-    const st = this.state.groups, explorer = st.view === 'explorer';
-    document.querySelectorAll('[data-gview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.gview === st.view)));
+    const st = this.state.groups, explorer = this.state.groupsViewMode === 'explorer';
     const show = (id, on) => { const el = $(id); if (el) el.classList.toggle('hidden', !on); };
+    const hideAll = () => ['groups-explorer', 'groups-table', 'groups-kpis', 'groups-strip', 'gctl-explorer', 'groups-mode'].forEach(id => show(id, false));
     const message = text => {
       this._explorerView = []; this._boardMissing = [];
-      show('groups-explorer', false); show('groups-table', true); show('gctl-explorer', false); show('gctl-anomalies', false); show('groups-kpis', false); show('groups-strip', false);
+      hideAll(); show('groups-table', true); show('groups-mode', true);
       setHtml('groups-table', `<div class="p-8 text-center text-slate-500">${text}</div>`);
     };
     if (!Store.hasData()) {
       this._explorerView = []; this._boardMissing = [];
-      this.noRoster(['groups-kpis', 'groups-master', 'groups-detail'], 'groups-table');
-      show('groups-table', true); show('groups-explorer', false); show('gctl-explorer', false); show('gctl-anomalies', false); show('groups-kpis', false); show('groups-strip', false);
-      show('groups-student-map', false);
+      this.noRoster(['groups-kpis', 'groups-master', 'groups-detail', 'groups-mode'], 'groups-table');
+      hideAll(); show('groups-table', true); show('groups-student-map', false);
       return;
     }
-    /* חניך נעול (נבחר בחיפוש): במקום סייר הקבוצות מוצגת מפת השיבוצים שלו */
+    /* חניך נעול (נבחר בחיפוש): במקום שני המצבים מוצגת מפת השיבוצים שלו */
     const lockT = this.lockedTrainee();
     show('groups-student-map', !!lockT && (Store.loaded.groups || Store.loaded.grades));
     if (lockT && (Store.loaded.groups || Store.loaded.grades)) {
-      ['groups-explorer', 'groups-table', 'groups-kpis', 'groups-strip', 'gctl-explorer', 'gctl-anomalies'].forEach(id => show(id, false));
+      hideAll();
       $('groups-kpis').classList.remove('grid');
       this._explorerView = []; this._boardMissing = [];
       return this.renderStudentGroupsMap(lockT.tz);
     }
+    const ready = Store.loaded.groups || Store.loaded.grades;
+    const list = this.filtered();
+    const am = ready ? GroupAnalyzer.placementAnomalies(list) : { rows: [], outside: { nomajor: 0, unmatched: 0 } };
+    this.renderGroupsModeBar(am.rows.length, this.visibleGroupCount());
     if (explorer && !Store.loaded.groups) return message('הסייר מציג את הרשימות השמיות כפי שנרשמו במשוב, ולכן נדרש קובץ קבוצות לימוד. אפשר לטעון אותו בכפתור שבראש הפאנל.');
-    if (!explorer && !Store.loaded.groups && !Store.loaded.grades) return message('נדרש קובץ קבוצות ושיבוצים לניתוח השיבוצים. אפשר לטעון אותו בכפתור שבראש הפאנל.');
+    if (!explorer && !ready) return message('נדרש קובץ קבוצות ושיבוצים לניתוח השיבוצים. אפשר לטעון אותו בכפתור שבראש הפאנל.');
 
+    show('groups-mode', true);
     show('groups-explorer', explorer); show('gctl-explorer', explorer);
-    show('groups-table', !explorer); show('gctl-anomalies', !explorer);
+    show('groups-table', !explorer);
     show('groups-kpis', !explorer);
     $('groups-kpis').classList.toggle('grid', !explorer);
     if (!explorer) show('groups-strip', false);
     if (explorer) return this.renderGroupsExplorer();
+    this.renderAnomalyWorkspace(am);
+  },
 
-    const list = this.filtered();
-    const opt = (v, l, cur) => `<option value="${E(v)}" ${v === cur ? 'selected' : ''}>${E(l)}</option>`;
-    const analysis = GroupAnalyzer.analyzeGroupAnomalies(list, st.subject);
-    const c = analysis.counts;
-    const stat = (k, cls, label, n) => `<button type="button" class="gstat ${cls}" data-act="anKind" data-kind="${k}" aria-pressed="${st.kind === k}" title="${E(label)}">
-      <span class="text-xs font-bold text-slate-700 truncate">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100 whitespace-nowrap">${n}</span></button>`;
+  /** מספר הקבוצות בסייר לפי הסינון הגלובלי (קבוצות מקובץ הקבוצות שיש בהן חניך מהסינון) */
+  visibleGroupCount() {
+    const f = this.state.filters;
+    const scoped = f.grade !== 'all' || f.cls !== 'all' || f.track !== 'all';
+    const people = new Set(this.filtered(false).map(t => t.tz));
+    let n = 0;
+    Store.groups.forEach(g => { if (g.inFile && (!scoped || [...g.members].some(tz => people.has(tz)))) n++; });
+    return n;
+  },
+
+  /** סרגל המצבים העליון בפאנל הקבוצות, עם מונים חיים */
+  renderGroupsModeBar(anomalies, groups) {
+    const box = $('groups-mode');
+    if (!box) return;
+    const mode = this.state.groupsViewMode;
+    const btn = (id, label, n) => `<button type="button" data-act="groupsMode" data-mode="${id}" aria-pressed="${mode === id}">${label}<span class="mode-badge">${n}</span></button>`;
+    box.innerHTML = `<div class="scope-bar lg" role="group" aria-label="מצב תצוגת קבוצות">${btn('anomalies', 'מוקד חריגי שיבוץ לטיפול', anomalies)}${btn('explorer', 'סייר קבוצות ובדיקת תפוסה', groups)}</div>`;
+  },
+
+  /** מוקד חריגי שיבוץ: ארבעה כרטיסי קטגוריה לחיצים, סינון מקצוע וטבלת חריגים עם כפתור בדיקת קבוצת יעד */
+  renderAnomalyWorkspace(am) {
+    const state = this.state, cat = state.anomalyCategoryFilter, rows = am.rows;
+    const count = c => rows.filter(r => r.category === c).length;
+    const students = new Set(rows.map(r => r.tz)).size;
+    const suspectKinds = ['outlier', 'grade', 'sadin'].map(k => [k, rows.filter(r => r.kind === k).length]);
+    const subjects = [...new Set(rows.map(r => r.subject))].sort(natural);
+    if (state.anomalySubject !== 'all' && !subjects.includes(state.anomalySubject)) state.anomalySubject = 'all';
+    const subject = state.anomalySubject;
+
+    const card = (id, cls, label, n, sub) => `<button type="button" class="an-card ${cls}" data-act="anCat" data-cat="${id}" aria-pressed="${cat === id}">
+      <span class="t">${label}</span><span class="n">${n}</span><span class="s">${sub}</span></button>`;
     setHtml('groups-kpis',
-      stat('all', 'gstat-ok', 'הכל', analysis.traineeCount) + stat('none', 'gstat-bad', 'חוסר', c.none) + stat('dup', 'gstat-violet', 'כפילות', c.dup) +
-      stat('nomajor', 'gstat-bad', 'ללא מגמה', c.nomajor) + stat('unmatched', 'gstat-amber', 'לא במצבת', c.unmatched));
-    setHtml('groupsSubject', opt('all', 'כל מקצועות החובה + מגמה', st.subject) +
-      GroupAnalyzer.coreSubjects().map(s => opt(s.id, s.name, st.subject)).join('') + opt('major', 'מגמה 5 יח"ל בלבד', st.subject));
-    setHtml('groups-table', this.anomaliesTable(analysis, list));
+      card('all', 'an-forest', 'כל החריגות לטיפול', rows.length, `${students} חניכים`) +
+      card('missing', 'an-sage', 'היעדר מקצוע ליבה', count('missing'), 'חניכים ללא קבוצה במקצוע חובה') +
+      card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', count('duplicate'), 'רשומים ב-2 קבוצות ויותר') +
+      card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', count('suspect'), `בודד מכיתתו ${suspectKinds[0][1]} · חריג שכבה ${suspectKinds[1][1]} · פער מול סדין ${suspectKinds[2][1]}`));
+
+    const shown = rows.filter(r => (cat === 'all' || r.category === cat) && (subject === 'all' || r.subject === subject));
+    const groupTxt = g => `<div><span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}</div>`;
+    const body = shown.slice(0, 1500).map(r => {
+      const current = r.groups.length ? r.groups.map(groupTxt).join('') : '<span class="font-semibold an-k-missing">ללא שיבוץ</span>';
+      const sadin = r.sadinGroups.map(g => `<div class="text-xs text-slate-600">בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}</div>`).join('');
+      return `<tr>
+        <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="${E(`ת.ז ${r.tz}`)}">${E(r.t.name)}</button></td>
+        <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
+        <td class="text-right whitespace-nowrap">${E(r.subject)}</td>
+        <td class="text-right"><span class="an-k an-k-${r.category}">${E(r.kindLabel)}</span></td>
+        <td class="text-right">${current}${sadin}</td>
+        <td class="text-right whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(r.subject)}">🔍 השוואת קבוצות במקצוע</button>
+          <button type="button" class="text-xs text-[#75977D] underline mr-2" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button></td></tr>`;
+    }).join('');
+    const out = am.outside, outside = [out.nomajor ? `${out.nomajor} ללא מגמה 5 יח"ל` : '', out.unmatched ? `${out.unmatched} ת.ז בקובצי המשנה שאינן במצבת` : ''].filter(Boolean).join(' · ');
+    setHtml('groups-table', `<header class="bg-[#355747] text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
+        <h3 class="text-lg font-bold">טבלת חריגי שיבוץ לטיפול</h3>
+        <span class="badge bg-[#E8B95F] text-[#355747] border-[#E8B95F]">${shown.length}${shown.length !== rows.length ? ` מתוך ${rows.length}` : ''} חריגות</span></header>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 bg-[#FAF7EF] border-b border-[#E6ECE6]">
+        <label class="flex items-center gap-2 text-sm font-semibold text-[#355747]">סינון לפי מקצוע
+          <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${rows.filter(r => r.subject === s).length})</option>`).join('')}</select></label>
+        ${outside ? `<span class="text-xs text-slate-500">מחוץ למוקד: ${E(outside)}</span>` : ''}
+      </div>
+      <div class="sticky-scroll overscroll-contain"><table class="grid w-full" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
+        <th class="text-right">שם החניך</th><th class="text-right">כיתת אם</th><th class="text-right">מקצוע</th><th class="text-right">סוג החריגה</th>
+        <th class="text-right">מצב נוכחי (קבוצות רשומות / סדין)</th><th class="text-right">בדיקת קבוצת יעד</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="6" class="text-center text-[#355747] py-8">לא נמצאו חריגות שיבוץ בסינון הנוכחי</td></tr>'}</tbody></table></div>
+      ${out.unmatchedList && out.unmatchedList.length ? `<details class="px-4 py-2 border-t border-[#E6ECE6] text-sm"><summary class="cursor-pointer font-semibold text-[#355747]">ת.ז בקובצי המשנה שאינן במצבת (${out.unmatchedList.length})</summary>
+        <ul class="mt-1 text-xs leading-5">${out.unmatchedList.map(u => `<li><span class="tz-col">${E(u.tz)}</span> ${E(u.name || '—')} <span class="text-slate-500">· ${E(u.sources.join(' • '))}</span></li>`).join('')}</ul></details>` : ''}`);
+  },
+
+  /** בדיקת קבוצת יעד ותפוסה: כל קבוצות המקצוע לחניך – תפוסה, התאמה לכיתת האם, הרכב ורשימה שמית */
+  openTargetGroupInspector(tz, subjectName) {
+    const m = GroupAnalyzer.targetGroupInspector(tz, subjectName);
+    if (!m) return;
+    const t = m.t, room = Config.classLabel(t.classKey);
+    const groupTxt = g => `<span dir="ltr">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
+    const banner = (m.current.length ? `כרגע רשום ב: ${m.current.map(groupTxt).join(', ')}` : 'כרגע: ללא שיבוץ') +
+      (m.sadin.length ? ` · ציונים בסדין ב: ${m.sadin.map(groupTxt).join(', ')}` : '');
+    const card = g => {
+      const comp = g.composition.map(c => `<bdi dir="rtl">${E(Config.classLabel(c.classKey))}</bdi> (${c.n})`).join(', ');
+      const roster = g.members.map(x => `<li class="${x.sameRoom ? 'ti-same' : ''} ${x.self ? 'font-bold' : ''}">${E(x.t.name)} <span class="text-slate-500"><bdi dir="rtl">${E(Config.classLabel(x.t.classKey))}</bdi></span>${x.self ? ' (החניך)' : ''}${x.diag.length ? ` <span class="an-k an-k-suspect">${E(x.diag[0].text)}</span>` : ''}</li>`).join('');
+      return `<article class="ti-card ${g.enrolled ? 'is-current' : ''}">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0"><div class="font-bold text-[#355747]">${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span dir="ltr">[${E(g.groupId)}]</span></div>
+            ${g.targetClasses ? `<div class="text-xs text-slate-500">כיתות יעד: <bdi dir="rtl">${E(g.targetClasses)}</bdi></div>` : ''}
+            ${g.enrolled ? '<span class="ti-tag">הקבוצה הרשומה כיום</span>' : g.inSadin ? '<span class="ti-tag sadin">מקבל בה ציונים בסדין</span>' : ''}</div>
+          <div class="text-sm font-semibold text-[#355747] whitespace-nowrap">תפוסה: ${g.total} חניכים רשומים</div>
+        </div>
+        <div class="mt-2">${g.homeroomN > 0 ? `<span class="ti-match">★ ${g.homeroomN} חניכים מכיתתו (<bdi dir="rtl">${E(room)}</bdi>) בקבוצה זו</span>` : `<span class="text-xs text-slate-500">אין חניכים מכיתתו (<bdi dir="rtl">${E(room)}</bdi>) בקבוצה זו</span>`}</div>
+        <div class="text-xs text-slate-600 mt-1">הרכב: ${comp || '—'}</div>
+        <div class="flex flex-wrap items-start justify-between gap-2 mt-2">
+          <details class="ti-roster grow"><summary>הצג רשימת חניכים בקבוצה</summary><ul class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 text-xs leading-5">${roster || '<li class="text-slate-500">אין חניכים</li>'}</ul></details>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="inspectOpenGroup" data-id="${E(g.groupId)}">פתח בסייר הקבוצות</button>
+        </div></article>`;
+    };
+    const others = m.otherGrades.length ? `<details class="mt-3"><summary class="cursor-pointer font-semibold text-[#355747]">קבוצות במקצוע בשכבות אחרות (${m.otherGrades.length})</summary><div class="space-y-2 mt-2">${m.otherGrades.map(card).join('')}</div></details>` : '';
+    this.openModal(`
+      <div class="flex items-start justify-between gap-3">
+        <h3 class="text-lg font-bold text-[#355747]">בדיקת קבוצות יעד במקצוע: ${E(subjectName)} • עבור ${E(t.name)} (<bdi dir="rtl">${E(room)}</bdi>)</h3>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="closeModal" aria-label="סגירה">סגירה</button>
+      </div>
+      <div class="ti-banner mt-3">${banner}</div>
+      <h4 class="font-semibold text-[#355747] mt-4 mb-2">קבוצות בשכבת ${E(Util.gl(t.gradeKey))} (${m.sameGrade.length}) · ממוין לפי התאמה לכיתת האם</h4>
+      <div class="space-y-2">${m.sameGrade.map(card).join('') || '<div class="text-sm text-slate-500">לא נמצאו קבוצות במקצוע זה בשכבת החניך</div>'}</div>
+      ${others}`, true);
   },
 
   /** מפת שיבוצים לחניך: שורה לכל מקצוע (ליבה, מגמה ושאר המקצועות שבהם רשום או מקבל ציונים) מול הסדין, עם חיווי בקרה */
@@ -1321,7 +1538,8 @@ const App = {
       const status = r.issues.length ? r.issues.map(i => `<div class="text-xs font-semibold ${i.level === 'severe' ? 'txt-bad' : 'txt-warn'}">${E(i.text)}</div>`).join('')
         : r.enrolled.length ? '<span class="txt-ok font-semibold">✓ תקין</span>' : dash;
       return `<tr><td class="font-bold text-[#355747] whitespace-nowrap">${E(r.label)}${tag ? ` <span class="text-[11px] font-normal text-slate-500">${tag}</span>` : ''}</td>
-        <td>${enrolled}</td><td class="whitespace-nowrap">${teachers}</td><td>${sadin}</td><td>${status}</td></tr>`;
+        <td>${enrolled}</td><td class="whitespace-nowrap">${teachers}</td><td>${sadin}</td><td>${status}</td>
+        <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(r.label)}">🔍 השוואת קבוצות במקצוע</button></td></tr>`;
     }).join('');
     setHtml('groups-student-map', `
       <div class="card px-5 py-4">
@@ -1338,13 +1556,13 @@ const App = {
           </div>
           <div class="mr-auto flex flex-wrap gap-2">
             <button type="button" class="btn btn-ghost" data-act="openProfile" data-tz="${E(t.tz)}">👤 מעבר לכרטיס 360°</button>
-            <button type="button" class="nav-back" data-act="searchClear">× חזרה לכל הקבוצות</button>
+            <button type="button" class="nav-back" data-act="mapBack">← חזרה למוקד חריגי שיבוץ</button>
           </div>
         </div>
       </div>
       <div class="tbl-wrap sticky-scroll"><table class="grid w-full" aria-label="מפת שיבוצים לחניך">
-        <thead><tr><th>מקצוע</th><th>קבוצה רשומה (שיבוץ)</th><th>מורה</th><th>קבוצה בסדין ציונים</th><th>חיווי בקרה</th></tr></thead>
-        <tbody>${body || '<tr><td colspan="5" class="text-center text-slate-500 py-8">לא נמצאו שיבוצים או ציונים לחניך זה</td></tr>'}</tbody></table></div>`);
+        <thead><tr><th>מקצוע</th><th>קבוצה רשומה (שיבוץ)</th><th>מורה</th><th>קבוצה בסדין ציונים</th><th>חיווי בקרה</th><th>בדיקת קבוצת יעד</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">לא נמצאו שיבוצים או ציונים לחניך זה</td></tr>'}</tbody></table></div>`);
   },
 
   groupsRerender() {
@@ -1429,44 +1647,59 @@ const App = {
     ].join('')}</div>`;
   },
 
+  /** הרכב כיתות הקבוצה בקצרה: "יב1: 15, יב2: 12" (עד max כיתות, והשאר כמספר) */
+  compositionText(g, max = 4) {
+    const parts = g.classes.slice(0, max).map(c => `<bdi dir="rtl">${E(Config.classLabel(c.classKey))}</bdi>: ${c.n}`);
+    return parts.join(', ') + (g.classes.length > max ? ` · +${g.classes.length - max}` : '');
+  },
+
   groupListItem(g, selected) {
     const sub = [E(g.subject), g.targetClasses ? `<bdi dir="rtl">${E(g.targetClasses)}</bdi>` : ''].filter(Boolean).join(' • ');
     const badges = selected ? 'bg-white/15 text-white border-white/30' : 'bg-slate-100 text-slate-900 border-slate-300';
+    const muted = selected ? 'text-indigo-100' : 'text-slate-700';
     return `<button type="button" data-act="gPick" data-id="${E(g.groupId)}" aria-pressed="${selected}"
       class="w-full text-right rounded-xl border py-2 px-3 transition ${selected ? 'bg-slate-900 text-white border-slate-900 border-r-4 border-r-indigo-400 shadow-lg' : 'bg-white border-slate-300 hover:border-indigo-500 hover:shadow-md text-slate-900'}">
       <span class="flex items-center justify-between gap-2">
-        <span class="min-w-0"><span class="text-sm leading-4 font-bold block truncate">${E(g.teacher || 'ללא מורה')}</span><span class="text-xs leading-4 block truncate ${selected ? 'text-indigo-100' : 'text-slate-700'}">${sub}</span></span>
-        <span class="flex flex-wrap justify-end gap-1 shrink-0"><span class="badge font-mono ${badges}">[${E(g.groupId)}]</span><span class="badge ${badges}">${g.total} חניכים</span></span>
-      </span></button>`;
+        <span class="min-w-0"><span class="text-sm leading-4 font-bold block truncate">${E(g.teacher || 'ללא מורה')}</span><span class="text-xs leading-4 block truncate ${muted}">${sub}</span></span>
+        <span class="flex flex-wrap justify-end gap-1 shrink-0"><span class="badge font-mono ${badges}">[${E(g.groupId)}]</span><span class="badge ${badges}">תפוסה: ${g.total} חניכים</span></span>
+      </span>
+      <span class="block text-[11px] leading-4 mt-1 truncate ${muted}">${g.classes.length ? `הרכב: ${this.compositionText(g)}` : 'אין חניכים רשומים'}${g.anomalyCount ? ` · ${g.anomalyCount} חריגים` : ''}</span></button>`;
   },
 
   renderGroupDetail(g, missing, hit, cat) {
     const st = this.state.groups;
     if (!g && !st.missingSelected) return setHtml('groups-detail', '<div class="card p-10 text-center text-slate-700">בחרו קבוצה מהרשימה כדי לראות את הרשימה השמית שלה</div>');
     const members = g ? g.members : missing.map(t => ({ t, diag: [], severity: 9 }));
-    const anomalies = members.filter(m => m.diag.length).sort((a, b) => a.severity - b.severity);
+    const byName = st.rosterSort === 'name';
+    const anomalies = byName ? [] : members.filter(m => m.diag.length).sort((a, b) => a.severity - b.severity);
     const rooms = new Map();
-    members.filter(m => !m.diag.length).forEach(m => {
+    (byName ? [] : members.filter(m => !m.diag.length)).forEach(m => {
       if (!rooms.has(m.t.classKey)) rooms.set(m.t.classKey, []);
       rooms.get(m.t.classKey).push(m);
     });
     const row = m => {
       const t = m.t, count = Store.currentOf(t.tz).reduce((n, e) => n + e.events.length, 0);
-      const tint = hit(t) ? 'bg-yellow-100' : '';
+      const tint = hit(t) ? 'bg-yellow-100' : m.diag.length ? 'an-row' : '';
       const notes = m.diag.map(d => this.flatNote(d.kind === 'outlier' ? 'warn' : 'severe', d.text, d.title)).join('');
       return `<tr class="${tint}"><td class="tz-col">${E(t.tz)}</td><td><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openBoardProfile" data-tz="${E(t.tz)}" title="${E(`סדין: ${count} אירועים`)}">${E(t.name)}</button></td>
         <td><bdi dir="rtl">${E(Config.classLabel(t.classKey))}</bdi>${this.overrideBadge(t.tz)}</td><td>${notes || (g ? '<span class="text-emerald-800">✓ תקין</span>' : 'ללא שיבוץ')}</td></tr>`;
     };
     const divider = (text, cls = '') => `<tr class="room-divider ${cls}"><td colspan="4">${text}</td></tr>`;
-    const body = (anomalies.length ? divider(`חריגי שיבוץ בקבוצה זו (${anomalies.length})`, 'anomaly-divider') + anomalies.map(row).join('') : '') +
+    const body = byName ? [...members].sort((a, b) => a.t.name.localeCompare(b.t.name, 'he')).map(row).join('') :
+      (anomalies.length ? divider(`חריגי שיבוץ בקבוצה זו (${anomalies.length})`, 'anomaly-divider') + anomalies.map(row).join('') : '') +
       [...rooms.entries()].map(([key, items]) => divider(`כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${items.length})`) + items.map(row).join('')).join('');
     const title = g ? `${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span class="font-mono">[${E(g.groupId)}]</span>` : `לא משובצים ל${E(cat ? cat.label : '')}`;
     const declared = g && g.declared != null && g.declared !== g.total ? `<span class="badge tier-3">מוצהר ${g.declared}</span>` : '';
+    const sortBtn = (id, label) => `<button type="button" class="chip" data-act="rosterSort" data-sort="${id}" aria-pressed="${(st.rosterSort || 'room') === id}">${label}</button>`;
     setHtml('groups-detail', `<article class="card overflow-hidden lg:h-full lg:flex lg:flex-col lg:min-h-0">
       <header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div><h3 class="text-lg font-bold">${title}</h3>${g && g.targetClasses ? `<div class="text-xs text-indigo-100 mt-1">כיתות יעד: <bdi dir="rtl">${E(g.targetClasses)}</bdi></div>` : ''}</div>
-        <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">${members.length} חניכים</span>${declared}        ${g && g.reinforcement ? '<span class="badge bg-white/15 text-white border-white/30">תגבור</span>' : ''}</div>
+        <div class="flex flex-wrap items-center gap-2"><span class="badge bg-indigo-500 text-white border-indigo-300">תפוסה: ${members.length} חניכים</span>${declared}        ${g && g.reinforcement ? '<span class="badge bg-white/15 text-white border-white/30">תגבור</span>' : ''}</div>
       </header>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5 bg-[#FAF7EF] border-b border-[#E6ECE6] text-xs shrink-0">
+        ${g && g.classes.length ? `<span class="text-slate-700">הרכב כיתות: ${this.compositionText(g, 12)}</span>` : ''}
+        <span class="mr-auto flex items-center gap-1"><span class="text-slate-600">מיון:</span>${sortBtn('room', 'לפי כיתה')}${sortBtn('name', 'לפי שם')}</span>
+      </div>
       <div class="sticky-scroll lg:flex-1 lg:min-h-0 overscroll-contain"><table class="grid w-full"><thead><tr><th>ת.ז</th><th>שם חניך</th><th>כיתת אם</th><th>חיווי בקרה</th></tr></thead>
       <tbody>${body || '<tr><td colspan="4" class="text-center text-slate-700 py-6">אין חניכים להצגה</td></tr>'}</tbody></table></div></article>`);
   },
@@ -1474,40 +1707,6 @@ const App = {
   /** ממצא שטוח: טקסט בלבד בלי רקע, מסגרת או ריפוד; חמור בבורדו, בינוני בענבר. כל ממצא בשורה משלו */
   flatNote(level, text, title = '') {
     return `<span class="block text-xs font-medium ${level === 'severe' ? 'text-rose-900' : 'text-amber-800'}"${title ? ` title="${E(title)}"` : ''}>${E(text)}</span>`;
-  },
-
-  anomaliesTable(analysis, list) {
-    const st = this.state.groups;
-    const byTz = new Map(list.map(t => [t.tz, t]));
-    const KIND = { none: ['חוסר', 'severe'], dup: ['כפילות', 'severe'], nomajor: ['ללא', 'warn'] };
-    const card = (table, count) => `<header class="bg-gradient-to-l from-slate-900 to-slate-800 text-white px-4 py-2.5 rounded-t-xl flex flex-wrap items-center justify-between gap-3">
-      <h3 class="text-lg font-bold">${st.kind === 'unmatched' ? 'רשומות שאינן במצבת' : 'חריגי שיבוץ'}</h3>
-      <span class="badge bg-indigo-500 text-white border-indigo-300">${count} ${st.kind === 'unmatched' ? 'רשומות' : 'חניכים'}</span>
-      </header><div class="sticky-scroll overscroll-contain">${table}</div>`;
-
-    if (st.kind === 'unmatched') {
-      return card(`<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם בקובץ</th><th class="text-right">מופיעה ב</th></tr></thead><tbody>${
-              analysis.unmatched.map(u => `<tr><td class="tz-col text-right">${E(u.tz)}</td><td class="text-right font-semibold text-slate-800">${E(u.name || '—')}</td><td class="text-right text-slate-700">${E(u.sources.join(' • '))}</td></tr>`).join('') ||
-        '<tr><td colspan="3" class="text-center text-emerald-800 py-8">כל הת.ז בקובצי המשנה נמצאות במצבת 🎉</td></tr>'}</tbody></table>`, analysis.unmatched.length);
-    }
-    /* שורה אחת לחניך: כל הממצאים שלו כתגיות בתא אחד */
-    const byTrainee = new Map();
-    analysis.items.filter(a => st.kind === 'all' || a.kind === st.kind).forEach(a => {
-      if (!byTrainee.has(a.tz)) byTrainee.set(a.tz, []);
-      byTrainee.get(a.tz).push(a);
-    });
-    const rowsHtml = [...byTrainee.entries()].filter(([tz]) => byTz.has(tz)).slice(0, 1500).map(([tz, found]) => {
-      const t = byTz.get(tz);
-      const badges = found.map(a => {
-        const detail = a.groups.length ? ` (${a.groups.map(g => `[${g.groupId}] ${g.teacher || 'ללא מורה'}`).join(', ')})` : '';
-        return this.flatNote(KIND[a.kind][1], `${KIND[a.kind][0]}: ${a.subject}`, a.subject + detail);
-      }).join('');
-      return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${tz}"><td class="tz-col min-w-[95px] whitespace-nowrap text-right">${tz}</td><td class="text-right"><button type="button" class="font-semibold text-indigo-800 hover:underline text-right" data-act="openProfile" data-tz="${E(tz)}">${E(t.name)}</button></td>
-        <td class="text-right">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td><td class="text-right">${badges}</td></tr>`;
-    }).join('');
-    return card(`<table class="grid w-full"><colgroup><col style="width:12%"><col style="width:20%"><col style="width:12%"><col style="width:56%"></colgroup>
-      <thead><tr><th class="tz-col min-w-[95px] whitespace-nowrap text-right">ת.ז</th><th class="text-right">שם</th><th class="text-right">כיתה</th><th class="text-right">ממצאי שיבוץ</th></tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-emerald-800 py-8">לא נמצאו חריגות 🎉</td></tr>'}</tbody></table>`, byTrainee.size);
   },
 
   /* ==================================================================
@@ -1733,15 +1932,17 @@ const App = {
       const q = Config.rules().questionnaires[c.code];
       const match = q && (q.name || '').match(/שאלון\s+([א-ת])(?:$|[\s"'׳״–-])/);
       const label = variable && comps.length > 1 ? `שאלון ${match ? `${match[1]}׳` : i + 1}: ` : '';
-      const value = c.state === 'num' ? Util.fmt(c.reportedNum ?? c.num, 1) : c.state === 'pass' ? 'עבר' : c.failed ? 'לא עבר' : '—';
+      const future = c.future && c.state === 'missing' && !c.failed && !c.blocked;
+      const value = c.state === 'num' ? Util.fmt(c.reportedNum ?? c.num, 1) : c.state === 'pass' ? 'עבר' : c.failed ? 'לא עבר' : future ? `עתידי ל${Util.gl(Util.GRADE_KEYS.find(g => Util.ord(g) === c.targetRank))}` : '—';
       return `${label}${value} (שאלון ${c.code}${c.weight ? ` · ${c.weight}%` : ''})`;
     }).join(' | ');
     const nums = comps.filter(c => c.state === 'num');
     const weight = nums.reduce((sum, c) => sum + c.weight, 0);
     const score = weight ? nums.reduce((sum, c) => sum + (c.reportedNum ?? c.num) * c.weight, 0) / weight :
       nums.length ? nums.reduce((sum, c) => sum + (c.reportedNum ?? c.num), 0) / nums.length : null;
-    const value = score != null ? Util.fmt(score, 0) : comps.some(c => c.failed) ? 'לא עבר' : comps.some(c => c.state === 'pass') ? 'עבר' : '—';
-    const cls = score != null && score < Config.rules().passGrade || value === 'לא עבר' ? 'score-alert' : value === '—' ? 'text-slate-400' : 'text-slate-800 font-normal';
+    const allFuture = comps.length > 0 && comps.every(c => c.future && c.state === 'missing' && !c.failed && !c.blocked);
+    const value = score != null ? Util.fmt(score, 0) : comps.some(c => c.failed) ? 'לא עבר' : comps.some(c => c.state === 'pass') ? 'עבר' : allFuture ? '–' : '—';
+    const cls = score != null && score < Config.rules().passGrade || value === 'לא עבר' ? 'score-alert' : allFuture && score == null ? 'future-cell' : value === '—' ? 'text-slate-400' : 'text-slate-800 font-normal';
     return `<span class="whitespace-nowrap ${cls}" title="${E(detail)}">${E(value)}</span>`;
   },
 
@@ -1751,6 +1952,7 @@ const App = {
     if (s.comps.some(c => c.failed)) return badge('tier-4', 'לא עבר');
     if (s.noShow && s.unresolved.some(c => !c.internal)) return badge('tier-4', 'לא ניגש');
     if (s.enrolled === false) return plain('text-slate-500', 'לא משובץ');
+    if (s.comps.length && s.comps.every(c => c.future && c.state === 'missing')) return plain('future-cell', s.group ? 'לומד' : 'עתידי');
     if (s.learning || s.pending.length || s.unresolved.length) return plain('text-slate-500', s.group ? 'לומד' : 'ממתין לדיווח');
     if ((s.forecast || s.filled.length) && s.status === 'pass') return plain('text-slate-500', 'לומד');
     if (s.compApplied) return badge('tier-3', `${s.forecast || s.source === 'current' ? 'תחזית ' : ''}${s.compApplied === 'points' ? 'פיצוי' : 'קיזוז'} (${Util.fmt(s.adj, 0)})`);
@@ -1833,7 +2035,7 @@ const App = {
     setText('profName', t.name);
     setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
     const units = this.profileUnits(t.tz, ev, rules);
-    setHtml('profBadges', `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>
+    setHtml('profBadges', `${this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
       <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>`);
     this.renderProfileKpis(t);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));
@@ -1900,6 +2102,7 @@ const App = {
     const hasGrades = ev.subjects.some(s => s.comps.some(c => c.state === 'num' || c.state === 'pass')) || majors.some(c => c.bagrut != null);
     const focusHtml = focus.length ? focusList(focus.slice(0, 5)) + (focus.length > 5 ? `<details class="mt-1"><summary class="cursor-pointer font-semibold text-indigo-700">עוד ${focus.length - 5} סעיפים</summary>${focusList(focus.slice(5))}</details>` : '') :
       ev.tier === 0 && !ev.manual || !hasGrades ? '<p class="text-slate-600">אין מספיק נתוני בגרות להצגת יעדים.</p>' : '<p class="text-emerald-700 font-semibold">✓ אין חסמים פתוחים — כל הבחינות שהתקיימו עברו בהצלחה</p>';
+    const paceLine = this.tierBased(ev) ? '' : `<p class="mb-1.5 flex flex-wrap items-center gap-1.5">${this.paceBadge(ev)}<span>${ev.paceInfo.passedDueCount} מתוך ${ev.paceInfo.dueCount} שאלונים שמועדם הגיע עברו${ev.paceInfo.futureCount ? ` · ${ev.paceInfo.futureCount} עתידיים` : ''}</span></p>`;
     const detailsOpen = !!($('profile-more') && $('profile-more').open);
     setHtml('profBody', `
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
@@ -1910,7 +2113,7 @@ const App = {
           </tbody></table></div>
         </div>
         <div class="lg:col-span-4 space-y-3">
-          <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${focusHtml}</div></div>
+          <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${paceLine}${focusHtml}</div></div>
           <div class="card p-3"><h3 class="font-bold mb-2">שער 3 – יחידות פנימיות</h3><ul class="space-y-1.5 text-xs">${g3}</ul></div>
         </div>
       </div>
@@ -1965,7 +2168,7 @@ const App = {
   navScrollTarget(tab) {
     if (tab === 'bagrut') return $('bagrut-table');
     if (tab === 'sadin') return document.querySelector('#sadin-table .sticky-scroll') || $('sadin-table');
-    if (tab === 'groups') return document.querySelector(this.state.groups.view === 'explorer' ? '#groups-detail .sticky-scroll' : '#groups-table .sticky-scroll');
+    if (tab === 'groups') return document.querySelector(this.state.groupsViewMode === 'explorer' ? '#groups-detail .sticky-scroll' : '#groups-table .sticky-scroll');
     return null;
   },
 
@@ -1982,7 +2185,7 @@ const App = {
     const scroller = this.navScrollTarget(tab), master = $('groups-master'), main = $('mainContent');
     st.navOrigin = {
       tab, tz, orderedTzList: list,
-      subView: tab === 'groups' ? st.groups.view : tab === 'sadin' ? st.sadin.view : tab === 'bagrut' ? st.bagrut.drill : '',
+      subView: tab === 'groups' ? st.groupsViewMode : tab === 'sadin' ? st.sadin.view : tab === 'bagrut' ? st.bagrut.drill : '',
       label: tab === 'sadin' && st.sadin.view === 'flat' ? 'פירוט ציונים' : this.NAV_LABELS[tab] || 'מסך קודם',
       scrollTop: main ? main.scrollTop : 0, windowScrollTop: window.scrollY,
       containerScrollTop: scroller ? scroller.scrollTop : 0, masterScrollTop: tab === 'groups' && master ? master.scrollTop : 0
@@ -2098,8 +2301,7 @@ const App = {
     const roster = Config.getRoster();
     let html;
     if (!roster.length) {
-      html = `<div class="text-slate-500">טרם נטענה מצבת. אפשר לטעון קובץ אקסל, או לנסות נתוני דמו.</div>
-        <button type="button" class="btn btn-ghost btn-sm mt-2" data-act="loadMock">טעינת נתוני דמו</button>`;
+      html = '<div class="text-slate-500">טרם נטענה מצבת. אפשר לטעון קובץ אקסל.</div>';
     } else {
       const byClass = new Map();
       roster.forEach(r => byClass.set(r.homeroom, (byClass.get(r.homeroom) || 0) + 1));
@@ -2312,19 +2514,6 @@ const App = {
     this.openClassRoster(classKey);
   },
 
-  async loadMock() {
-    try {
-      Config.setRosterCleared(false);
-      Config.clearRosterOverrides();
-      Config.clearRoster();
-      await Config.clearAllData();
-      await initMockDataIfEmpty();
-      this.rosterReport = null;
-      this.afterDataChange();
-      this.toast(`נטענו נתוני דמו: ${Store.trainees.size} חניכים, ${Store.groups.size} קבוצות`, 'ok');
-    } catch (err) { console.error(err); this.toast(err.message || 'טעינת הדמו נכשלה', 'error'); }
-  },
-
   /* ==================================================================
      אירועים
      ================================================================== */
@@ -2360,7 +2549,13 @@ const App = {
     window.addEventListener('sd:exceptions-changed', () => this.schedule(() => this.invalidateAll()));
 
     /* סינון גלובלי */
-    on('fGrade', 'change', e => { this.state.filters.grade = e.target.value; this.state.filters.cls = 'all'; this.onFilterChange(); });
+    on('fGrade', 'change', e => {
+      this.state.filters.grade = e.target.value;
+      this.state.filters.cls = 'all';
+      /* בחירת שכבה מפורשת מסנכרנת את היקף הבגרות אליה */
+      if (e.target.value !== 'all') { this.state.bagrutScope = String(Util.ord(e.target.value)); this.state.bagrutScopeSet = true; }
+      this.onFilterChange();
+    });
     on('fHomeroom', 'change', e => { this.state.filters.cls = e.target.value; this.onFilterChange(); });
     on('fTrack', 'change', e => { this.state.filters.track = e.target.value; this.onFilterChange(); });
     on('globalSearch', 'input', e => {
@@ -2422,7 +2617,6 @@ const App = {
     on('rulesReset', 'click', () => { if (confirm('לשחזר את כללי הזכאות והמשקלים לברירת המחדל?')) this.applyRule(Config.resetRules()); });
 
     /* קבוצות */
-    on('groupsSubject', 'change', e => { this.state.groups.subject = e.target.value; this.dirty.add('groups'); this.renderTab('groups'); });
     /* מקצוע ומורה מתואמים: בחירת מקצוע מאפסת מורה שאינו מלמד אותו; בחירת מורה מציגה את כל קבוצותיו בכל המקצועות */
     on('groupSubjectSelect', 'change', e => {
       const st = this.state.groups, key = e.target.value;
@@ -2540,13 +2734,6 @@ const App = {
     document.addEventListener('click', e => {
       const add = e.target.closest('[data-rule-add]');
       if (add) return this.ruleAdd(add.dataset.ruleAdd);
-      const gv = e.target.closest('[data-gview]');
-      if (gv) {
-        const g = this.state.groups;
-        g.view = gv.dataset.gview; g.subject = 'all'; g.teacher = 'all';
-        this.dirty.add('groups');
-        return this.renderTab('groups');
-      }
       const sv = e.target.closest('[data-sview]');
       if (sv) {
         this.state.sadin.view = sv.dataset.sview;
@@ -2873,10 +3060,17 @@ const App = {
     sgOpenGroup(el) { this.selectGroup(el.dataset.id); },
     /** ניווט מכרטיסי חדר הבקרה ללשונית מסוננת מראש */
     ovGo(el) {
-      const { go, chip, strip, view } = el.dataset;
-      if (go === 'bagrut') { this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut'); }
+      const { go, chip, strip, view, scope } = el.dataset;
+      if (go === 'bagrut') {
+        this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut');
+        if (scope) { this.state.bagrutScope = scope; this.state.bagrutScopeSet = true; }
+      }
       if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', subject: 'all', teacher: 'all' }); this.dirty.add('sadin'); }
-      if (go === 'groups') { Object.assign(this.state.groups, { view: view || 'explorer', kind: 'all', subject: 'all', teacher: 'all' }); this.dirty.add('groups'); }
+      if (go === 'groups') {
+        Object.assign(this.state.groups, { subject: 'all', teacher: 'all' });
+        Object.assign(this.state, { groupsViewMode: view === 'explorer' ? 'explorer' : 'anomalies', anomalyCategoryFilter: 'all', anomalySubject: 'all' });
+        this.dirty.add('groups');
+      }
       this.showTab(go);
     },
     ovClass(el) {
@@ -2962,7 +3156,6 @@ const App = {
       } catch (err) { this.toast(`מחיקת הנתונים נכשלה: ${err.message}`, 'error'); }
     },
     remap(el) { this.remapColumns(el.dataset.key); },
-    loadMock() { this.loadMock(); },
     openProfile(el) { this.openProfile(el.dataset.tz, el); },
     profBack() { this.profBack(); },
     bagrutSort(el) {
@@ -2982,6 +3175,13 @@ const App = {
     bagrutChip(el) {
       const st = this.state.bagrut, chip = el.dataset.chip;
       st.chip = st.chip === chip ? 'all' : chip;
+      this.dirty.add('bagrut');
+      this.renderTab('bagrut');
+    },
+    bagrutScope(el) {
+      this.state.bagrutScope = el.dataset.scope;
+      this.state.bagrutScopeSet = true;
+      this.state.bagrut.chip = 'all';
       this.dirty.add('bagrut');
       this.renderTab('bagrut');
     },
@@ -3031,12 +3231,23 @@ const App = {
     },
     compRemove(el) { this.applyRule(Config.removeComponent(el.dataset.kind, el.dataset.id, el.dataset.level, +el.dataset.i)); },
     qRemove(el) { this.applyRule(Config.removeQuestionnaire(el.dataset.code)); },
-    anKind(el) {
-      this.state.groups.kind = el.dataset.kind;
-      this.state.groups.view = 'anomalies';
+    groupsMode(el) {
+      this.state.groupsViewMode = el.dataset.mode === 'explorer' ? 'explorer' : 'anomalies';
       this.dirty.add('groups');
       this.renderTab('groups');
     },
+    anCat(el) {
+      this.state.anomalyCategoryFilter = el.dataset.cat;
+      this.dirty.add('groups');
+      this.renderTab('groups');
+      const active = document.querySelector(`#groups-kpis [data-cat="${el.dataset.cat}"]`);
+      if (active) active.focus();
+    },
+    inspectGroups(el) { this.openTargetGroupInspector(el.dataset.tz, el.dataset.subject); },
+    inspectOpenGroup(el) { this.closeModal(); this.selectGroup(el.dataset.id); },
+    studentMap(el) { this.selectStudent(el.dataset.tz); },
+    mapBack() { this.state.groupsViewMode = 'anomalies'; this.clearSearch(); },
+    rosterSort(el) { this.state.groups.rosterSort = el.dataset.sort; this.groupsRerender(); },
     gStrip(el) {
       const st = this.state.groups;
       st.strip = el.dataset.k;
@@ -3119,6 +3330,7 @@ const App = {
       });
     },
     sim(el) { this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab); },
+    anSubject(el) { this.state.anomalySubject = el.value; this.dirty.add('groups'); this.renderTab('groups'); },
     compEnabled(el) { this.patchComp(el, { enabled: el.checked }); },
     compCodes(el) { this.patchComp(el, { codes: el.value.split(',').map(x => x.trim()).filter(Boolean) }); },
     compWeight(el) { this.patchComp(el, { weight: Number(el.value) }); },

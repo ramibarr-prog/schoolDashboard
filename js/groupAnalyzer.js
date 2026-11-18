@@ -592,6 +592,90 @@ const GroupAnalyzer = {
 
   ANOMALY_LABEL: { none: 'חוסר שיבוץ', dup: 'כפילות שיבוץ', nomajor: 'ללא מגמה' },
 
+  /**
+   * "מוקד חריגי שיבוץ": שורה לכל חריגה לטיפול, לחניכי הסינון, בשלוש קטגוריות:
+   *  missing – היעדר מקצוע ליבה · duplicate – 2+ קבוצות באותו מקצוע ·
+   *  suspect – חשד לשיבוץ שגוי: outlier (בודד מכיתתו), grade (חריג שכבה), sadin (פער מול סדין).
+   * המקור זהה ל-analyzeGroupAnomalies ול-explorerModel, כך שהמספרים תואמים לשאר הפאנל.
+   * groups = הקבוצות הרשומות במקצוע; sadinGroups = קבוצה שבה מתקבלים ציונים בסדין (בפער מול סדין).
+   */
+  placementAnomalies(roster) {
+    const people = new Map(roster.map(t => [t.tz, t]));
+    const enrolled = (tz, catKey) => Store.groupsOf(tz).filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).key === catKey)
+      .map(g => ({ groupId: g.groupId, teacher: g.teacher || '', subject: g.subject }));
+    const brief = gs => gs.map(g => ({ groupId: g.groupId, teacher: g.teacher || '', subject: g.subject }));
+    const rows = [];
+    const add = (t, category, kind, kindLabel, subject, groups, sadinGroups = []) =>
+      rows.push({ tz: t.tz, t, category, kind, kindLabel, subject, groups, sadinGroups });
+
+    const analysis = this.analyzeGroupAnomalies(roster, 'all');
+    analysis.items.forEach(a => {
+      const t = people.get(a.tz);
+      if (!t) return;
+      if (a.kind === 'none') add(t, 'missing', 'none', 'היעדר מקצוע ליבה', a.subject, []);
+      else if (a.kind === 'dup') add(t, 'duplicate', 'dup', 'כפילות קבוצה', a.subject, brief(a.groups));
+    });
+
+    const KIND_LABEL = { outlier: 'חשד לשיבוץ שגוי: בודד מכיתתו', grade: 'חריג שכבה', 'sadin-other': 'פער מול סדין' };
+    const seenDup = new Set();
+    this.explorerModel().groups.forEach(g => g.members.forEach(m => {
+      const t = people.get(m.t.tz);
+      if (!t) return;
+      m.diag.forEach(d => {
+        if (d.kind === 'dup') {
+          const key = `${t.tz}|${g.cat.key}`;
+          if (g.cat.kind === 'core' || seenDup.has(key)) return;
+          seenDup.add(key);
+          add(t, 'duplicate', 'dup', 'כפילות קבוצה', g.cat.label, enrolled(t.tz, g.cat.key));
+        } else if (KIND_LABEL[d.kind]) {
+          const other = d.kind === 'sadin-other' ? Store.groups.get(d.other) : null;
+          add(t, 'suspect', d.kind === 'sadin-other' ? 'sadin' : d.kind, KIND_LABEL[d.kind], g.cat.label, enrolled(t.tz, g.cat.key),
+            d.kind === 'sadin-other' ? [{ groupId: d.other, teacher: (other && other.teacher) || '' }] : []);
+        }
+      });
+    }));
+
+    const ORDER = { missing: 0, duplicate: 1, suspect: 2 };
+    rows.sort((a, b) => ORDER[a.category] - ORDER[b.category] || Util.ord(a.t.gradeKey) - Util.ord(b.t.gradeKey) || natural(a.t.classKey, b.t.classKey) || a.t.name.localeCompare(b.t.name, 'he') || natural(a.subject, b.subject));
+    return { rows, outside: { nomajor: analysis.counts.nomajor, unmatched: analysis.counts.unmatched, unmatchedList: analysis.unmatched } };
+  },
+
+  /**
+   * "בדיקת קבוצת יעד ותפוסה": כל קבוצות המקצוע (לפי תווית הקטגוריה) להשוואה עבור חניך:
+   * תפוסה, מספר חניכי כיתת האם של החניך בקבוצה, הרכב כיתות ורשימה שמית. קבוצות שכבת החניך קודם, ובתוכן לפי ההתאמה לכיתת האם;
+   * שאר השכבות בנפרד. קבוצות תגבור אינן יעד שיבוץ ואינן נכללות.
+   */
+  targetGroupInspector(tz, subjectName) {
+    const t = Store.trainees.get(tz);
+    if (!t) return null;
+    const diagBy = new Map();
+    this.explorerModel().groups.forEach(g => g.members.forEach(m => { if (m.diag.length) diagBy.set(`${g.groupId}|${m.t.tz}`, m.diag); }));
+    const sadinIds = new Set(Store.currentOf(tz).filter(e => e.groupId).map(e => e.groupId));
+    const card = g => {
+      const people = [...g.members].map(x => Store.trainees.get(x)).filter(Boolean);
+      const byClass = new Map();
+      people.forEach(p => byClass.set(p.classKey, (byClass.get(p.classKey) || 0) + 1));
+      const members = people.map(p => ({ t: p, sameRoom: p.classKey === t.classKey, self: p.tz === tz, diag: diagBy.get(`${g.groupId}|${p.tz}`) || [] }))
+        .sort((a, b) => (b.sameRoom ? 1 : 0) - (a.sameRoom ? 1 : 0) || natural(a.t.classKey, b.t.classKey) || a.t.name.localeCompare(b.t.name, 'he'));
+      return {
+        groupId: g.groupId, subject: g.subject, teacher: g.teacher || '', targetClasses: g.targetClasses || '', gradeKey: g.gradeKey,
+        total: people.length, homeroomN: byClass.get(t.classKey) || 0,
+        composition: [...byClass.entries()].map(([classKey, n]) => ({ classKey, n })).sort((a, b) => b.n - a.n || natural(a.classKey, b.classKey)),
+        enrolled: g.members.has(tz), inSadin: sadinIds.has(g.groupId), members
+      };
+    };
+    const all = [...Store.groups.values()].filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).label === subjectName).map(card);
+    const rank = (a, b) => b.homeroomN - a.homeroomN || b.total - a.total || natural(a.teacher, b.teacher) || natural(a.groupId, b.groupId);
+    const sameGrade = all.filter(g => g.gradeKey === t.gradeKey).sort(rank);
+    const otherGrades = all.filter(g => g.gradeKey !== t.gradeKey)
+      .sort((a, b) => Util.ord(a.gradeKey) - Util.ord(b.gradeKey) || rank(a, b));
+    return {
+      t, subject: subjectName, sameGrade, otherGrades,
+      current: all.filter(g => g.enrolled),
+      sadin: all.filter(g => g.inSadin && !g.enrolled)
+    };
+  },
+
   /** חריגות שיבוץ מקובצות לפי חניך: Map(tz ← { items, severe, text }); "ללא מגמה" נחשב בינוני, השאר חמורות */
   anomaliesByTrainee(analysis) {
     const by = new Map();
