@@ -21,7 +21,7 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&family=Gveret+Levin&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     /* פלטת "ירוק מרווה ואחרה": כל סולמות ה-Tailwind שבשימוש בתבניות ממופים לפלטה החמה של חדר הבקרה */
@@ -66,7 +66,14 @@
     .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .25rem .75rem; border-radius: 999px; font-size: .8rem; background: #fff; border: 1px solid var(--sage-soft); color: var(--forest); cursor: pointer; }
     .chip[aria-pressed="true"], .chip[aria-selected="true"] { background: var(--sage); color: #fff; border-color: var(--sage); }
     /* סרגל צד ימני (RTL) */
-    #sidebar { position: fixed; top: 0; right: 0; bottom: 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; overflow-y: auto; background: var(--forest); color: var(--cream-bg); transition: transform .2s ease; }
+    #sidebar { position: fixed; top: 0; right: 0; bottom: 0; width: var(--sidebar-w); z-index: 50; display: flex; flex-direction: column; overflow-y: auto; background: linear-gradient(180deg, #2F4F3F 0%, #355747 55%, #2C4A3B 100%); color: var(--cream-bg); transition: transform .2s ease; }
+    /* גלים בראש הסרגל ועלים בתחתיתו */
+    #sidebar .side-head { position: relative; overflow: hidden; z-index: 1; }
+    #sidebar .side-waves { position: absolute; inset: 0 0 auto 0; width: 100%; height: 70px; pointer-events: none; }
+    #sidebar .side-head > div { position: relative; }
+    #sidebar nav { position: relative; z-index: 1; }
+    #sidebar .side-leaves { position: sticky; bottom: 0; margin-top: auto; flex-shrink: 0; height: 230px; margin-bottom: -1px; pointer-events: none; }
+    #sidebar .side-leaves svg { position: absolute; inset: auto 0 0 0; width: 100%; height: 100%; }
     .side-tab { position: relative; display: flex; align-items: center; gap: .6rem; width: 100%; padding: .65rem .9rem; border-radius: 10px; font-size: .9rem; font-weight: 500; color: rgba(250, 247, 239, .88); text-align: right; transition: background .15s; }
     .side-tab:hover { background: rgba(250, 247, 239, .12); color: #fff; }
     .side-tab[aria-selected="true"] { background: var(--cream-bg); color: var(--forest); font-weight: 700; }
@@ -74,14 +81,18 @@
     .side-tab[aria-selected="true"]::after { content: ""; margin-right: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--sage); }
     .brand-logo { object-fit: contain; flex-shrink: 0; }
     /* באנר מיתוג */
-    #brandBanner { position: relative; overflow: hidden; background: linear-gradient(135deg, #FAF7EF 0%, #EFF5EE 100%); border-bottom: 1px solid #E2EAE0; }
+    #brandBanner { position: relative; overflow: hidden; background: linear-gradient(120deg, #FFFBF0 0%, #F6F3E4 45%, #EAF2E6 100%); border-bottom: 1px solid #E2EAE0; }
     #brandBanner .brand-art { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-    #brandBanner .brand-inner { position: relative; z-index: 1; padding: 6px 20px; }
-    #brandBanner { max-height: 68px; }
-    #brandBanner .brand-logo { width: 52px !important; height: 52px !important; }
+    /* צרור עלים משמאל לטקסט המיתוג (מעוגן לימין כדי שלא יחפוף את הטקסט בכל רוחב) */
+    #brandBanner .brand-leaves { position: absolute; bottom: 0; right: 430px; height: 92%; width: auto; pointer-events: none; }
+    @media (max-width: 900px) { #brandBanner .brand-leaves { display: none; } }
+    #brandBanner .brand-inner { position: relative; z-index: 1; padding: 8px 24px; }
+    #brandBanner { max-height: 92px; }
+    #brandBanner .brand-logo { width: 62px !important; height: 62px !important; }
     #brandBanner .brand-inner svg.block { height: 8px; margin-top: -1px; }
-    .brand-name { color: var(--forest); font-size: 1.4rem; font-weight: 800; line-height: 1.05; }
-    .brand-slogan { color: #527361; font-size: .95rem; font-weight: 500; line-height: 1.2; }
+    .brand-name { color: var(--forest); font-size: 1.55rem; font-weight: 800; line-height: 1.05; }
+    /* סלוגן בכתב יד */
+    .brand-slogan { color: #4B6F5A; font-family: 'Gveret Levin', 'Playpen Sans Hebrew', 'Rubik', cursive; font-size: 1.45rem; font-weight: 400; line-height: 1.15; transform: rotate(-1.5deg); transform-origin: right center; }
     .brand-pill { display: inline-flex; align-items: center; padding: .2rem .75rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--sage-tint); color: var(--forest); border: 1px solid var(--card-border); }
     .brand-pill:empty { display: none; }
     .brand-pill { max-width: 100%; }
@@ -465,7 +476,12 @@
 
   <!-- סרגל צד ימני: כותרת, סטטוס סנכרון וניווט ראשי -->
   <aside id="sidebar" aria-label="תפריט ראשי">
-    <div class="px-4 pt-5 pb-4 border-b border-white/10">
+    <div class="side-head px-4 pt-6 pb-4 border-b border-white/10">
+      <svg class="side-waves" viewBox="0 0 250 70" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 0H250V30C210 52 170 14 125 32S45 50 0 26Z" fill="#75977D" opacity=".38"/>
+        <path d="M0 0H250V16C205 36 165 4 120 18S40 34 0 12Z" fill="#E8B95F" opacity=".5"/>
+        <path d="M0 0H250V6C200 20 150 -2 105 8S35 18 0 4Z" fill="#F3A16F" opacity=".55"/>
+      </svg>
       <div class="flex items-center gap-3">
         <img src="school_logo.png" alt="תיכון אתגרי העתיד" width="48" height="48" class="brand-logo" style="filter:url(#recolor-cream)" onerror="this.onerror=null;this.replaceWith(brandEmblem('#FAF7EF',48))">
         <div>
@@ -482,6 +498,21 @@
       <button class="side-tab" role="tab" id="tab-profile" data-tab="profile" aria-controls="panel-profile" aria-selected="false">👤 כרטיס חניך 360°</button>
       <button class="side-tab" role="tab" id="tab-settings" data-tab="settings" aria-controls="panel-settings" aria-selected="false">⚙️ הגדרות ומצבת</button>
     </nav>
+    <div class="side-leaves" aria-hidden="true">
+      <svg viewBox="0 0 250 230" preserveAspectRatio="xMidYMax slice">
+        <defs>
+          <linearGradient id="lfG1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9DBB86"/><stop offset="1" stop-color="#4E7A58"/></linearGradient>
+          <linearGradient id="lfG2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6E9A74"/><stop offset="1" stop-color="#2F5A43"/></linearGradient>
+          <linearGradient id="lfG3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F4CB74"/><stop offset="1" stop-color="#E39A3E"/></linearGradient>
+        </defs>
+        <path d="M0 230V170C50 150 110 175 170 196S235 205 250 200V230Z" fill="#2A4A39" opacity=".7"/>
+        <g transform="translate(150 230) rotate(-18)"><path d="M0 0C-26 -50 -22 -110 6 -165C40 -115 38 -50 0 0Z" fill="url(#lfG2)"/><path d="M0 0C2 -50 4 -100 6 -160" stroke="#C9DEC2" stroke-width="1.5" fill="none" opacity=".6"/></g>
+        <g transform="translate(120 230) rotate(-48)"><path d="M0 0C-24 -40 -20 -90 4 -135C34 -95 32 -40 0 0Z" fill="url(#lfG1)"/></g>
+        <g transform="translate(185 232) rotate(14)"><path d="M0 0C-24 -44 -20 -96 6 -142C36 -100 34 -44 0 0Z" fill="url(#lfG3)"/><path d="M0 0C2 -44 4 -88 6 -138" stroke="#FFF3D4" stroke-width="1.4" fill="none" opacity=".7"/></g>
+        <g transform="translate(215 232) rotate(40)"><path d="M0 0C-20 -34 -16 -76 4 -112C28 -80 26 -34 0 0Z" fill="url(#lfG1)"/></g>
+        <g transform="translate(80 232) rotate(-72)"><path d="M0 0C-18 -30 -14 -66 4 -98C24 -70 22 -30 0 0Z" fill="url(#lfG3)" opacity=".9"/></g>
+      </svg>
+    </div>
   </aside>
 
   <div id="appShell" class="flex flex-col min-h-screen lg:h-screen">
@@ -495,11 +526,25 @@
   <!-- באנר מיתוג בית הספר -->
   <header id="brandBanner" class="shrink-0">
     <svg class="brand-art" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 78 C 150 40, 300 118, 480 82 S 800 36, 1000 76 S 1160 92, 1200 70 L1200 120 L0 120 Z" fill="#75977D" opacity=".12"/>
-      <path d="M0 96 C 200 66, 360 120, 560 96 S 900 70, 1200 100 L1200 120 L0 120 Z" fill="#355747" opacity=".08"/>
-      <path d="M0 108 C 240 92, 420 120, 700 106 S 1040 94, 1200 110 L1200 120 L0 120 Z" fill="#E8B95F" opacity=".16"/>
-      <g transform="translate(70 22) rotate(-18)" opacity=".28"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#75977D"/><path d="M0 70 C 14 52, 20 34, 30 0" fill="none" stroke="#355747" stroke-width="1.5"/></g>
-      <g transform="translate(130 40) rotate(24) scale(.7)" opacity=".24"><path d="M0 70 C 4 40, 14 18, 30 0 C 40 24, 38 52, 0 70 Z" fill="#E8B95F"/></g>
+      <defs>
+        <linearGradient id="bnL1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A8C58E"/><stop offset="1" stop-color="#4E7A58"/></linearGradient>
+        <linearGradient id="bnL2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F4CB74"/><stop offset="1" stop-color="#E39A3E"/></linearGradient>
+      </defs>
+      <path d="M0 74 C 150 40, 300 112, 480 78 S 800 34, 1000 72 S 1160 90, 1200 66 L1200 120 L0 120 Z" fill="#9DBB86" opacity=".32"/>
+      <path d="M0 92 C 200 62, 360 118, 560 92 S 900 66, 1200 96 L1200 120 L0 120 Z" fill="#75977D" opacity=".28"/>
+      <path d="M0 106 C 240 88, 420 120, 700 104 S 1040 90, 1200 108 L1200 120 L0 120 Z" fill="#F3A16F" opacity=".42"/>
+      <path d="M0 114 C 300 102, 560 122, 820 112 S 1100 104, 1200 114 L1200 120 L0 120 Z" fill="#E8B95F" opacity=".6"/>
+      <g transform="translate(70 120) rotate(-20) scale(.8)" opacity=".85"><path d="M0 0C-20 -30 -16 -70 5 -98C28 -68 26 -30 0 0Z" fill="url(#bnL1)"/></g>
+      <g transform="translate(112 120) rotate(22) scale(.6)" opacity=".9"><path d="M0 0C-20 -30 -16 -70 5 -98C28 -68 26 -30 0 0Z" fill="url(#bnL2)"/></g>
+    </svg>
+    <svg class="brand-leaves" viewBox="0 0 150 92" aria-hidden="true">
+      <defs>
+        <linearGradient id="bnL3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A8C58E"/><stop offset="1" stop-color="#4E7A58"/></linearGradient>
+        <linearGradient id="bnL4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F4CB74"/><stop offset="1" stop-color="#E39A3E"/></linearGradient>
+      </defs>
+      <g transform="translate(78 94) rotate(-6)"><path d="M0 0C-22 -34 -18 -78 6 -108C32 -76 30 -34 0 0Z" fill="url(#bnL3)"/><path d="M0 0C2 -34 4 -70 6 -104" stroke="#E6F0DC" stroke-width="1.2" fill="none" opacity=".7"/></g>
+      <g transform="translate(86 94) rotate(34) scale(.8)"><path d="M0 0C-20 -30 -16 -70 5 -98C28 -68 26 -30 0 0Z" fill="url(#bnL4)"/></g>
+      <g transform="translate(66 94) rotate(-44) scale(.75)"><path d="M0 0C-20 -30 -16 -70 5 -98C28 -68 26 -30 0 0Z" fill="#5F8C69"/></g>
     </svg>
     <div class="brand-inner flex items-center gap-4">
       <img src="school_logo.png" alt="תיכון אתגרי העתיד" width="64" height="64" class="brand-logo" style="width:64px;height:64px;filter:url(#recolor-forest)" onerror="this.onerror=null;this.replaceWith(brandEmblem('#355747',64))">
@@ -903,12 +948,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261118_18"></script>
-  <script src="js/storage.js?v=20261118_18"></script>
-  <script src="js/parser.js?v=20261118_18"></script>
-  <script src="js/bagrutEngine.js?v=20261118_18"></script>
-  <script src="js/bagrutAdvisor.js?v=20261118_18"></script>
-  <script src="js/groupAnalyzer.js?v=20261118_18"></script>
-  <script src="js/app.js?v=20261118_18"></script>
+  <script src="js/config.js?v=20261118_19"></script>
+  <script src="js/storage.js?v=20261118_19"></script>
+  <script src="js/parser.js?v=20261118_19"></script>
+  <script src="js/bagrutEngine.js?v=20261118_19"></script>
+  <script src="js/bagrutAdvisor.js?v=20261118_19"></script>
+  <script src="js/groupAnalyzer.js?v=20261118_19"></script>
+  <script src="js/app.js?v=20261118_19"></script>
 </body>
 </html>
