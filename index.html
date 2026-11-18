@@ -347,13 +347,14 @@
     .ov-fill.mustard { background: var(--mustard); }
     .ov-bar[aria-pressed="true"] { background: var(--sage-tint); }
     /* תג התצוגה הפעילה בחדר הבקרה: מראה בבירור איזה היקף (בית ספר / שכבה / כיתה) מוצג */
-    .active-scope-banner { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .4rem .5rem .4rem .9rem; border-radius: 999px; font-size: .85rem; font-weight: 700; border: 2px solid var(--forest); }
-    .active-scope-banner.is-class { background: var(--forest); color: var(--cream-bg); box-shadow: 0 4px 12px -4px rgba(53, 87, 71, .55); }
-    .active-scope-banner.is-grade { background: var(--cream-bg); color: var(--forest); border-color: var(--mustard); }
-    .active-scope-banner.is-all { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); padding-inline-end: .9rem; }
-    .active-scope-banner .scope-reset { padding: .15rem .65rem; border-radius: 999px; font-size: .75rem; font-weight: 700; cursor: pointer; background: var(--cream-bg); color: var(--forest); border: 1px solid var(--forest); }
-    .active-scope-banner.is-class .scope-reset { border-color: var(--cream-bg); }
-    .active-scope-banner .scope-reset:hover { background: var(--mustard); }
+    .active-scope-banner { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 1rem; min-height: 3.4rem; padding: .5rem 1.4rem .5rem .6rem; border-radius: 999px; font-weight: 800; border: 2px solid var(--forest); }
+    .active-scope-banner .scope-name { font-size: 1.35rem; line-height: 1.2; }
+    .active-scope-banner.is-class { background: var(--mustard); color: var(--forest); box-shadow: 0 6px 16px -6px rgba(180, 120, 20, .6); }
+    .active-scope-banner.is-grade { background: var(--forest); color: var(--cream-bg); }
+    .active-scope-banner.is-all { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); padding: .5rem 1.4rem; }
+    .active-scope-banner .scope-reset { min-height: 2.3rem; padding: .3rem 1.1rem; border-radius: 999px; font-size: .95rem; font-weight: 800; cursor: pointer; background: var(--forest); color: var(--cream-bg); border: 2px solid var(--forest); transition: background .15s, color .15s; }
+    .active-scope-banner.is-grade .scope-reset { background: var(--mustard); color: var(--forest); border-color: var(--mustard); }
+    .active-scope-banner .scope-reset:hover { background: var(--cream-bg); color: var(--forest); }
     .ov-class-bars .ov-bar { grid-template-columns: minmax(7rem, 11rem) 1fr 5.5rem; border: 2px solid transparent; transition: opacity .15s, border-color .15s; }
     .ov-class-bars.has-selection .ov-bar:not([aria-pressed="true"]) { opacity: .65; }
     .ov-class-bars .ov-bar[aria-pressed="true"] { border-color: var(--forest); opacity: 1; }
@@ -900,12 +901,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261118_16"></script>
-  <script src="js/storage.js?v=20261118_16"></script>
-  <script src="js/parser.js?v=20261118_16"></script>
-  <script src="js/bagrutEngine.js?v=20261118_16"></script>
-  <script src="js/bagrutAdvisor.js?v=20261118_16"></script>
-  <script src="js/groupAnalyzer.js?v=20261118_16"></script>
-  <script src="js/app.js?v=20261118_16"></script>
+  <script src="js/config.js?v=20261118_17"></script>
+  <script src="js/storage.js?v=20261118_17"></script>
+  <script src="js/parser.js?v=20261118_17"></script>
+  <script src="js/bagrutEngine.js?v=20261118_17"></script>
+  <script src="js/bagrutAdvisor.js?v=20261118_17"></script>
+  <script src="js/groupAnalyzer.js?v=20261118_17"></script>
+  <script src="js/app.js?v=20261118_17"></script>
 </body>
 </html>

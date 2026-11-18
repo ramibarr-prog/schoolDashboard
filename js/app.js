@@ -886,15 +886,14 @@ const App = {
         ${issues.length > SHOWN ? `<div class="pt-2 text-xs text-slate-500">מוצגים ${SHOWN} מתוך ${issues.length} · <button type="button" class="underline text-[#75977D]" data-act="ovGo" data-go="groups" data-view="anomalies">כל חריגי השיבוץ</button></div>` : ''}`
       : `<div class="text-sm text-slate-500 py-3">${m.analysis || bagrutOn ? 'אין חניכים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות בסינון הנוכחי.' : notLoaded}</div>`;
 
-    const n = m.list.length, trackNote = f.track !== 'all' ? ` · מסלול ${f.track}` : '';
     let banner;
     if (classOn) {
       const g = f.grade !== 'all' ? f.grade : Util.parseClass('', f.cls).gradeKey;
-      banner = `<span class="active-scope-banner is-class" role="status"><span>🎯 תצוגה ממוקדת: כיתה ${E(scopeLabel)} (${n} חניכים)${E(trackNote)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="cls">✕ חזרה לכל שכבת ${E(Util.gl(g))}</button></span>`;
+      banner = `<span class="active-scope-banner is-class" role="status"><span class="scope-name">כיתה ${E(scopeLabel)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="cls">✕ חזרה לכל שכבת ${E(Util.gl(g))}</button></span>`;
     } else if (f.grade !== 'all') {
-      banner = `<span class="active-scope-banner is-grade" role="status"><span>🎓 תצוגה פעילה: שכבת ${E(Util.gl(f.grade))} (${n} חניכים)${E(trackNote)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="grade">✕ כל השכבות</button></span>`;
+      banner = `<span class="active-scope-banner is-grade" role="status"><span class="scope-name">שכבת ${E(Util.gl(f.grade))}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="grade">✕ כל השכבות</button></span>`;
     } else {
-      banner = `<span class="active-scope-banner is-all" role="status">🏫 תצוגה פעילה: כלל בית הספר (${n} חניכים)${E(trackNote)}</span>`;
+      banner = `<span class="active-scope-banner is-all" role="status"><span class="scope-name">כלל בית הספר</span></span>`;
     }
     setHtml('overview-body', `
       <div class="flex flex-wrap items-end justify-between gap-3">
