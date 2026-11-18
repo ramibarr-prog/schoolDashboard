@@ -8,7 +8,7 @@
    ===================================================================== */
 
 const BagrutAdvisor = (() => {
-  const { activeOnly, detectLevel, enrolledInMajor, levelScope, codeOfComp, compOrd, gradeRank, resolveTiming, cohortOf, COHORT_MAJOR_PCT } = BagrutEngine;
+  const { activeOnly, detectLevel, enrolledInMajor, levelScope, reverseNeed, codeOfComp, compOrd, gradeRank, resolveTiming, cohortOf, COHORT_MAJOR_PCT } = BagrutEngine;
 
   const trackOf = tz => {
     const t = Store.trainees.get(tz);
@@ -68,7 +68,7 @@ const BagrutAdvisor = (() => {
       set('pass', String(ext), 'לומד השנה; ממתין לשאלון נוסף', 'pass');
     } else if (s.status === 'await' || (s.status === 'missing' && hasNum)) {
       if (rev && rev.level === 'red') set('rose', String(ext), `גם 100 ב-${rev.pct}% לא מספיק`, 'lost');
-      else if (rev) set('sky', String(ext), `צריך ${rev.required30} ב-${rev.pct}%`, 'reverse');
+      else if (rev) set('sky', String(ext), `צריך ${reverseNeed(rev)}`, 'reverse');
       else if (s.status === 'await') set('sky', String(ext), 'ממתין לשאלון נוסף', 'await');
       else set('rose', String(ext), 'חסר שאלון', 'missing');
     } else if (s.status === 'missing') set('rose', 'חסר', 'שאלון חסר', 'missing');
@@ -139,7 +139,7 @@ const BagrutAdvisor = (() => {
       .map(b => ({ text: (b.miss && !/^לא ניגש/.test(b.text) ? 'חסר ' : '') + b.text, hard: !!b.hard }));
     reverse.filter(r => r.level !== 'info').forEach(r => items.push(r.level === 'red'
       ? { text: `${r.subject}: גם 100 ב-${r.pct}% לא מספיק – מועד ב'`, hard: true }
-      : { text: `🎯 ${r.subject}: צריך ${r.required30} ב-${r.pct}%`, hard: false, target: true }));
+      : { text: `🎯 ${r.subject}: צריך ${reverseNeed(r)}`, hard: false, target: true }));
     return items;
   }
 

@@ -265,7 +265,15 @@ const BagrutEngine = (() => {
       level = 'red';
             text = `קריטי: גם 100 ב-${pct}% לא יספיק (מקסימום ${max}) — חייב מועד ב' בבחינה`;
     }
-    return { subject: res.name, level, text, required30, requiredFor45, pct, max, externalScore, wExt, wInt, internalCodes: missing.map(u => u.code), pendingCohort: !res.unresolved.length };
+    return { subject: res.name, level, text, required30, requiredFor45, compMin: ctx.rules.compensationMin, pct, max, externalScore, wExt, wInt, internalCodes: missing.map(u => u.code), pendingCohort: !res.unresolved.length };
+  }
+
+  /**
+   * הציון הנדרש ברכיב הפנימי כטקסט "X ב-Y%". כשעובר ב-55 אינו אפשרי (required30 > 100) וההצלה היא בקיזוז (רמה amber),
+   * מוצג הציון לקיזוז ולא required30 הבלתי אפשרי.
+   */
+  function reverseNeed(r) {
+    return r.required30 > 100 && r.level === 'amber' ? `${r.requiredFor45} ב-${r.pct}% (לקיזוז ${r.compMin})` : `${r.required30} ב-${r.pct}%`;
   }
 
   /** מוסיף למחשבון ההפוך את אפשרות הקיזוז, כשהמקצוע ניתן לקיזוז ומכסת הקיזוז של החניך לא מוצתה */
@@ -405,7 +413,7 @@ const BagrutEngine = (() => {
       });
       if (redReverse) B.push({ gate: 1, k: 'reverse30', hard: true, text: `${s.name}: ${s.reverse.text}` });
       else if (s.reverse && s.reverse.level === 'amber' && (s.status === 'await' || (s.status === 'missing' && s.learning))) {
-        B.push({ gate: 1, k: 'reverse-pending', hard: false, watch: true, inner: true, text: `${s.name}: נדרש ${s.reverse.required30} ב-${s.reverse.pct}%` });
+        B.push({ gate: 1, k: 'reverse-pending', hard: false, watch: true, inner: true, text: `${s.name}: נדרש ${reverseNeed(s.reverse)}` });
       }
       /* תחזית משוטף היא תצוגה מקדימה בלבד: אינה מורידה צפי ואינה נחשבת חוסר */
       if (!full) s.filled.forEach(c => B.push({ gate: 1, k: 'questionnaire', hard: false, info: true, miss: true, text: `שאלון ${c.code} ב${s.name}` }));
@@ -936,6 +944,6 @@ const BagrutEngine = (() => {
     DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, codeOfComp, compOrd, resolveTiming, passesUnder,
     evaluate, detectPotentialException, detectForeignCodes, activeCohortQuestionnaires, cohortOf,
     /* משותפים לשכבת התצוגה */
-    activeOnly, detectLevel, enrolledInMajor, levelScope, registerDecorator
+    activeOnly, detectLevel, enrolledInMajor, levelScope, reverseNeed, registerDecorator
   };
 })();

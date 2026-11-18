@@ -49,6 +49,8 @@ const App = {
     showRoutineDuplicates: false,
     /* מיון סדין הציונים השוטפים: class_name = כיתה ואז שם (ברירת מחדל) */
     sadinSort: { key: 'class_name', dir: 'asc' },
+    /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
+    sadinColWidths: {},
     sadin: { subject: 'all', teacher: 'all', view: 'sheet', strip: 'all', alertBy: 'teacher', initials: false },
     profileTz: null,
     selectedSearchTz: null,
@@ -828,7 +830,10 @@ const App = {
     const card2 = card('data-go="sadin" data-strip="all"', 'ממוצע הישגים שוטפים', m.avg == null ? '—' : Util.fmt(m.avg, 1),
       sadinOn ? `${m.clean} חניכים עם 100% ציונים עוברים (מתוך ${m.graded.length} עם ציונים)` : notLoaded, '', ICONS.trophy);
     const kpiPct = bench.pace ? st.pctInclSpecialEd : st.eligibilityInclSpecialEd;
-    const kpiTitle = bench.pace ? `תקינות צבירה לבגרות (${bench.label})` : `צפי זכאות לבגרות (${bench.label})`;
+    /* כשנבחרה כיתה, כותרות הכרטיס והגרפים נושאות את שם הכיתה ולא את תווית השכבה */
+    const classOn = f.cls !== 'all';
+    const scopeLabel = classOn ? Config.classLabel(f.cls) : bench.label;
+    const kpiTitle = `${bench.pace ? 'תקינות צבירה לבגרות' : 'צפי זכאות לבגרות'} (${scopeLabel})`;
     const kpiSub = bench.pace
       ? `ללא חנ"מ: ${st.pctExSpecialEd}% • כולל חנ"מ: ${st.pctInclSpecialEd}%<br>${st.warning} בחסם צבירה יחיד · ${st.lag} בפיגור צבירה`
       : `ללא חנ"מ: ${st.eligibilityExSpecialEd}% • כולל חנ"מ: ${st.eligibilityInclSpecialEd}%<br>${st.singleBlocker} חניכים במרחק מקצוע אחד מזכאות`;
@@ -860,7 +865,10 @@ const App = {
     });
     const bar = (label, value, cls = '') => `<span class="min-w-0 truncate text-sm font-semibold text-[#355747]">${label}</span><span class="ov-track"><span class="ov-fill ${cls}" style="width:0%" data-w="${Math.max(0, Math.min(100, value || 0))}"></span></span>`;
     const classHtml = classBars.length && (bagrutOn || sadinOn)
-      ? classBars.map(b => `<button type="button" class="ov-bar" data-act="ovClass" data-class="${E(b.key)}" aria-pressed="${f.cls === b.key}" title="סינון לפי כיתה">${bar(`${E(Config.classLabel(b.key))} (${b.text})`, b.value)}</button>`).join('')
+      ? `<div class="space-y-1 ov-class-bars${classOn ? ' has-selection' : ''}">${classBars.map(b => {
+        const on = f.cls === b.key;
+        return `<button type="button" class="ov-bar" data-act="ovClass" data-class="${E(b.key)}" aria-pressed="${on}" title="${on ? 'מוצגת כיתה זו בלבד; לחיצה נוספת מחזירה לכל השכבה' : 'סינון לפי כיתה'}">${bar(`${E(Config.classLabel(b.key))} (${b.text})`, b.value)}${on ? '<span class="ov-now">✓ מוצג כעת</span>' : ''}</button>`;
+      }).join('')}</div>`
       : `<div class="text-sm text-slate-500 py-3">${notLoaded} – אחוז הזכאות או הממוצע לפי כיתות יוצגו לאחר הטעינה.</div>`;
 
     const blockers = this.overviewBlockers(m);
@@ -878,15 +886,26 @@ const App = {
         ${issues.length > SHOWN ? `<div class="pt-2 text-xs text-slate-500">מוצגים ${SHOWN} מתוך ${issues.length} · <button type="button" class="underline text-[#75977D]" data-act="ovGo" data-go="groups" data-view="anomalies">כל חריגי השיבוץ</button></div>` : ''}`
       : `<div class="text-sm text-slate-500 py-3">${m.analysis || bagrutOn ? 'אין חניכים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות בסינון הנוכחי.' : notLoaded}</div>`;
 
-    const scope = [f.grade !== 'all' ? `שכבה ${Util.gl(f.grade)}` : '', f.cls !== 'all' ? Config.classLabel(f.cls) : '', f.track !== 'all' ? `מסלול ${f.track}` : ''].filter(Boolean).join(' · ');
+    const n = m.list.length, trackNote = f.track !== 'all' ? ` · מסלול ${f.track}` : '';
+    let banner;
+    if (classOn) {
+      const g = f.grade !== 'all' ? f.grade : Util.parseClass('', f.cls).gradeKey;
+      banner = `<span class="active-scope-banner is-class" role="status"><span>🎯 תצוגה ממוקדת: כיתה ${E(scopeLabel)} (${n} חניכים)${E(trackNote)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="cls">✕ חזרה לכל שכבת ${E(Util.gl(g))}</button></span>`;
+    } else if (f.grade !== 'all') {
+      banner = `<span class="active-scope-banner is-grade" role="status"><span>🎓 תצוגה פעילה: שכבת ${E(Util.gl(f.grade))} (${n} חניכים)${E(trackNote)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="grade">✕ כל השכבות</button></span>`;
+    } else {
+      banner = `<span class="active-scope-banner is-all" role="status">🏫 תצוגה פעילה: כלל בית הספר (${n} חניכים)${E(trackNote)}</span>`;
+    }
     setHtml('overview-body', `
       <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div class="text-xs font-semibold text-[#75977D]">מוניטור פדגוגי ‹ חדר בקרה</div>
-          <h2 class="ov-title text-2xl font-extrabold text-[#355747] mt-0.5">חדר בקרה פדגוגי – תמונת מצב</h2>
+        <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+          <div>
+            <div class="text-xs font-semibold text-[#75977D]">מוניטור פדגוגי ‹ חדר בקרה</div>
+            <h2 class="ov-title text-2xl font-extrabold text-[#355747] mt-0.5">חדר בקרה פדגוגי – תמונת מצב</h2>
+          </div>
+          ${banner}
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <span class="text-xs text-slate-500">${E(scope || 'כל בית הספר')} · ${m.list.length} חניכים</span>
           <span id="ovSyncPill" class="ov-pill" role="status">${E(($('syncStatus') || {}).textContent || '')}</span>
         </div>
       </div>
@@ -894,8 +913,9 @@ const App = {
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${card1}${card2}${card3}${card4}</div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <div class="card p-5 lg:col-span-7 space-y-5">
-          <div><h3 class="font-bold text-[#355747] mb-2">${bagrutOn ? (bench.pace ? `תקינות צבירה לבגרות לפי כיתות (${E(bench.label)})` : `אחוז זכאות לבגרות לפי כיתות (${E(bench.label)})`) : 'ממוצע הישגים שוטפים לפי כיתות'}</h3><div class="space-y-1">${classHtml}</div></div>
-          <div class="border-t border-[#E6ECE6] pt-4"><h3 class="font-bold text-[#355747] mb-2">התפלגות החוסמים ביותר <span class="text-xs font-normal text-slate-500">${E(({ sadin: 'מקצועות עם ציון נכשל או חסר', pace: 'כשלים ושאלונים שמועדם הגיע לשכבה' }[blockers.source] || 'מקצועות ליבה בבגרות') + (bagrutOn || sadinOn ? ` · ${bench.label}` : ''))}</span></h3><div class="space-y-1">${blockerHtml}</div></div>
+          <div><h3 class="font-bold text-[#355747] mb-2">${bagrutOn ? (bench.pace ? `תקינות צבירה לבגרות לפי כיתות (${E(bench.label)})` : `אחוז זכאות לבגרות לפי כיתות (${E(bench.label)})`) : 'ממוצע הישגים שוטפים לפי כיתות'}</h3>          ${classHtml}
+                    </div>
+                    <div class="border-t border-[#E6ECE6] pt-4"><h3 class="font-bold text-[#355747] mb-2">התפלגות החוסמים ביותר${classOn ? ` • ${E(scopeLabel)}` : ''} <span class="text-xs font-normal text-slate-500">${E(({ sadin: 'מקצועות עם ציון נכשל או חסר', pace: 'כשלים ושאלונים שמועדם הגיע לשכבה' }[blockers.source] || 'מקצועות ליבה בבגרות') + (!classOn && (bagrutOn || sadinOn) ? ` · ${bench.label}` : ''))}</span></h3><div class="space-y-1">${blockerHtml}</div></div>
         </div>
         <div class="card p-5 lg:col-span-5"><h3 class="font-bold text-[#355747] mb-2">חניכים בחריגה וצווארי בקבוק</h3>${issueHtml}</div>
       </div>`);
@@ -1878,35 +1898,80 @@ const App = {
       columns.push({ kind: 'subject', name, header: eventsMode ? (names.length > 1 ? `ממוצע ${name}` : 'ממוצע מקצוע') : name });
     });
     const rowsSorted = this.sadinSortRows(rows, columns);
+    const colKey = c => (c.kind === 'event' ? `evt:${c.name}|${c.event.key}` : `subj:${c.name}`);
+    /* רוחב עמודה: ערך שהמשתמש גרר (נשמר ב-state.sadinColWidths) או ברירת המחדל */
+    const DEFAULT_W = { name: 155, homeroom: 105, avg: 82, negatives: 118 };
+    const widthOf = key => this.state.sadinColWidths[key] || DEFAULT_W[key] || 82;
+    const wStyle = key => `width:${widthOf(key)}px;min-width:${widthOf(key)}px;max-width:${widthOf(key)}px`;
     const body = rowsSorted.map(r => {
       const cells = columns.map(col => {
         const s = r.subjects.get(col.name);
-        if (!s) return '<td class="sx-s text-slate-300">—</td>';
+        const sty = wStyle(colKey(col));
+        if (!s) return `<td class="sx-s text-slate-300" style="${sty}">—</td>`;
         if (col.kind === 'event') {
           const ev = s.events.find(x => x.key === col.event.key), missed = s.missed.has(col.event.key);
           const val = ev && ev.score != null ? ev.score : null;
           const text = ev && ev.score == null && ev.scoreRaw ? String(ev.scoreRaw) : '';
           const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : '—')}`;
-          return `<td class="sx-s" title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : text ? E(text) : '<span class="text-slate-300">—</span>'}</td>`;
+          return `<td class="sx-s" style="${sty}" title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : text ? E(text) : '<span class="text-slate-300">—</span>'}</td>`;
         }
-        return `<td class="sx-s"><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td>`;
+        return `<td class="sx-s" style="${sty}"><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td>`;
       }).join('');
-      return `<tr><td class="sx-name"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`${r.t.name} · ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
-        <td class="sx-room">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>
-        <td class="sx-avg font-bold" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
-        <td class="sx-neg">${[r.failing ? `<span class="sadin-bad">${r.failing}</span>` : !r.missed ? '<span class="sadin-ok">✓ תקין</span>' : '', r.missed ? `<span class="sadin-bad text-xs">${r.missed} חסר</span>` : ''].filter(Boolean).join('<span class="text-slate-300"> • </span>')}</td>${cells}</tr>`;
+      /* נכשלים וחסרים בתגים נפרדים, כדי שלא יתבלבלו זה בזה */
+      const negBadges = r.failing || r.missed
+        ? `<span class="neg-cell">${r.failing ? `<span class="neg-badge neg-fail">${r.failing} נכשל</span>` : ''}${r.missed ? `<span class="neg-badge neg-miss">${r.missed} חסר</span>` : ''}</span>`
+        : '<span class="neg-ok">✓ תקין</span>';
+      return `<tr><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`${r.t.name} · ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
+        <td class="sx-room" style="${wStyle('homeroom')}">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>
+        <td class="sx-avg font-bold" style="${wStyle('avg')}" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
+        <td class="sx-neg" style="${wStyle('negatives')}" title="${E(`${r.failing} נכשלים · ${r.missed} חסרים`)}">${negBadges}</td>${cells}</tr>`;
     }).join('');
     const sort = this.state.sadinSort, sortKey = sort.key === 'class_name' ? 'homeroom' : sort.key;
     const th = (key, label, cls = '', title = '') => {
       const active = sortKey === key;
-      return `<th class="${cls}" aria-sort="${active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none'}"><button type="button" class="sx-sort${active ? ' is-active' : ''}" data-act="sadinSort" data-key="${E(key)}" title="${E(title || `מיון לפי ${label}`)}"><span class="sx-label">${E(label)}</span><span class="sx-ind" aria-hidden="true">${active ? (sort.dir === 'desc' ? '▼' : '▲') : '⇅'}</span></button></th>`;
+      return `<th class="${cls}" style="${wStyle(key)}" data-ck="${E(key)}" aria-sort="${active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none'}"><button type="button" class="sx-sort${active ? ' is-active' : ''}" data-act="sadinSort" data-key="${E(key)}" title="${E(title || `מיון לפי ${label}`)}"><span class="sx-label">${E(label)}</span><span class="sx-ind" aria-hidden="true">${active ? (sort.dir === 'desc' ? '▼' : '▲') : '⇅'}</span></button><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה להתאמה אוטומטית)"></span></th>`;
     };
-    const colKey = c => (c.kind === 'event' ? `evt:${c.name}|${c.event.key}` : `subj:${c.name}`);
-    /* רוחבים אחידים: עמודות קבועות וכל עמודות המקצוע 82px */
-    const width = 155 + 105 + 82 + 96 + columns.length * 82;
-    setHtml('sadin-table', `<div class="sticky-scroll overscroll-contain"><table class="grid sadin-sheet" style="width:${width}px"><colgroup><col style="width:155px"><col style="width:105px"><col style="width:82px"><col style="width:96px">${columns.map(() => '<col style="width:82px">').join('')}</colgroup>
-      <thead><tr>${th('name', 'חניך', 'sx-name')}${th('homeroom', 'כיתה', 'sx-room')}${th('avg', 'ממוצע כללי', 'sx-avg')}${th('negatives', 'שליליים', 'sx-neg')}${columns.map(c => th(colKey(c), c.header, 'sx-s', c.header)).join('')}</tr></thead>
+    const keys = ['name', 'homeroom', 'avg', 'negatives', ...columns.map(colKey)];
+    const width = keys.reduce((sum, k) => sum + widthOf(k), 0);
+    setHtml('sadin-table', `<div class="sticky-scroll overscroll-contain"><table class="grid sadin-sheet" style="width:${width}px"><colgroup>${keys.map(k => `<col style="width:${widthOf(k)}px">`).join('')}</colgroup>
+      <thead><tr>${th('name', 'חניך', 'sx-name')}${th('homeroom', 'כיתה', 'sx-room')}${th('avg', 'ממוצע כללי', 'sx-avg')}${th('negatives', 'נכשלים / חסרים', 'sx-neg', 'מיון לפי מספר הנכשלים והחסרים')}${columns.map(c => th(colKey(c), c.header, 'sx-s', c.header)).join('')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
+  },
+
+  /** מציב רוחב לעמודה בסדין (56–360px) ב-col וב-th/td שלה, ושומר ב-state.sadinColWidths */
+  setSadinColWidth(table, idx, key, width) {
+    const w = Math.max(56, Math.min(360, Math.round(width)));
+    const cols = table.querySelectorAll('colgroup col');
+    if (cols[idx]) cols[idx].style.width = `${w}px`;
+    table.querySelectorAll(`tr > :nth-child(${idx + 1})`).forEach(c => { if (c.colSpan <= 1) { c.style.width = c.style.minWidth = c.style.maxWidth = `${w}px`; } });
+    table.style.width = `${[...cols].reduce((sum, c) => sum + parseFloat(c.style.width), 0)}px`;
+    this.state.sadinColWidths[key] = w;
+    return w;
+  },
+
+  /** גרירה (RTL: שמאלה מרחיבה) והתאמה אוטומטית בלחיצה כפולה על ידית העמודה; אף אחד מהם אינו מפעיל מיון */
+  bindSadinColResize() {
+    const handle = e => (e.target.closest ? e.target.closest('#sadin-table .col-resizer') : null);
+    document.addEventListener('mousedown', e => {
+      const h = handle(e);
+      if (!h || e.button !== 0) return;
+      e.stopPropagation(); e.preventDefault();
+      const th = h.closest('th'), table = th.closest('table'), key = th.dataset.ck, idx = th.cellIndex;
+      const startX = e.clientX, startW = th.getBoundingClientRect().width;
+      document.body.classList.add('col-resizing');
+      const move = ev => this.setSadinColWidth(table, idx, key, startW + (startX - ev.clientX));
+      const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); document.body.classList.remove('col-resizing'); };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    }, true);
+    document.addEventListener('click', e => { if (handle(e)) { e.stopPropagation(); e.preventDefault(); } }, true);
+    document.addEventListener('dblclick', e => {
+      const h = handle(e);
+      if (!h) return;
+      e.stopPropagation(); e.preventDefault();
+      const th = h.closest('th'), label = th.querySelector('.sx-label'), ind = th.querySelector('.sx-ind');
+      this.setSadinColWidth(th.closest('table'), th.cellIndex, th.dataset.ck, (label ? label.scrollWidth : th.scrollWidth) + (ind ? ind.offsetWidth : 0) + 24);
+    }, true);
   },
 
   /** מיון הסדין: שם / כיתה+שם (ברירת מחדל) / ממוצע / שליליים / מקצוע או אירוע. חניכים ללא ערך (לא לומדים את המקצוע, ללא ממוצע) תמיד בתחתית */
@@ -2746,6 +2811,7 @@ const App = {
       ['globalFilterBar', 'brandBanner'].forEach(id => { const el = $(id); if (el) ro.observe(el); });
     }
     window.addEventListener('sd:exceptions-changed', () => this.schedule(() => this.invalidateAll()));
+    this.bindSadinColResize();
 
     /* סינון גלובלי */
     on('fGrade', 'change', e => {
@@ -3275,6 +3341,13 @@ const App = {
     ovClass(el) {
       const f = this.state.filters, key = el.dataset.class;
       f.cls = f.cls === key ? 'all' : key;
+      this.onFilterChange();
+    },
+    /** איפוס מהתג הפעיל בחדר הבקרה: מכיתה חזרה לכל השכבה, או משכבה לכל השכבות */
+    ovScopeReset(el) {
+      const f = this.state.filters;
+      if (el.dataset.reset === 'grade') f.grade = 'all';
+      f.cls = 'all';
       this.onFilterChange();
     },
     ovPick(el) { this.ovSelect(el.dataset.tz); this.ovCloseResults(); },
