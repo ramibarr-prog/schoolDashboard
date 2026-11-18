@@ -943,6 +943,7 @@ const App = {
     const ev = r.ev;
     if (chip === 'exception') return ev.manual;
     if (chip === 'suspect') return !ev.manual && ev.isPotentialException;
+    if (chip === 'manualReview') return !!(ev.manualReview && ev.manualReview.required);
     if (chip === 'near') return ev.singleBlocker;
     if (chip === 'notok') return ev.atRisk;
     if (chip === 'eligible') return this.tierBased(ev) && (ev.tier === 1 || ev.tier === 2);
@@ -950,6 +951,12 @@ const App = {
     if (/^tier[0-5]$/.test(chip)) return this.tierBased(ev) && ev.tier === +chip.slice(4);
     if (chip.startsWith('pace:')) return !this.tierBased(ev) && ev.paceStatus === chip.slice(5);
     return true;
+  },
+
+  /** תג "נדרשת בדיקה ידנית" (סמלי שאלון זרים) עם פירוט בריחוף; מחרוזת ריקה כשאין סימון */
+  manualReviewBadge(ev, cls = 'badge tier-3') {
+    const lines = BagrutAdvisor.manualReviewLines(ev);
+    return lines.length ? `<span class="${cls} whitespace-nowrap" title="${E(lines.join(' | '))}">🔎 נדרשת בדיקה ידנית</span>` : '';
   },
 
   /** תגי "מחשבון הפוך" לציון ה-30% החסר: מידע / 🎯 ענבר / אדום */
@@ -985,7 +992,8 @@ const App = {
       option('savable', `🎯 הצלה ב-30% (${all.savable})`) +
       option('near', `חסם בודד (${all.singleBlocker})`) +
       option('exception', `⚡ חריג ידני (${all.exceptions})`) +
-      option('suspect', `חשד לחריג (${all.potentialExceptions})`));
+      option('suspect', `חשד לחריג (${all.potentialExceptions})`) +
+      option('manualReview', `🔎 נדרשת בדיקה ידנית (${all.manualReview})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
     const modeBtn = (full, label, title) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${!!sim.fullMode === full}" title="${E(title)}">${label}</button>`;
@@ -1218,8 +1226,9 @@ const App = {
       const status = !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
+      const mr = this.manualReviewBadge(ev);
       return `<div>${status}</div>
-        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : ev.isPotentialException ? `<div><span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span></div>` : ''}`;
+        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : ev.isPotentialException ? `<div><span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span></div>` : ''}${mr ? `<div>${mr}</div>` : ''}`;
     };
 
     const cols = 6 + coreCols.length;
@@ -1418,6 +1427,7 @@ const App = {
       <h3 class="text-lg font-semibold mb-1">⚡ מצב חריג – ${E(t.name)}</h3>
       <p class="text-xs text-slate-500 mb-3">ת.ז ${t.tz} · ${E(Config.classLabel(t.classKey))}</p>
       ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
+      ${ev.manualReview && ev.manualReview.required ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">🔎 נדרשת בדיקה ידנית – סמלי שאלון זרים:<br>${BagrutAdvisor.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}
       <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${ex.isException ? 'checked' : ''}>מוחרג מחישוב אוטומטי</label>
       <label class="flex flex-col gap-1 text-sm mb-3">סטטוס מוכרע
         <select id="xmStatus" class="inp">${Config.OVERRIDE_STATUSES.map(s => `<option value="${s.value}" ${(ex.overrideStatus || 'atrisk') === s.value ? 'selected' : ''}>${E(s.label)}</option>`).join('')}</select></label>
@@ -2158,7 +2168,7 @@ const App = {
     const units = this.profileUnits(t.tz, ev, rules);
     setHtml('profBadges', `${this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
       <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>
-      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>`);
+      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${this.manualReviewBadge(ev)}`);
     const cur = this.profileCurrentModel(t, ev, rules);
     this.renderProfileKpis(t, cur);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));

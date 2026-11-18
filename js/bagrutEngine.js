@@ -695,6 +695,9 @@ const BagrutEngine = (() => {
     };
   }
 
+  /** סמלי שאלון עולים / התאמות: הרשימה הקבועה + הרשימה שבכללי הפרופיל (מקור יחיד לזיהוי חשד לחריג ולסמלים זרים) */
+  const immigrantCodeSet = rules => new Set([...IMMIGRANT_CODES, ...(((rules && rules.exceptionDetection) || {}).immigrantCodes || [])].map(String));
+
   /**
    * חשד למצב חריג: שאלוני עולים (5384 / 585580 / 581580 ועוד מהכללים), רמות יח"ל מעורבות
    * באנגלית/מתמטיקה, או ציון חיצוני ללא רכיב הערכה בית-ספרי (עד 30%).
@@ -708,7 +711,7 @@ const BagrutEngine = (() => {
     const det = rules.exceptionDetection || {};
     const reasons = [];
 
-    const codes = new Set([...IMMIGRANT_CODES, ...(det.immigrantCodes || [])].map(String));
+    const codes = immigrantCodeSet(rules);
     const hit = Store.attemptsOf(tz).find(a => codes.has(String(a.code)));
     if (hit) reasons.push(`שאלון עולים / מותאם (${hit.code})`);
 
@@ -734,6 +737,62 @@ const BagrutEngine = (() => {
       });
     }
     return { isPotentialException: reasons.length > 0, reason: reasons.join(' · '), reasons };
+  }
+
+  /**
+   * סמלי שאלון זרים: ניסיונות בגרות שדווחו לחניך ואינם מוגדרים בפרופיל השכבה שלו ברמת היח"ל שלו.
+   * סיבות: immigrant (שאלון עולים / מותאם), other-level (סמל של רמת יח"ל אחרת באותו מקצוע),
+   * other-cohort (סמל שמוגדר רק בפרופיל של מחזור אחר), unlisted-code (סמל לא מוכר תחת שם מקצוע ליבה).
+   * סמל שאינו משויך לאף מקצוע (למשל חינוך תעבורתי) אינו נחשב זר. פונקציה טהורה: קוראת בלבד, אינה משנה את הצפי.
+   */
+  function detectForeignCodes(tz, ctx) {
+    const attempts = Store.attemptsOf(tz);
+    if (!attempts.length) return [];
+    const rules = ctx.rules;
+    const codesOf = list => activeOnly(list).flatMap(c => (c.codes || []).map(String));
+    const core = activeOnly(rules.coreSubjects);
+    const expected = new Set();
+    const otherLevel = new Map();
+    core.forEach(s => {
+      if (!s.variableUnits) { codesOf(s.components).forEach(c => expected.add(c)); return; }
+      const own = String(detectLevel(tz, s));
+      codesOf(s.levels && s.levels[own]).forEach(c => expected.add(c));
+      Object.keys(s.levels || {}).filter(l => l !== own).forEach(l => codesOf(s.levels[l]).forEach(c => {
+        const e = otherLevel.get(c) || { s, levels: [] };
+        e.levels.push(l);
+        otherLevel.set(c, e);
+      }));
+    });
+    activeOnly(rules.majors).forEach(m => (m.codes || []).forEach(c => expected.add(String(c))));
+    activeOnly(rules.internals).forEach(i => (i.codes || []).forEach(c => expected.add(String(c))));
+
+    const ownCohort = Config.getCohortIdForGrade(ctx.gradeKey);
+    const otherCohort = new Map();
+    Object.values(Config.getCohortProfiles()).filter(p => p.id !== ownCohort).forEach(p => {
+      const add = (codes, item) => codes.forEach(c => { if (!otherCohort.has(c)) otherCohort.set(c, { subjectId: item.id, subject: item.name, cohort: p.name }); });
+      activeOnly(p.rules.coreSubjects).forEach(s => [...(s.components || []), ...Object.values(s.levels || {}).flat()].forEach(c => add((c.codes || []).map(String), s)));
+      activeOnly(p.rules.majors).forEach(m => add((m.codes || []).map(String), m));
+      activeOnly(p.rules.internals).forEach(i => add((i.codes || []).map(String), i));
+    });
+    const immigrant = immigrantCodeSet(rules);
+
+    const found = new Map();
+    attempts.forEach(a => {
+      const code = String(a.code);
+      if (expected.has(code)) return;
+      const bySubject = core.find(s => Util.matchKeywords(a.subject, s.keywords));
+      let hit = null;
+      if (immigrant.has(code)) hit = { reason: 'immigrant', subjectId: bySubject ? bySubject.id : '', subject: bySubject ? bySubject.name : '' };
+      else if (otherLevel.has(code)) { const e = otherLevel.get(code); hit = { reason: 'other-level', subjectId: e.s.id, subject: e.s.name, level: e.levels.join('/') }; }
+      else if (otherCohort.has(code)) { const e = otherCohort.get(code); hit = { reason: 'other-cohort', subjectId: e.subjectId, subject: e.subject, cohort: e.cohort }; }
+      else if (bySubject) hit = { reason: 'unlisted-code', subjectId: bySubject.id, subject: bySubject.name };
+      if (!hit) return;
+      const kind = (a.cls && a.cls.kind) || 'none', num = kind === 'num' ? a.cls.num : null;
+      const prev = found.get(code);
+      if (!prev) found.set(code, { code, ...hit, grade: num, status: kind, moed: a.moed || '' });
+      else if (num != null && (prev.grade == null || num > prev.grade)) Object.assign(prev, { grade: num, status: kind, moed: a.moed || '' });
+    });
+    return [...found.values()].sort((x, y) => x.code.localeCompare(y.code));
   }
 
   /**
@@ -825,6 +884,7 @@ const BagrutEngine = (() => {
     const noBagrut = !manual && !Store.loaded.bagrut && !opts.useCurrent;
     const tier = manual ? ov.tier : noBagrut ? 0 : autoTier;
 
+
     /* מחשבון הפוך: פעולות נדרשות ב-30% החסר. "ניתן להציל" = אין חסם קשה מלבד ה-30% החסר, ושום מקצוע אינו אבוד גם עם 100 */
     const reverse = gateOn(1) ? subjects.filter(s => s.reverse).map(s => s.reverse) : [];
     const savable = !manual && tier >= 3 && reverse.length > 0 && reverse.every(r => r.level !== 'red') &&
@@ -843,6 +903,11 @@ const BagrutEngine = (() => {
     if (noBagrut) Object.assign(paceInfo, { dueCount: 0, passedDueCount: 0, failedActualCount: 0, missingDueList: [], failedList: [], focus: [], blockedSubjects: [] });
     const paceStatus = paceStatusOf(paceInfo, tier, noBagrut);
     paceInfo.paceStatus = paceStatus;
+
+    /* סמלי שאלון זרים: רק לחניך שאינו זכאי מלא (י"ב לפי הצפי, י'/י"א לפי קצב הצבירה) ולא הוכרע ידנית;
+       מידע לבדיקה ידנית בלבד, אינו משנה את הצפי */
+    const notEligible = paceInfo.isSenior ? tier >= 2 && tier <= 4 : paceStatus === 'pace_warning' || paceStatus === 'pace_lag';
+    const foreignCodes = !manual && !noBagrut && notEligible ? detectForeignCodes(tz, ctx) : [];
     const juniorPace = !paceInfo.isSenior && !manual && !noBagrut;
     const atRisk = juniorPace ? paceInfo.failedActualCount > 0 || paceInfo.missingDueList.length > 0 : tier === 4;
 
@@ -853,6 +918,7 @@ const BagrutEngine = (() => {
       advisoryHints: noBagrut ? [] : advisoryHints(tz, ctx, subjects),
       overrideStatus: manual ? overrideKey(ex.overrideStatus) : '', exceptionReason: manual ? ex.reason : '',
       isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons,
+      manualReview: { required: foreignCodes.length > 0, foreignCodes },
       tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : (ctx.adaptive ? TIER_TEXT.adaptive : TIER_TEXT[ctx.mode])[tier],
       gates: { 1: gateStatus(1), 2: gateStatus(2), 3: gateStatus(3) },
       subjects, major, internals, blockers, notes, usedForecast, reverse, savable, compensation: real.length ? null : (ctx.compensation || null),
@@ -868,7 +934,7 @@ const BagrutEngine = (() => {
 
   return {
     DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, codeOfComp, compOrd, resolveTiming, passesUnder,
-    evaluate, detectPotentialException, activeCohortQuestionnaires, cohortOf,
+    evaluate, detectPotentialException, detectForeignCodes, activeCohortQuestionnaires, cohortOf,
     /* משותפים לשכבת התצוגה */
     activeOnly, detectLevel, enrolledInMajor, levelScope, registerDecorator
   };

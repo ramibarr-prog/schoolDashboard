@@ -170,8 +170,22 @@ const BagrutAdvisor = (() => {
       singleBlocker: evals.filter(e => e.singleBlocker).length,
       exceptions: evals.filter(e => e.manual).length,
       savable: evals.filter(e => e.savable).length,
-      potentialExceptions: evals.filter(e => !e.manual && e.isPotentialException).length
+      potentialExceptions: evals.filter(e => !e.manual && e.isPotentialException).length,
+      manualReview: evals.filter(e => e.manualReview && e.manualReview.required).length
     };
+  }
+
+  const FOREIGN_REASON = { immigrant: 'שאלון עולים / מותאם', 'other-level': 'רמת יח"ל אחרת', 'other-cohort': 'שאלון ממחזור אחר', 'unlisted-code': 'סמל שאינו מוגדר בפרופיל' };
+
+  /** שורות פירוט לסימון "נדרשת בדיקה ידנית": סמל השאלון, המקצוע, הסיבה והציון (מערך ריק כשאין סימון) */
+  function manualReviewLines(ev) {
+    const mr = ev && ev.manualReview;
+    if (!mr || !mr.required) return [];
+    return mr.foreignCodes.map(f => {
+      const where = [f.subject, f.level ? `${f.level} יח"ל` : '', f.cohort].filter(Boolean).join(' · ');
+      const score = f.grade != null ? `ציון ${Math.round(f.grade)}` : f.status === 'pass' ? 'עובר' : f.status === 'fail' ? 'לא עבר' : 'ללא ציון';
+      return `שאלון ${f.code}${where ? ` (${where})` : ''}: ${FOREIGN_REASON[f.reason] || f.reason} · ${score}`;
+    });
   }
 
   /** תקינות צבירה מצטברת: י' / י"א לפי paceStatus; חניכי י"ב (אם נכללו) לפי צפי הזכאות הרגיל */
@@ -305,5 +319,5 @@ const BagrutAdvisor = (() => {
     return { name, questionnaires, rows, pass };
   }
 
-  return { drillOptions, subjectMatrix, summarize, summarizePace, subjectCell, majorCell, internalCells, focusItems, compTip };
+  return { drillOptions, subjectMatrix, summarize, summarizePace, manualReviewLines, subjectCell, majorCell, internalCells, focusItems, compTip };
 })();
