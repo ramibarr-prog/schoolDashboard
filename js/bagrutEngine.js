@@ -193,7 +193,7 @@ const BagrutEngine = (() => {
   function isInternalComp(comp, siblings) {
     if (comp.internal === true) return true;
     if (comp.internal === false) return false;
-    const re = /בית-?ספרי|פנימי/;
+    const re = /בית[\s\-־]?ספרי|פנימי/;
     if (re.test(comp.label || '')) return true;
     const cat = Config.rules().questionnaires || {};
     if ((comp.codes || []).some(code => { const q = cat[String(code)]; return !!q && re.test(q.name || ''); })) return true;
@@ -503,7 +503,7 @@ const BagrutEngine = (() => {
     /* מתמטיקה ברמת 5 יח"ל (מקצוע ליבה) נחשבת מקצוע מורחב; אנגלית לעולם לא */
     (subjects || []).forEach(s => {
       const def = rules.coreSubjects.find(x => x.id === s.id);
-      if (!def || s.id === 'english' || !(def.majorEligible ?? s.id === 'math')) return;
+      if (!def || s.id === 'english' || def.majorEligible !== true) return;
       if (!(Number(s.units) >= requiredUnits) || !['pass', 'comp', 'severe', 'fail'].includes(s.status)) return;
       cands.push({
         id: `core-${s.id}`, coreId: s.id, name: `${s.name} ${s.units} יח"ל`, enrolled: true, bagrut: s.final, current: s.current,
@@ -1105,7 +1105,7 @@ const BagrutEngine = (() => {
         const enrolled = enrolledInMajor(tz, major, 5);
         if (!enrolled && !hasCodes(tz, [major.codes])) return;
         comps = defs;
-        scope = { key: `major:${major.id}`, min: COHORT_MIN_PCT, test: x => enrolledInMajor(x, major, 5) };
+        scope = { key: `major:${major.id}`, min: Number(rules.cohortMajorMinPct) || COHORT_MAJOR_PCT, test: x => enrolledInMajor(x, major, 5) };
         group = Store.groupsOf(tz).find(g => !g.reinforcement && Util.matchKeywords(g.subject, major.keywords));
       } else {
         group = Store.groupsOf(tz).find(g => !g.reinforcement && Util.matchKeywords(g.subject, subj.keywords));
@@ -1149,5 +1149,5 @@ const BagrutEngine = (() => {
     return { name, questionnaires, rows, pass };
   }
 
-  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, codeOfComp, compOrd, resolveTiming, drillOptions, subjectMatrix, evaluate, summarize, summarizePace, detectPotentialException, activeCohortQuestionnaires, cohortOf };
+  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, codeOfComp, compOrd, resolveTiming, passesUnder, drillOptions, subjectMatrix, evaluate, summarize, summarizePace, detectPotentialException, activeCohortQuestionnaires, cohortOf };
 })();

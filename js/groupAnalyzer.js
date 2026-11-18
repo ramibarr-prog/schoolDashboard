@@ -12,10 +12,13 @@ const SADIN_PASS = 55;
 
 /* מקצועות שגרתיים שבהם רישום לשתי קבוצות / ריבוי מורים הוא תקין (חינוך, מגדר, מפגש בוקר) */
 const ROUTINE_DUPLICATE_SUBJECTS = ['חינוך', 'מגדר', 'מפגש בוקר'];
+/* מקצועות שמכילים "חינוך" אך אינם שגרתיים: חינוך גופני ותעבורתי לעולם לא מוסתרים */
+const NON_ROUTINE_SUBJECTS = ['חינוך גופני', 'חנ"ג', 'חנג', 'תעבורתי'];
 /** האם שם המקצוע זהה לאחד המקצועות השגרתיים או מכיל אותו (מנורמל מגרשיים) */
 function isRoutineDuplicateSubject(subjectName) {
   const s = Util.norm(subjectName);
-  return !!s && ROUTINE_DUPLICATE_SUBJECTS.some(term => s.includes(Util.norm(term)));
+  if (!s || NON_ROUTINE_SUBJECTS.some(term => s.includes(Util.norm(term)))) return false;
+  return ROUTINE_DUPLICATE_SUBJECTS.some(term => s.includes(Util.norm(term)));
 }
 
 const Store = {

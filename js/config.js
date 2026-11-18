@@ -190,7 +190,7 @@ function defaultBagrutRules() {
           '4': on([{ codes: ['16382'], weight: 50, expectedGrade: 'יא' }, { codes: ['16471'], weight: 50, expectedGrade: 'יב' }]),
           '5': on([{ codes: ['16471'], weight: 50, expectedGrade: 'יא' }, { codes: ['16582'], weight: 50, expectedGrade: 'יב' }])
         } },
-      { id: 'math', name: 'מתמטיקה', variableUnits: true, majorEligible: true, defaultLevel: '4', keywords: ['מתמטיקה', 'חשבון'], enabled: true,
+      { id: 'math', name: 'מתמטיקה', variableUnits: true, majorEligible: false, defaultLevel: '4', keywords: ['מתמטיקה', 'חשבון'], enabled: true,
         components: [],
         levels: {
           '3': on([{ codes: ['35173', '35183'], weight: 20, expectedGrade: 'י' }, { codes: ['35371', '35381'], weight: 40, expectedGrade: 'יא' }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב' }]),
@@ -316,6 +316,7 @@ const Config = {
     list.forEach(p => {
       if (!p || typeof p !== 'object' || !p.id || this.validateRules(p.rules)) return;
       const id = String(p.id);
+      this._backfillExpectedGrades(p.rules);
       out[id] = { id, name: String(p.name || '').trim() || id, rules: p.rules };
     });
     if (!Object.keys(out).length) {
@@ -1174,7 +1175,33 @@ const Config = {
     Object.values(this.data.cohortProfiles).forEach(p => this._syncQuestionnairesOf(p.rules));
   },
 
+  /**
+   * מילוי expectedGrade ברכיבי ליבה של פרופילים שמורים שנוצרו לפני שהשדה נוסף: התאמה לרכיב ברירת המחדל באותו
+   * (מקצוע, רמה) לפי מפתח סמלים זהה, ובהיעדרו לפי סמל משותף. רכיב שכבר יש לו שכבה מפורשת לא משתנה.
+   */
+  _backfillExpectedGrades(r) {
+    if (!r || !Array.isArray(r.coreSubjects)) return;
+    const defaults = defaultBagrutRules().coreSubjects;
+    const keyOf = c => (c.codes || []).map(String).sort().join(',');
+    r.coreSubjects.forEach(s => {
+      /* מתמטיקה 5 יח"ל אינה מחליפה מגמה בשער 2 – גם בפרופילים שמורים */
+      if (s.id === 'math') s.majorEligible = false;
+      const ds = defaults.find(d => d.id === s.id);
+      if (!ds) return;
+      const pairs = s.variableUnits
+        ? Object.entries(s.levels || {}).map(([lv, list]) => [list, (ds.levels || {})[lv]])
+        : [[s.components, ds.components]];
+      pairs.forEach(([list, defList]) => (list || []).forEach(c => {
+        if (!defList || !c || !Array.isArray(c.codes) || Util.ord(Util.normGrade(c.expectedGrade)) >= 10) return;
+        const codes = c.codes.map(String);
+        const match = defList.find(d => keyOf(d) === keyOf(c)) || defList.find(d => (d.codes || []).some(x => codes.includes(String(x))));
+        if (match && match.expectedGrade) c.expectedGrade = match.expectedGrade;
+      }));
+    });
+  },
+
   _syncQuestionnairesOf(r) {
+    this._backfillExpectedGrades(r);
     r.questionnaires = r.questionnaires || {};
     const add = (code, name, expectedGrade) => {
       if (!code || code === 'פנימי') return;
@@ -1327,9 +1354,12 @@ const Config = {
     });
   },
 
-  /** עדכון מפורש של שאלון בקטלוג מאמת את שכבת היעד שלו */
+  /** רק עדכון מפורש של שכבת היעד מאמת אותה; עריכת שם בלבד אינה משנה את סטטוס האימות */
   setQuestionnaire(code, patch) {
-    return this.updateRules(r => { r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, verifiedGrade: true, unverifiedGrade: false }; });
+    const verifies = !!(patch && 'expectedGrade' in patch && Util.normGrade(patch.expectedGrade));
+    return this.updateRules(r => {
+      r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, ...(verifies ? { verifiedGrade: true, unverifiedGrade: false } : {}) };
+    });
   },
   removeQuestionnaire(code) {
     return this.updateRules(r => { delete r.questionnaires[code]; });
