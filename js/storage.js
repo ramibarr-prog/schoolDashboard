@@ -1,6 +1,6 @@
 /* =====================================================================
-   storage.js – סנכרון ענן אוטומטי (Google Apps Script), ללא סיסמת עריכה.
-   כל מצב היישום מתכנס ל-JSON אחד (buildState) שנדחף / נמשך מהענן, ומוצפן אופציונלית בקוד בית-ספר.
+   storage.js – סנכרון ענן אוטומטי (Google Apps Script), עם הגנות אבטחה
+   ומונע דריסות עיוורות (Last-Write-Wins מחוסן).
    ===================================================================== */
 const CloudSync = {
   LS: { url: 'sd.cloud.url', pass: 'sd.cloud.passcode', meta: 'sd.cloud.meta' },
@@ -14,7 +14,7 @@ const CloudSync = {
   /* ---------- הגדרות ---------- */
   _get(k) { try { return localStorage.getItem(this.LS[k]) || ''; } catch (e) { return ''; } },
   _set(k, v) { try { if (v) localStorage.setItem(this.LS[k], v); else localStorage.removeItem(this.LS[k]); } catch (e) { /* noop */ } },
-  url() { return (this._get('url') || Config.CLOUD_SYNC_URL || '').trim(); },
+  url() { return (this._get('url') || '').trim(); },
   passcode() { return this._get('pass'); },
   saveSettings({ url, passcode }) {
     const previousUrl = this.url(), previousPass = this.passcode();
@@ -31,7 +31,6 @@ const CloudSync = {
   _setMeta(m) { try { localStorage.setItem(this.LS.meta, JSON.stringify({ ...this.meta(), ...m })); } catch (e) { /* noop */ } },
   hasUnpublished() { return !!this.meta().dirty; },
 
-  /** כל שמירה מקומית מתזמנת תמונת מצב מלאה; טעינה מהענן אינה יוצרת העלאה חוזרת. */
   markDirty() {
     if (this._suppress) return;
     this._revision++;
@@ -124,32 +123,28 @@ const CloudSync = {
     } finally { this._suppress--; }
   },
 
-  /* ---------- הצפנה (קוד בית-ספר) ---------- */
+  /* ---------- הצפנה (קוד בית-ספר) - מבוססת AES-GCM בלבד ---------- */
   _b64(buf) { let s = ''; new Uint8Array(buf).forEach(b => { s += String.fromCharCode(b); }); return btoa(s); },
   _unb64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); },
   async _key(pass, salt) {
     const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   },
-  /** XOR + base64: גיבוי להצפנה כשאין crypto.subtle (הסתרה בלבד, לא הצפנה חזקה) */
-  _xor(bytes, pass) {
-    const k = new TextEncoder().encode(pass);
-    return bytes.map((b, i) => b ^ k[i % k.length]);
-  },
   async seal(obj) {
     const text = JSON.stringify(obj), pass = this.passcode();
     if (!pass) return { enc: 'none', data: text };
+    if (!(window.crypto && crypto.subtle)) throw new Error('הדפדפן אינו תומך בהצפנה מאובטחת');
     const bytes = new TextEncoder().encode(text);
-    if (window.crypto && crypto.subtle) {
-      const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await this._key(pass, salt), bytes);
-      return { enc: 'aes1', salt: this._b64(salt), iv: this._b64(iv), data: this._b64(ct) };
-    }
-    return { enc: 'xor1', data: this._b64(this._xor(bytes, pass)) };
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await this._key(pass, salt), bytes);
+    return { enc: 'aes1', salt: this._b64(salt), iv: this._b64(iv), data: this._b64(ct) };
   },
   async open(env) {
     if (!env || typeof env !== 'object') throw new Error('תמונת מצב ריקה בענן');
-    if (env.enc === 'none') return JSON.parse(env.data);
+    if (env.enc === 'none') {
+      if (this.passcode()) throw new Error('הנתונים בענן אינם מוצפנים, אך הוגדר קוד בית-ספר במכשיר זה');
+      return JSON.parse(env.data);
+    }
     const pass = this.passcode();
     if (!pass) throw new Error('הנתונים בענן מוצפנים – יש להזין קוד בית-ספר בהגדרות הסנכרון');
     try {
@@ -158,9 +153,8 @@ const CloudSync = {
         const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this._unb64(env.iv) }, await this._key(pass, this._unb64(env.salt)), this._unb64(env.data));
         return JSON.parse(new TextDecoder().decode(pt));
       }
-      if (env.enc === 'xor1') return JSON.parse(new TextDecoder().decode(this._xor(this._unb64(env.data), pass)));
     } catch (e) { throw new Error('קוד בית-ספר שגוי או נתונים פגומים'); }
-    throw new Error('פורמט הצפנה לא מוכר');
+    throw new Error('פורמט הצפנה לא מוכר או שאינו נתמך מסיבות אבטחה');
   },
 
   /* ---------- תקשורת ---------- */
@@ -177,7 +171,6 @@ const CloudSync = {
   pushCloudState() {
     return this._enqueue(async () => {
       await Config.ready;
-      // Read before the first write, including retries after a failed startup pull.
       if (!this._ready) {
         await this._pullCloudState();
         this._ready = true;
@@ -196,7 +189,7 @@ const CloudSync = {
       const bodyData = {
         action: 'push',
         updatedAt: state.updatedAt,
-        payload // תמונת המצב המלאה (מוצפנת אם הוגדר קוד בית-ספר)
+        payload
       };
       const r = await this._post(bodyData);
       this._setMeta({ dirty: revision !== this._revision, syncedAt: r.updatedAt || state.updatedAt });
@@ -209,7 +202,6 @@ const CloudSync = {
     }
   },
 
-  /** מושך את תמונת המצב האחרונה; force מתעלם מהשוואת updatedAt. מחזיר 'applied' | 'current' | 'kept-local' | 'empty' */
   pullCloudState(opts = {}) {
     return this._enqueue(async () => {
       await Config.ready;
@@ -236,7 +228,7 @@ const CloudSync = {
       }
       const state = await this.open(json.payload);
       if (this._revision !== revision || (!opts.force && this.hasUnpublished())) {
-        this.emitStatus({ kind: 'warn', updatedAt: meta.syncedAt || 0, text: '☁️ שינויים ממתינים לסנכרון' });
+        this.emitStatus({ kind: 'warn', updatedAt: meta.syncedAt || 0, text: '☁️ שינויים מקומיים ממתינים - דחיפה מבוטלת למניעת דריסה' });
         return 'kept-local';
       }
       await this.applyState(state);
@@ -250,7 +242,6 @@ const CloudSync = {
   },
 
   /* ---------- גיבוי לקובץ ---------- */
-  /** גיבוי מלא: כל תמונת המצב (מצבת, קובצי בגרות/קבוצות/סדין, דריסות, חריגים וכללים) + פרופילי מיפוי העמודות */
   exportBackup() {
     const blob = new Blob([JSON.stringify({ ...this.buildState(), mappingProfiles: Config.data.mappingProfiles })], { type: 'application/json' });
     const a = document.createElement('a');
@@ -259,13 +250,11 @@ const CloudSync = {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
-  /** מחזיר 'full' לגיבוי מלא או 'legacy' לקובץ config.json ישן (מצבת והגדרות בלבד) */
   async importBackup(text) {
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
     const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'cohortProfiles', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
-    /* config.json ישן (גרסה 2): מצבת והגדרות בלבד, בלי המפתחות של תמונת המצב המלאה */
-    const isFull = s && typeof s === 'object' && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
+    const isFull = s && typeof s === 'object' && !Array.isArray(s) && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
     if (s && typeof s === 'object' && !Array.isArray(s) && !isFull && LEGACY_KEYS.some(k => k in s)) {
       await Config.importJSON(text, { silent: true });
       this.markDirty();
@@ -281,10 +270,7 @@ const CloudSync = {
   },
 
   init() {
-    const savedUrl = this._get('url').trim();
-    if (savedUrl !== Config.CLOUD_SYNC_URL && /^https?:\/\/script\.google\.com(?::\d+)?(?:[/?#]|$)/i.test(savedUrl)) {
-      this.saveSettings({ url: Config.CLOUD_SYNC_URL });
-    }
+    // הוסר הקוד המזיק שניסה לאפס את כתובת הענן לכתובת ברירת המחדל הציבורית
     ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
   }
 };
