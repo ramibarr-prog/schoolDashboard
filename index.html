@@ -285,20 +285,15 @@
       body.sadin-active #globalFilterBar > div { column-gap: .25rem; }
     }
     #globalFilterBar #sadinActions .chip, #globalFilterBar #sadinActions .btn { padding: .25rem .35rem; }
-    /* סרגל סינון גלובלי בשורה אחת בשולחן עבודה רחב: כפתורי הסטטוס דחוסים ומתקצרים בחן. במסך צר יותר השורה עוברת לשורה שנייה במקום להיחתך */
+    /* סרגל סינון גלובלי: הבקרים אינם מתכווצים ואינם חופפים; כשאין מקום השורה עוברת לשורה נוספת (בשולחן עבודה רחב הכול נכנס בשורה אחת) */
     #globalFilterBar { position: relative; z-index: 40; }
-    #globalFilterBar > div { padding: 6px 16px; gap: 8px; }
-    @media (min-width: 1280px) {
-      #globalFilterBar > div { flex-wrap: nowrap; }
-      #globalFilterBar label, #globalFilterBar select.inp { min-width: 0; flex-shrink: 1; }
-      #globalFilterBar select.inp { min-width: 72px; }
-      #globalFilterBar #fGrade, #globalFilterBar #fTrack { min-width: 60px; }
-      #globalFilterBar #bagrutActions, #globalFilterBar #groupActions, #globalFilterBar #sadinActions { flex-wrap: nowrap; flex-shrink: 0; }
-      #ribbonStatus { flex-wrap: nowrap; flex-shrink: 1; min-width: 0; gap: 6px; }
-      #ribbonStatus .brand-pill { display: block; min-width: 0; flex-shrink: 1; font-size: 12px; padding: 4px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      #ribbonStatus .brand-pill:empty { display: none; }
-      #globalFilterBar div[data-sadin-only]:not(.hidden), #gctl-explorer { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; flex-shrink: 1; }
-    }
+    #globalFilterBar > div { padding: 6px 16px; gap: 6px 8px; flex-wrap: wrap; }
+    #globalFilterBar label, #globalFilterBar select.inp, #globalFilterBar .btn, #globalFilterBar .chip { flex-shrink: 0; }
+    #globalFilterBar #bagrutActions, #globalFilterBar #groupActions, #globalFilterBar #sadinActions, #globalFilterBar #profileSwitcher { flex-shrink: 0; }
+    #ribbonStatus { gap: 6px; flex-shrink: 0; }
+    #ribbonStatus .brand-pill { font-size: 12px; padding: 4px 10px; white-space: nowrap; }
+    /* עטיפות הבקרים הייחודיים ללשונית משתתפות ישירות בפריסת השורה */
+    #globalFilterBar div[data-sadin-only]:not(.hidden), #globalFilterBar > div > div[data-groups-only]:not(#groupActions):not(.hidden), #gctl-explorer:not(.hidden) { display: contents; }
     #groups-detail table.grid td { padding: .125rem .75rem; font-size: .75rem; line-height: 1rem; }
     #groups-table table.grid td { padding: .45rem .75rem; font-size: .8rem; line-height: 1.25rem; }
     #groups-detail table.grid tr.room-divider td { padding: .125rem .75rem; }
@@ -885,11 +880,11 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261118_8"></script>
-  <script src="js/storage.js?v=20261118_8"></script>
-  <script src="js/parser.js?v=20261118_8"></script>
-  <script src="js/bagrutEngine.js?v=20261118_8"></script>
-  <script src="js/groupAnalyzer.js?v=20261118_8"></script>
-  <script src="js/app.js?v=20261118_8"></script>
+  <script src="js/config.js?v=20261118_9"></script>
+  <script src="js/storage.js?v=20261118_9"></script>
+  <script src="js/parser.js?v=20261118_9"></script>
+  <script src="js/bagrutEngine.js?v=20261118_9"></script>
+  <script src="js/groupAnalyzer.js?v=20261118_9"></script>
+  <script src="js/app.js?v=20261118_9"></script>
 </body>
 </html>
