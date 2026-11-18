@@ -346,15 +346,17 @@
     .ov-fill { display: block; height: 100%; border-radius: 999px; background: var(--sage); }
     .ov-fill.mustard { background: var(--mustard); }
     .ov-bar[aria-pressed="true"] { background: var(--sage-tint); }
-    /* תג התצוגה הפעילה בחדר הבקרה: מראה בבירור איזה היקף (בית ספר / שכבה / כיתה) מוצג */
-    .active-scope-banner { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 1rem; min-height: 3.4rem; padding: .5rem 1.4rem .5rem .6rem; border-radius: 999px; font-weight: 800; border: 2px solid var(--forest); }
-    .active-scope-banner .scope-name { font-size: 1.35rem; line-height: 1.2; }
-    .active-scope-banner.is-class { background: var(--mustard); color: var(--forest); box-shadow: 0 6px 16px -6px rgba(180, 120, 20, .6); }
-    .active-scope-banner.is-grade { background: var(--forest); color: var(--cream-bg); }
-    .active-scope-banner.is-all { background: var(--sage-tint); color: var(--forest); border-color: var(--sage-soft); padding: .5rem 1.4rem; }
-    .active-scope-banner .scope-reset { min-height: 2.3rem; padding: .3rem 1.1rem; border-radius: 999px; font-size: .95rem; font-weight: 800; cursor: pointer; background: var(--forest); color: var(--cream-bg); border: 2px solid var(--forest); transition: background .15s, color .15s; }
-    .active-scope-banner.is-grade .scope-reset { background: var(--mustard); color: var(--forest); border-color: var(--mustard); }
-    .active-scope-banner .scope-reset:hover { background: var(--cream-bg); color: var(--forest); }
+    /* חיווי ההיקף הפעיל בחדר הבקרה: כדור היקף (כיתה / שכבה) וכדור "חזרה" בהיר לצידו */
+    .active-scope-banner { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: .35rem .5rem; }
+    .scope-pill { position: relative; display: inline-flex; align-items: center; gap: .6rem; min-height: 3rem; padding: .35rem 1.4rem; border-radius: 999px; font-size: 1.15rem; font-weight: 800; color: var(--forest); background: var(--sage-tint); border: 1.5px solid var(--sage-soft); }
+    .scope-cap { width: 1.4rem; height: 1.4rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .scope-rays { display: none; position: absolute; left: -1.5rem; top: -.9rem; width: 2rem; height: 2rem; fill: none; stroke: var(--peach); stroke-width: 2.4; stroke-linecap: round; }
+    .active-scope-banner.is-class .scope-pill { background: linear-gradient(180deg, #F7D993 0%, #E8B95F 100%); border-color: #D9A441; box-shadow: 0 6px 14px -6px rgba(180, 120, 20, .6); }
+    .active-scope-banner.is-class .scope-rays { display: block; }
+    .active-scope-banner.is-grade .scope-pill { background: linear-gradient(180deg, #D5E4D7 0%, #B4CBB6 100%); border-color: var(--sage); }
+    .scope-back { display: inline-flex; align-items: center; gap: .55rem; min-height: 2.7rem; padding: .3rem 1.2rem .3rem 1.3rem; border-radius: 999px; font-size: 1rem; font-weight: 700; color: var(--forest); cursor: pointer; background: #F4F7EF; border: 1.5px solid var(--sage-soft); box-shadow: 0 2px 6px -3px rgba(53, 87, 71, .35); transition: background .15s, border-color .15s; }
+    .scope-back:hover { background: var(--sage-tint); border-color: var(--sage); }
+    .scope-chev { display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; padding-bottom: .15rem; border-radius: 50%; border: 1.5px solid var(--sage); font-size: 1.25rem; line-height: 1; }
     .ov-class-bars .ov-bar { grid-template-columns: minmax(7rem, 11rem) 1fr 5.5rem; border: 2px solid transparent; transition: opacity .15s, border-color .15s; }
     .ov-class-bars.has-selection .ov-bar:not([aria-pressed="true"]) { opacity: .65; }
     .ov-class-bars .ov-bar[aria-pressed="true"] { border-color: var(--forest); opacity: 1; }
@@ -901,12 +903,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261118_17"></script>
-  <script src="js/storage.js?v=20261118_17"></script>
-  <script src="js/parser.js?v=20261118_17"></script>
-  <script src="js/bagrutEngine.js?v=20261118_17"></script>
-  <script src="js/bagrutAdvisor.js?v=20261118_17"></script>
-  <script src="js/groupAnalyzer.js?v=20261118_17"></script>
-  <script src="js/app.js?v=20261118_17"></script>
+  <script src="js/config.js?v=20261118_18"></script>
+  <script src="js/storage.js?v=20261118_18"></script>
+  <script src="js/parser.js?v=20261118_18"></script>
+  <script src="js/bagrutEngine.js?v=20261118_18"></script>
+  <script src="js/bagrutAdvisor.js?v=20261118_18"></script>
+  <script src="js/groupAnalyzer.js?v=20261118_18"></script>
+  <script src="js/app.js?v=20261118_18"></script>
 </body>
 </html>

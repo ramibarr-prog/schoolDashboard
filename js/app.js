@@ -886,28 +886,30 @@ const App = {
         ${issues.length > SHOWN ? `<div class="pt-2 text-xs text-slate-500">מוצגים ${SHOWN} מתוך ${issues.length} · <button type="button" class="underline text-[#75977D]" data-act="ovGo" data-go="groups" data-view="anomalies">כל חריגי השיבוץ</button></div>` : ''}`
       : `<div class="text-sm text-slate-500 py-3">${m.analysis || bagrutOn ? 'אין חניכים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות בסינון הנוכחי.' : notLoaded}</div>`;
 
+    /* חיווי ההיקף הפעיל: כדור ההיקף (כיתה / שכבה) וכדור "חזרה" בהיר לצידו */
+    const capIcon = '<svg class="scope-cap" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>';
+    const rays = '<svg class="scope-rays" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13 8 6M16 18 4 17M21 8 18 1"/></svg>';
+    const back = (reset, text) => `<button type="button" class="scope-back" data-act="ovScopeReset" data-reset="${reset}"><span class="scope-chev" aria-hidden="true">›</span>${text}</button>`;
     let banner;
     if (classOn) {
       const g = f.grade !== 'all' ? f.grade : Util.parseClass('', f.cls).gradeKey;
-      banner = `<span class="active-scope-banner is-class" role="status"><span class="scope-name">כיתה ${E(scopeLabel)}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="cls">✕ חזרה לכל שכבת ${E(Util.gl(g))}</button></span>`;
+      banner = `<div class="active-scope-banner is-class" role="status"><span class="scope-pill">${rays}${capIcon}כיתה ${E(scopeLabel)}</span>${back('cls', `חזרה לכל שכבת ${E(Util.gl(g))}`)}</div>`;
     } else if (f.grade !== 'all') {
-      banner = `<span class="active-scope-banner is-grade" role="status"><span class="scope-name">שכבת ${E(Util.gl(f.grade))}</span><button type="button" class="scope-reset" data-act="ovScopeReset" data-reset="grade">✕ כל השכבות</button></span>`;
+      banner = `<div class="active-scope-banner is-grade" role="status"><span class="scope-pill">${capIcon}שכבת ${E(Util.gl(f.grade))}</span>${back('grade', 'חזרה לכל השכבות')}</div>`;
     } else {
-      banner = `<span class="active-scope-banner is-all" role="status"><span class="scope-name">כלל בית הספר</span></span>`;
+      banner = `<div class="active-scope-banner is-all" role="status"><span class="scope-pill">כלל בית הספר</span></div>`;
     }
     setHtml('overview-body', `
       <div class="flex flex-wrap items-end justify-between gap-3">
-        <div class="flex flex-wrap items-end gap-x-4 gap-y-2">
-          <div>
-            <div class="text-xs font-semibold text-[#75977D]">מוניטור פדגוגי ‹ חדר בקרה</div>
-            <h2 class="ov-title text-2xl font-extrabold text-[#355747] mt-0.5">חדר בקרה פדגוגי – תמונת מצב</h2>
-          </div>
-          ${banner}
+        <div>
+          <div class="text-xs font-semibold text-[#75977D]">מוניטור פדגוגי ‹ חדר בקרה</div>
+          <h2 class="ov-title text-2xl font-extrabold text-[#355747] mt-0.5">חדר בקרה פדגוגי – תמונת מצב</h2>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <span id="ovSyncPill" class="ov-pill" role="status">${E(($('syncStatus') || {}).textContent || '')}</span>
         </div>
       </div>
+      ${banner}
       ${missing.length ? `<div class="card px-4 py-2 flex flex-wrap items-center gap-2 text-sm"><span class="text-slate-500">טרם נטענו קבצים:</span>${missing.map(key => `<button type="button" class="btn btn-primary btn-sm" data-upload="${key}">📂 ${E(DATASETS[key].title)}</button>`).join('')}</div>` : ''}
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${card1}${card2}${card3}${card4}</div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
