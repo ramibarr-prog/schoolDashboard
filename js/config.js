@@ -174,28 +174,28 @@ function defaultBagrutRules() {
     },
     coreSubjects: [
       { id: 'history', name: 'היסטוריה', units: 2, keywords: ['היסטוריה'], enabled: true,
-        components: on([{ codes: ['22283', '29283'], weight: 30 }, { codes: ['22261', '22264'], weight: 70 }]) },
+        components: on([{ codes: ['22283', '29283'], weight: 30, expectedGrade: 'יא' }, { codes: ['22261', '22264'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'civics', name: 'אזרחות', units: 2, keywords: ['אזרחות'], enabled: true,
-        components: on([{ codes: ['34221', '34224', '34283'], weight: 20 }, { codes: ['34225', '34284', '34281'], weight: 80 }]) },
+        components: on([{ codes: ['34221', '34224', '34283'], weight: 20, expectedGrade: 'יא' }, { codes: ['34225', '34284', '34281'], weight: 80, expectedGrade: 'יב' }]) },
       { id: 'literature', name: 'ספרות', units: 2, keywords: ['ספרות'], enabled: true,
-        components: on([{ codes: ['8283'], weight: 30 }, { codes: ['8281', '8284'], weight: 70 }]) },
+        components: on([{ codes: ['8283'], weight: 30, expectedGrade: 'יא' }, { codes: ['8281', '8284'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'tanach', name: 'תנ"ך', units: 2, keywords: ['תנך', 'תנ"ך', 'מקרא'], enabled: true,
-        components: on([{ codes: ['1263', '2383'], weight: 30 }, { codes: ['1264', '1261'], weight: 70 }]) },
+        components: on([{ codes: ['1263', '2383'], weight: 30, expectedGrade: 'יא' }, { codes: ['1264', '1261'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'hebrew', name: 'עברית', units: 2, keywords: ['עברית', 'הבעה', 'לשון'], enabled: true,
-        components: on([{ codes: ['11283'], weight: 30 }, { codes: ['11281', '11241', '11247', '11267', '11284'], weight: 70 }]) },
+        components: on([{ codes: ['11283'], weight: 30, expectedGrade: 'יא' }, { codes: ['11281', '11241', '11247', '11267', '11284'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'english', name: 'אנגלית', variableUnits: true, defaultLevel: '4', keywords: ['אנגלית'], enabled: true,
         components: [],
         levels: {
-          '3': on([{ codes: ['16381'], weight: 50 }, { codes: ['16382'], weight: 50 }]),
-          '4': on([{ codes: ['16382'], weight: 50 }, { codes: ['16471'], weight: 50 }]),
-          '5': on([{ codes: ['16471'], weight: 50 }, { codes: ['16582'], weight: 50 }])
+          '3': on([{ codes: ['16381'], weight: 50, expectedGrade: 'י' }, { codes: ['16382'], weight: 50, expectedGrade: 'יא' }]),
+          '4': on([{ codes: ['16382'], weight: 50, expectedGrade: 'יא' }, { codes: ['16471'], weight: 50, expectedGrade: 'יב' }]),
+          '5': on([{ codes: ['16471'], weight: 50, expectedGrade: 'יא' }, { codes: ['16582'], weight: 50, expectedGrade: 'יב' }])
         } },
       { id: 'math', name: 'מתמטיקה', variableUnits: true, majorEligible: true, defaultLevel: '4', keywords: ['מתמטיקה', 'חשבון'], enabled: true,
         components: [],
         levels: {
-          '3': on([{ codes: ['35173', '35183'], weight: 20 }, { codes: ['35371', '35381'], weight: 40 }, { codes: ['35372', '35380', '35382'], weight: 40 }]),
-          '4': on([{ codes: ['35471', '35481'], weight: 50 }, { codes: ['35472', '35482'], weight: 50 }]),
-          '5': on([{ codes: ['35571', '35581'], weight: 50 }, { codes: ['35572', '35582'], weight: 50 }])
+          '3': on([{ codes: ['35173', '35183'], weight: 20, expectedGrade: 'י' }, { codes: ['35371', '35381'], weight: 40, expectedGrade: 'יא' }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב' }]),
+          '4': on([{ codes: ['35471', '35481'], weight: 50, expectedGrade: 'יא' }, { codes: ['35472', '35482'], weight: 50, expectedGrade: 'יב' }]),
+          '5': on([{ codes: ['35571', '35581'], weight: 50, expectedGrade: 'יא' }, { codes: ['35572', '35582'], weight: 50, expectedGrade: 'יב' }])
         } }
     ],
     /* מגמות: codeMode 'any' = מספיק שאלון אחד מהרשימה (חלופות); majorNames = שמות המגמה בעמודת "מגמה" של קובץ קבוצות הלימוד */
@@ -245,6 +245,9 @@ function defaultBagrutRules() {
     }
   };
 }
+
+/* סמלי שאלון שנטענו במפורש לקטלוג ברירת המחדל: שכבת היעד שלהם מאומתת. כל סמל אחר שנוסף לרכיב ללא שכבה מפורשת מקבל י"ב כברירת מחדל לא מאומתת */
+const KNOWN_VERIFIED_CODES = new Set(Object.keys(defaultBagrutRules().questionnaires));
 
 /* =====================================================================
    מנהל הגדרות ונתונים
@@ -1065,6 +1068,12 @@ const Config = {
     const restore = this.pushRulesForGrade(gradeStr);
     try { return fn(); } finally { restore(); }
   },
+  /** מריץ פונקציה כשכל הקריאות ל-Config.rules() מחזירות את אובייקט הכללים שנמסר (לבדיקה מול מחזור אחר) */
+  withRules(rules, fn) {
+    const prev = this._rulesOverride;
+    this._rulesOverride = rules;
+    try { return fn(); } finally { this._rulesOverride = prev; }
+  },
   pushRulesForGrade(gradeStr) {
     const prev = this._rulesOverride;
     this._rulesOverride = this.rulesForGrade(gradeStr);
@@ -1133,14 +1142,29 @@ const Config = {
     return '';
   },
 
-  /** אזהרות לא חוסמות: סכום משקלים שאינו 100 במקצוע פעיל */
+  /** אזהרות לא חוסמות: סכום משקלים שאינו 100 במקצוע פעיל, ושכבות יעד לא מאומתות / סותרות ברכיבי ליבה */
   rulesWarnings(r = this.rules()) {
     const out = [];
     const sum = list => (list || []).filter(c => c.enabled !== false).reduce((a, c) => a + (Number(c.weight) || 0), 0);
+    const validRank = g => { const n = Util.ord(Util.normGrade(g)); return n >= 10 ? n : 0; };
+    const cat = r.questionnaires || {};
+    const unverified = code => {
+      const q = cat[code];
+      return !q || q.unverifiedGrade === true || (!KNOWN_VERIFIED_CODES.has(code) && q.verifiedGrade !== true);
+    };
+    const seen = new Set();
+    const push = msg => { if (!seen.has(msg)) { seen.add(msg); out.push(msg); } };
     (r.coreSubjects || []).filter(s => s.enabled !== false).forEach(s => {
       const lists = s.variableUnits ? Object.entries(s.levels || {}).map(([l, v]) => [`${s.name} (${l} יח"ל)`, v]) : [[s.name, s.components]];
       lists.forEach(([name, list]) => {
         if (list && list.length && Math.round(sum(list)) !== 100) out.push(`${name}: סכום המשקלים ${Math.round(sum(list))}% (צפוי 100%)`);
+        (list || []).filter(c => c.enabled !== false).forEach(c => {
+          if (validRank(c.expectedGrade)) return;
+          const codes = (c.codes || []).map(String);
+          codes.filter(unverified).forEach(code => push(`${s.name}: לשאלון ${code} לא הוגדרה שכבת יעד מאומתת (נקבעה ברירת מחדל י"ב)`));
+          const ranks = new Set(codes.map(code => validRank((cat[code] || {}).expectedGrade)).filter(Boolean));
+          if (ranks.size > 1) push(`${s.name}: סמלי שאלון חלופיים באותו רכיב (${codes.join('/')}) מוגדרים לשכבות יעד שונות`);
+        });
       });
     });
     return out;
@@ -1158,7 +1182,20 @@ const Config = {
     };
     r.coreSubjects.forEach(s => {
       const lists = s.variableUnits ? Object.values(s.levels || {}) : [s.components || []];
-      lists.flat().forEach(c => (c.codes || []).forEach(code => add(code, c.label || s.name, 'יב')));
+      lists.flat().forEach(c => (c.codes || []).forEach(raw => {
+        const code = String(raw);
+        if (!code || code === 'פנימי') return;
+        const auto = c.label || s.name;
+        const explicit = c.expectedGrade ? Util.normGrade(c.expectedGrade) : '';
+        const q = r.questionnaires[code];
+        if (!q) {
+          r.questionnaires[code] = { name: auto || '', expectedGrade: explicit || 'יב' };
+          if (!explicit && !KNOWN_VERIFIED_CODES.has(code)) r.questionnaires[code].unverifiedGrade = true;
+        } else if (q.expectedGrade === 'יב' && !KNOWN_VERIFIED_CODES.has(code) && q.verifiedGrade !== true && (!explicit || q.name === auto)) {
+          /* רשומת קטלוג ישנה שקיבלה י"ב כברירת מחדל ולא אושרה מעולם */
+          q.unverifiedGrade = true;
+        }
+      }));
     });
     r.internals.forEach(i => i.codes.forEach(code => add(code, i.name, i.expectedGrade)));
   },
@@ -1259,6 +1296,9 @@ const Config = {
       const codes = (comp.codes || []).map(c => String(c).trim()).filter(Boolean);
       if (!codes.length) throw new Error('נדרש סמל שאלון');
       const item = { enabled: true, ...(list[index] || {}), ...comp, codes, weight: Number(comp.weight) };
+      /* שכבת יעד מפורשת לרכיב נשמרת מנורמלת (י / יא / יב); ערך לא תקין או ריק מסיר אותה */
+      const grade = comp.expectedGrade ? Util.normGrade(comp.expectedGrade) : '';
+      if (grade) item.expectedGrade = grade; else delete item.expectedGrade;
       if (index == null || index < 0 || index >= list.length) list.push(item); else list[index] = item;
     });
   },
@@ -1287,8 +1327,9 @@ const Config = {
     });
   },
 
+  /** עדכון מפורש של שאלון בקטלוג מאמת את שכבת היעד שלו */
   setQuestionnaire(code, patch) {
-    return this.updateRules(r => { r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch }; });
+    return this.updateRules(r => { r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, verifiedGrade: true, unverifiedGrade: false }; });
   },
   removeQuestionnaire(code) {
     return this.updateRules(r => { delete r.questionnaires[code]; });

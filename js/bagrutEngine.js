@@ -48,10 +48,48 @@ const BagrutEngine = (() => {
 
   const rnd = n => (n == null ? '—' : String(Math.round(n)));
   const activeOnly = list => (list || []).filter(c => c.enabled !== false);
-  const expOrd = code => {
-    const q = Config.rules().questionnaires[String(code)];
-    return Util.ord(q && q.expectedGrade) || 12;
-  };
+
+  /* ---------- שכבת יעד וסמל מייצג של רכיב (מקור יחיד לכל הצרכנים) ---------- */
+  const validRank = g => { const n = Util.ord(Util.normGrade(g)); return n >= 10 ? n : 0; };
+
+  /** הסמל המייצג של הרכב: סמל הניסיון הטוב ביותר שדווח, ובהיעדרו הסמל הראשון */
+  function codeOfComp(comp, b) {
+    if (b && b.kind !== 'none' && b.code) return String(b.code);
+    return String((comp && comp.codes && comp.codes[0]) || '');
+  }
+
+  /**
+   * שכבת היעד המספרית (10 / 11 / 12) של רכיב, לפי סדר עדיפות:
+   * 1. expectedGrade מפורש ברכיב; 2. שכבת הסמל של הניסיון שדווח; 3. הקטלוג לכל סמלי הרכיב (עדיפות לסמלים מאומתים,
+   * ובמקרה של פער – השכבה המאוחרת); 4. י"ב.
+   */
+  function compOrd(comp, b) {
+    const explicit = validRank(comp && comp.expectedGrade);
+    if (explicit) return explicit;
+    const cat = Config.rules().questionnaires || {};
+    if (b && b.kind !== 'none' && b.code) {
+      const r = validRank((cat[String(b.code)] || {}).expectedGrade);
+      if (r) return r;
+    }
+    const entries = ((comp && comp.codes) || []).map(code => cat[String(code)]).filter(q => q && validRank(q.expectedGrade));
+    const verified = entries.filter(q => !q.unverifiedGrade);
+    const ranks = (verified.length ? verified : entries).map(q => validRank(q.expectedGrade));
+    return ranks.length ? Math.max(...ranks) : 12;
+  }
+
+  /**
+   * תזמון רכיב מול שכבת החניך – אותה הגדרה בשער 1, בשער 2, בתקינות הצבירה ובמטריצת השאלונים.
+   * עתידי: שכבת היעד גבוהה משל החניך וטרם דווח בו כלום. נדרש: דווח בו משהו (גם כישלון / חסם), או שהגיע מועדו
+   * ובמצב תעודה סופית, או שהשכבה כבר נבחנה בו (סף הדיווח השכבתי).
+   */
+  function resolveTiming({ ord, rank, strict, cohTaken, hasAttempt }) {
+    const has = !!hasAttempt;
+    const due = has || (ord <= rank && (!!strict || !!cohTaken));
+    return {
+      ord, hasAttempt: has, future: ord > rank && !has, expDue: ord <= rank || has, due,
+      pending: !due, pendingCohort: ord <= rank && !has && !strict && !cohTaken, missing: due && !has
+    };
+  }
 
   /**
    * מידע שכבתי על רכיב (קבוצת סמלי שאלון חלופיים): כמה מהאוכלוסייה הרלוונטית בשכבה כבר קיבלו בו ציון.
@@ -92,16 +130,18 @@ const BagrutEngine = (() => {
 
   function activeCohortQuestionnairesOf(gradeKey) {
     const rules = Config.rules(), out = [];
-    const add = (subject, label, codes, weight, scope) => {
+    const add = (subject, label, codes, weight, scope, comp) => {
       if (!codes || !codes.length) return;
       const c = cohortOf(gradeKey, codes, scope);
-      out.push({ subject, label, codes, weight, variable: !!scope, pct: Math.round(c.pct), have: c.have, total: c.total, takenByCohort: c.taken, pendingCohort: !c.taken });
+      const rank = compOrd(comp || { codes });
+      out.push({ subject, label, codes, weight, variable: !!scope, pct: Math.round(c.pct), have: c.have, total: c.total, takenByCohort: c.taken, pendingCohort: !c.taken,
+        expectedGrade: Util.GRADE_KEYS.find(k => Util.ord(k) === rank) || 'יב' });
     };
     activeOnly(rules.coreSubjects).forEach(s => {
       const lists = s.variableUnits ? Object.entries(s.levels || {}).map(([lv, list]) => [lv, list]) : [['', s.components]];
-      lists.forEach(([lv, list]) => activeOnly(list).forEach(c => add(s.name + (lv ? ` ${lv} יח"ל` : ''), `${c.weight}%`, c.codes, Number(c.weight) || 0, levelScope(s, lv))));
+      lists.forEach(([lv, list]) => activeOnly(list).forEach(c => add(s.name + (lv ? ` ${lv} יח"ל` : ''), `${c.weight}%`, c.codes, Number(c.weight) || 0, levelScope(s, lv), c)));
     });
-    activeOnly(rules.internals).forEach(i => add(i.name, 'פנימי', i.codes, 0));
+    activeOnly(rules.internals).forEach(i => add(i.name, 'פנימי', i.codes, 0, null, i));
     return out;
   }
 
@@ -149,13 +189,16 @@ const BagrutEngine = (() => {
     return { level: subj.units, comps: activeOnly(subj.components) };
   }
 
-  /** רכיב בית-ספרי (30%/20%): מסומן בכללים, בשם השאלון בקטלוג, או לפי משקל נמוך מול רכיב חיצוני גדול ממנו */
+  /** רכיב בית-ספרי (30%/20%), לפי סדר עדיפות: internal מפורש (true / false) ← תווית הרכיב ← שמות השאלונים בקטלוג ← משקל נמוך מול רכיב חיצוני גדול ממנו */
   function isInternalComp(comp, siblings) {
     if (comp.internal === true) return true;
-    const q = Config.rules().questionnaires[String(comp.codes[0])];
-    if (q && /בית-?ספרי|פנימי/.test(q.name || '')) return true;
-    const weights = siblings.map(c => Number(c.weight) || 0);
-    return siblings.length > 1 && Number(comp.weight) <= 30 && Number(comp.weight) < Math.max(...weights);
+    if (comp.internal === false) return false;
+    const re = /בית-?ספרי|פנימי/;
+    if (re.test(comp.label || '')) return true;
+    const cat = Config.rules().questionnaires || {};
+    if ((comp.codes || []).some(code => { const q = cat[String(code)]; return !!q && re.test(q.name || ''); })) return true;
+    const list = siblings || [], weights = list.map(c => Number(c.weight) || 0), w = Number(comp.weight);
+    return list.length > 1 && w > 0 && w <= 30 && w < Math.max(...weights);
   }
 
   /**
@@ -164,26 +207,28 @@ const BagrutEngine = (() => {
    */
   function resolveComp(tz, comp, ctx, siblings, cur, scope) {
     const b = Store.bagrutBest(tz, comp.codes);
-    const code = comp.codes[0];
-    const ord = expOrd(code);
-    const expDue = ctx.mode === 'full' ? ord <= ctx.ord : ord < ctx.ord;
+    const code = codeOfComp(comp, b);
+    const ord = compOrd(comp, b);
     const internal = isInternalComp(comp, siblings || [comp]);
     const coh = cohortOf(ctx.gradeKey, comp.codes, scope);
     /* צפי מותאם: רכיב שהשכבה טרם נבחנה בו אינו חוסר ("בתהליך השנה"); מצב תעודה סופית דורש הכול */
-    const due = expDue && (ctx.strict || coh.taken);
-    const base = { codes: comp.codes, code, weight: Number(comp.weight) || 0, due, pending: !due, takenByCohort: coh.taken, cohortPct: Math.round(coh.pct), internal };
+    const timing = resolveTiming({ ord, rank: ctx.rank, strict: ctx.strict, cohTaken: coh.taken, hasAttempt: !!(b && b.kind !== 'none') });
+    const base = {
+      codes: comp.codes, code, weight: Number(comp.weight) || 0, targetRank: ord,
+      due: timing.due, pending: timing.pending, pendingCohort: timing.pendingCohort, future: timing.future, hasAttempt: timing.hasAttempt,
+      takenByCohort: coh.taken, cohortPct: Math.round(coh.pct), internal
+    };
     if (b && b.kind === 'num') {
       const examOnly = ctx.useCurrent && cur != null && Store.attemptsOf(tz).find(a =>
         a.code === b.code && a.partial === 'exam' && a.cls.kind === 'num' && a.cls.num === b.num);
       if (examOnly) {
         const mw = Config.magenWeight() / 100;
-        return { ...base, state: 'num', num: Math.round(cur * mw + b.num * (1 - mw)), reportedNum: b.num, code: b.code, magenForecast: true };
+        return { ...base, state: 'num', num: Math.round(cur * mw + b.num * (1 - mw)), reportedNum: b.num, magenForecast: true };
       }
-      return { ...base, state: 'num', num: b.num, code: b.code };
+      return { ...base, state: 'num', num: b.num };
     }
-    if (b && b.kind === 'pass') return { ...base, state: 'pass', code: b.code };
-    /* רכיב עתידי: שאלון שמועדו בשכבה גבוהה משל החניך וטרם דווח לו ציון – אינו חוסר */
-    return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block), targetRank: ord, future: ord > ctx.rank };
+    if (b && b.kind === 'pass') return { ...base, state: 'pass' };
+    return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block) };
   }
 
   /**
@@ -274,7 +319,8 @@ const BagrutEngine = (() => {
       if (r.state === 'num') { sum += r.num * r.weight; w += r.weight; }
       else if (r.state === 'pass') nPass++;
       else if (r.due) {
-        if (ctx.useCurrent && cur != null) { sum += cur * r.weight; w += r.weight; res.filled.push(r); }
+        /* כישלון או חסם שדווחו בפועל אינם מתמלאים בציון שוטף */
+        if (ctx.useCurrent && cur != null && !r.failed && !r.blocked) { sum += cur * r.weight; w += r.weight; res.filled.push(r); }
         else res.unresolved.push(r);
       } else res.pending.push(r);
     });
@@ -403,23 +449,26 @@ const BagrutEngine = (() => {
     const full = ctx.mode === 'full';
     const requiredUnits = (rules.gates && rules.gates.major && rules.gates.major.requiredUnits) || 5;
     const cands = [];
-    const dueOf = code => (full ? expOrd(code) <= ctx.ord : expOrd(code) < ctx.ord);
 
     /* אנגלית 5 יח"ל נספרת ליחידות ולנקודות הפיצוי, אך אינה מגמה: מגמה היא מקצוע מורחב שאינו אנגלית */
     rules.majors.filter(m => m.enabled !== false && m.id !== 'english').forEach(m => {
       const enrolled = enrolledInMajor(tz, m, requiredUnits);
       /* סף הדיווח של מגמה (15%) נמדד מתוך הלומדים אותה בשכבה, לא מכלל השכבה */
       const mScope = { key: `major:${m.id}`, min: Number(rules.cohortMajorMinPct) || COHORT_MAJOR_PCT, test: t => enrolledInMajor(t, m, requiredUnits) };
-      const partDue = codes => codes.some(dueOf) && (ctx.strict || cohortOf(ctx.gradeKey, codes, mScope).taken);
       /* חלק = קבוצת סמלי שאלון חלופיים (מספיק אחד). ב-codeMode 'any' כל סמלי המגמה הם חלק אחד; אחרת כל סמל הוא חלק נפרד.
          משקל כל חלק נקבע ב-m.weights (קוד ראשון ← משקל) ובברירת מחדל שווה */
       const parts = (m.codeMode === 'any' ? [m.codes] : m.codes.map(code => [code])).map(codes => {
         const w = Number(m.weights && m.weights[codes[0]]);
         const found = codes.map(code => Store.bagrutBest(tz, [code]));
         const nums = found.filter(b => b && b.kind === 'num').map(b => b.num);
+        const hasPartAttempt = found.some(b => b && b.kind !== 'none');
+        const timing = resolveTiming({
+          ord: compOrd({ codes, expectedGrade: m.expectedGrade }, Store.bagrutBest(tz, codes)), rank: ctx.rank, strict: ctx.strict,
+          cohTaken: cohortOf(ctx.gradeKey, codes, mScope).taken, hasAttempt: hasPartAttempt
+        });
         return {
           codes, w: w > 0 ? w : 1, nums, num: nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null,
-          pass: found.some(b => b && b.kind === 'pass'), fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), due: partDue(codes)
+          pass: found.some(b => b && b.kind === 'pass'), fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), due: timing.due
         };
       });
       const nums = parts.filter(p => p.num != null);
@@ -562,23 +611,18 @@ const BagrutEngine = (() => {
     const rules = ctx.rules, pass = rules.passGrade, rank = ctx.rank;
     const items = [];
     if (gateOn(1)) {
-      subjects.forEach(s => s.comps.forEach(c => items.push({
-        subject: s.name, code: c.codes[0], target: expOrd(c.codes[0]), cohortTaken: c.takenByCohort,
-        kind: c.state === 'num' ? 'num' : c.state === 'pass' ? 'pass' : c.failed || c.blocked ? 'fail' : 'none',
-        score: c.state === 'num' ? (c.reportedNum ?? c.num) : null
-      })));
+      subjects.forEach(s => s.comps.forEach(c => {
+        const has = c.state === 'num' || c.state === 'pass' || !!c.failed || !!c.blocked;
+        const score = c.state === 'num' ? (c.reportedNum ?? c.num) : null;
+        items.push({
+          subject: s.name, code: c.code || c.codes[0], has, score,
+          failed: !!c.failed || !!c.blocked || (c.state === 'num' && score < pass),
+          due: !!c.due, future: !!c.future, active: !!c.due, missing: !!c.due && !has
+        });
+      }));
     }
     /* יחידות פנימיות (שער 3) אינן נכללות בתקינות צבירה: הן מדווחות רק בסוף י"ב ונבדקות אך ורק בזכאות הסופית,
        בלי קשר לשכבה הצפויה שנרשמה לשאלון שלהן בהגדרות */
-
-    items.forEach(it => {
-      it.has = it.kind !== 'none';
-      it.failed = it.kind === 'fail' || (it.kind === 'num' && it.score < pass);
-      it.due = it.target <= rank || it.has;
-      it.future = !it.due;
-      it.active = it.due && (it.has || it.target < rank || ctx.strict || it.cohortTaken);
-      it.missing = it.active && !it.has;
-    });
     const active = items.filter(it => it.active);
     const failed = items.filter(it => it.failed);
     const missing = items.filter(it => it.missing);
@@ -642,8 +686,9 @@ const BagrutEngine = (() => {
   function buildCtx(t, opts) {
     const rules = Config.rules();
     const mode = t.gradeKey === 'יב' || opts.fullMode ? 'full' : 'ontrack';
+    const rank = gradeRank(t.gradeKey);
     return {
-      mode, rules, ord: Util.ord(t.gradeKey), rank: gradeRank(t.gradeKey), gradeKey: t.gradeKey, useCurrent: opts.useCurrent,
+      mode, rules, ord: rank, rank, gradeKey: t.gradeKey, useCurrent: opts.useCurrent,
       plus5: opts.plus5, ignoreInternals: opts.ignoreInternals, hasGroups: Store.loaded.groups || Store.loaded.grades,
       /* fullMode = "מצב תעודה סופית": כל השאלונים נדרשים; אחרת צפי מותאם לשלב בשנה לפי מה שהשכבה כבר נבחנה בו */
       strict: !!opts.fullMode, adaptive: !opts.fullMode
@@ -712,7 +757,7 @@ const BagrutEngine = (() => {
 
   function compTip(tz, c) {
     const a = bestAttempt(tz, c.codes.map(String));
-    const head = `שאלון ${a ? a.code : c.codes[0]}${c.weight ? ` (${c.weight}%)` : ''}`;
+    const head = `שאלון ${a ? a.code : (c.code || c.codes[0])}${c.weight ? ` (${c.weight}%)` : ''}`;
     if (a) return `${head}: מגן ${fv(a.submission)}, בחינה ${fv(a.exam)}, סופי ${fv(a.final)}${a.moed ? ` · ${a.moed}` : ''}`;
     return `${head}: ${c.state === 'missing' && !c.due ? 'טרם דווח לשכבה' : 'לא ניגש / חסר'}`;
   }
@@ -823,6 +868,14 @@ const BagrutEngine = (() => {
    * הערה מייעצת בלבד: מקצוע ליבה שהחניך נכשל / חסר בו לפי מחזור שכבתו, אך ציוניו בפועל עומדים בדרישות לפי מחזור אחר
    * (ציון >= ציון עובר וכל שאלוני המקצוע במחזור האחר קיימים). אינה משנה את סטטוס הזכאות – ההכרעה נשארת למרכזת.
    */
+  /** חתימת מבנה המקצוע: רכיבים, סמלי שאלון ומשקלים – זהה בין שני מחזורים אינו מצדיק הערה מייעצת */
+  function subjectSignature(tz, subj, rules) {
+    return Config.withRules(rules, () => {
+      const { comps } = componentsOf(tz, subj);
+      return comps.map(c => (c.codes || []).map(String).sort().join('/') + ':' + Number(c.weight)).join('|');
+    });
+  }
+
   function advisoryHints(tz, ctx, subjects) {
     const own = Config.getCohortIdForGrade(ctx.gradeKey);
     const weak = subjects.filter(s => ['fail', 'severe', 'missing', 'await'].includes(s.status));
@@ -830,23 +883,39 @@ const BagrutEngine = (() => {
     weak.forEach(s => Object.values(Config.getCohortProfiles()).forEach(p => {
       if (p.id === own) return;
       const subj = (p.rules.coreSubjects || []).find(x => x.id === s.id && x.enabled !== false);
-      if (!subj || !passesUnder(tz, subj, p.rules)) return;
+      if (!subj) return;
+      const ownSubj = (ctx.rules.coreSubjects || []).find(x => x.id === s.id);
+      if (ownSubj && subjectSignature(tz, ownSubj, ctx.rules) === subjectSignature(tz, subj, p.rules)) return;
+      if (!passesUnder(tz, subj, p.rules)) return;
       out.push({ subject: s.name, subjectId: s.id, cohortId: p.id, cohortName: p.name, text: `לבדיקה: עומד בדרישות ${s.name} לפי ${p.name}` });
     }));
     return out;
   }
 
+  /**
+   * האם המקצוע עומד בדרישות לפי כללי מחזור אחר. מחמיר: כל רכיב חייב ציון / "עובר" תקף, בלי ניסיון כושל או חסם;
+   * רכיב מספרי דורש משקל חיובי; רכיב "עובר" דורש משקל תקין (משקל 0 מותר רק ברכיב פנימי או במקצוע בן רכיב יחיד).
+   */
   function passesUnder(tz, subj, rules) {
-    const { comps } = componentsOf(tz, subj);
-    if (!comps.length) return false;
-    let sum = 0, w = 0, nPass = 0;
-    for (const c of comps) {
-      const b = Store.bagrutBest(tz, c.codes), weight = Number(c.weight) || 0;
-      if (b && b.kind === 'num') { sum += b.num * weight; w += weight; }
-      else if (b && b.kind === 'pass') nPass++;
-      else return false;
-    }
-    return w > 0 ? Math.round(sum / w) >= rules.passGrade : nPass > 0;
+    return Config.withRules(rules, () => {
+      const { comps } = componentsOf(tz, subj);
+      if (!comps.length) return false;
+      let numSum = 0, numW = 0, nPass = 0;
+      for (const c of comps) {
+        const b = Store.bagrutBest(tz, c.codes), weight = Number(c.weight);
+        if (!b || b.kind === 'none' || b.block || b.kind === 'fail') return false;
+        if (b.kind === 'num') {
+          if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(b.num)) return false;
+          numSum += b.num * weight; numW += weight;
+        } else if (b.kind === 'pass') {
+          if (!Number.isFinite(weight) || weight < 0) return false;
+          if (weight === 0 && !isInternalComp(c, comps) && comps.length > 1) return false;
+          nPass++;
+        } else return false;
+      }
+      if (numW > 0) return Math.round(numSum / numW) >= (Number(rules.passGrade) || 55);
+      return nPass === comps.length;
+    });
   }
 
   /* ---------- הערכה מלאה לחניך (לפי כללי המחזור המשויך לשכבתו) ---------- */
@@ -1013,19 +1082,20 @@ const BagrutEngine = (() => {
     const compsOf = (levelKey) => activeOnly(subj.variableUnits ? subj.levels[levelKey] : subj.components);
     const levels = subj && subj.variableUnits ? (lv ? [lv] : Object.keys(subj.levels || {}).sort()) : [''];
     const colMap = new Map();
-    const addCol = (codes, weight) => {
+    const addCol = (codes, weight, expectedGrade) => {
       const key = codes.join(',');
       const c = colMap.get(key) || { key, codes, code: codes[0], weights: new Set(), names: [] };
       c.weights.add(Number(weight) || 0);
+      if (expectedGrade && !c.expectedGrade) c.expectedGrade = expectedGrade;
       codes.forEach(cd => { const q = rules.questionnaires[String(cd)]; if (q && q.name && !c.names.includes(`${cd} ${q.name}`)) c.names.push(`${cd} ${q.name}`); });
       colMap.set(key, c);
     };
     if (major) {
       const parts = major.codeMode === 'any' ? [major.codes] : major.codes.map(c => [c]);
-      defs = parts.map(codes => ({ codes, weight: Number(major.weights && major.weights[codes[0]]) || 100 / parts.length }));
-      defs.forEach(d => addCol(d.codes, d.weight));
-    } else levels.forEach(l => compsOf(l).forEach(c => addCol(c.codes, c.weight)));
-    const questionnaires = [...colMap.values()].map(c => ({ ...c, weightText: [...c.weights].sort((a, b) => b - a).join('/') }));
+      defs = parts.map(codes => ({ codes, weight: Number(major.weights && major.weights[codes[0]]) || 100 / parts.length, expectedGrade: major.expectedGrade }));
+      defs.forEach(d => addCol(d.codes, d.weight, d.expectedGrade));
+    } else levels.forEach(l => compsOf(l).forEach(c => addCol(c.codes, c.weight, c.expectedGrade)));
+    const questionnaires = [...colMap.values()].map(c => ({ ...c, code: codeOfComp(c), weightText: [...c.weights].sort((a, b) => b - a).join('/') }));
 
     const rows = [];
     trainees.forEach(t => {
@@ -1059,11 +1129,14 @@ const BagrutEngine = (() => {
         else if (b && b.kind === 'pass') { cells[key] = { state: 'pass' }; complete = false; anyPass = true; }
         else {
           complete = false;
-          const target = expOrd(c.codes[0]);
+          const timing = resolveTiming({
+            ord: compOrd(c, b), rank: gradeRank(t.gradeKey), strict: false,
+            cohTaken: cohortOf(t.gradeKey, c.codes, scope).taken, hasAttempt: !!(b && b.kind !== 'none')
+          });
           if (b && b.kind === 'fail') cells[key] = { state: 'fail' };
           /* שאלון שמועדו בשכבה גבוהה משל החניך וטרם דווח לו ציון: עתידי, לא חסר */
-          else if (target > gradeRank(t.gradeKey)) cells[key] = { state: 'future', target };
-          else cells[key] = { state: cohortOf(t.gradeKey, c.codes, scope).taken ? 'missed' : 'pending' };
+          else if (timing.future) cells[key] = { state: 'future', target: timing.ord };
+          else cells[key] = { state: timing.due ? 'missed' : 'pending' };
         }
       });
       const accumulated = Math.round(acc);
@@ -1076,5 +1149,5 @@ const BagrutEngine = (() => {
     return { name, questionnaires, rows, pass };
   }
 
-  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, drillOptions, subjectMatrix, evaluate, summarize, summarizePace, detectPotentialException, activeCohortQuestionnaires, cohortOf };
+  return { DEFAULT_OPTS, TIER_TEXT, OVERRIDE, COHORT_MIN_PCT, COHORT_MAJOR_PCT, PACE_TIER, gradeRank, paceText, isInternalComp, codeOfComp, compOrd, resolveTiming, drillOptions, subjectMatrix, evaluate, summarize, summarizePace, detectPotentialException, activeCohortQuestionnaires, cohortOf };
 })();

@@ -204,6 +204,25 @@ const App = {
     }[tab];
     try { fn.call(this); } catch (e) { console.error(e); this.toast(`שגיאה בהצגת הפאנל: ${e.message}`, 'error'); }
     this.icons();
+    this.fitTables();
+  },
+
+  /**
+   * טבלאות גדולות (בגרות, סדין, פירוט) ממלאות את גובה האזור הראשי עד שולי המסך, במקום תקרה קבועה שמשאירה מקום ריק למטה.
+   * נמדד לפי מיקום הטבלה בפועל, כך שהוא מתעדכן כשסרגל הסינון נהיה גבוה יותר (שורה נוספת) או כשנוספים רכיבים מעליה.
+   */
+  fitTables() {
+    const main = $('mainContent');
+    if (!main || window.innerWidth < 1024) return;
+    const mr = main.getBoundingClientRect(), pad = parseFloat(getComputedStyle(main).paddingBottom) || 16;
+    const sadin = $('sadin-table');
+    if (sadin && !sadin.classList.contains('sticky-scroll')) sadin.style.maxHeight = '';
+    document.querySelectorAll('#bagrut-table, #sadin-table.sticky-scroll, #sadin-table .sticky-scroll').forEach(el => {
+      if (el.offsetParent === null) return;
+      el.style.maxHeight = 'none';
+      const top = el.getBoundingClientRect().top - mr.top + main.scrollTop;
+      el.style.maxHeight = `${Math.max(240, Math.floor(main.clientHeight - top - pad - 4))}px`;
+    });
   },
 
   showTab(name) {
@@ -234,6 +253,7 @@ const App = {
     TABS.forEach(t => { const p = $(`panel-${t}`); if (p) p.hidden = t !== name; });
     this.renderChrome();
     this.renderTab(name);
+    this.fitTables();
     if (name === 'overview' && changed) this.animateOverviewBars();
   },
 
@@ -2710,7 +2730,11 @@ const App = {
     }, true);
     window.addEventListener('sd:file-selected', e => this.handleFiles(e.detail.key, e.detail.files || [e.detail.file]));
     window.addEventListener('sd:rules-changed', () => this.schedule(() => this.invalidateAll()));
-    window.addEventListener('resize', () => this.syncGroupsHeadHeight());
+    window.addEventListener('resize', () => { this.syncGroupsHeadHeight(); this.fitTables(); });
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => this.fitTables());
+      ['globalFilterBar', 'brandBanner'].forEach(id => { const el = $(id); if (el) ro.observe(el); });
+    }
     window.addEventListener('sd:exceptions-changed', () => this.schedule(() => this.invalidateAll()));
 
     /* סינון גלובלי */
