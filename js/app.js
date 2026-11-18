@@ -710,7 +710,7 @@ const App = {
     const rows = list.map(t => ({ t, ev: this.getEval(t.tz) }));
     const bench = this.bagrutBenchmark(rows);
     const benchEvals = bench.rows.map(r => r.ev);
-    const stats = bench.pace ? BagrutEngine.summarizePace(benchEvals) : BagrutEngine.summarize(benchEvals);
+    const stats = bench.pace ? BagrutAdvisor.summarizePace(benchEvals) : BagrutAdvisor.summarize(benchEvals);
     const sheet = Store.loaded.grades ? GroupAnalyzer.sadinSheet(list, {}) : [];
     const benchSheet = !Store.loaded.grades ? [] : bench.rows.length === rows.length ? sheet : GroupAnalyzer.sadinSheet(bench.rows.map(r => r.t), {});
     const analysis = Store.loaded.groups ? GroupAnalyzer.analyzeGroupAnomalies(list, 'all') : null;
@@ -850,7 +850,7 @@ const App = {
     poolGraded.forEach(r => { const k = r.t.classKey || ''; if (!sheetByClass.has(k)) sheetByClass.set(k, []); sheetByClass.get(k).push(r.overall); });
     const classBars = [...byClass.entries()].sort((a, b) => Util.ord(a[1][0].t.gradeKey) - Util.ord(b[1][0].t.gradeKey) || natural(a[0], b[0])).map(([key, members]) => {
       if (bagrutOn) {
-        const s = bench.pace ? BagrutEngine.summarizePace(members.map(r => r.ev)) : BagrutEngine.summarize(members.map(r => r.ev));
+        const s = bench.pace ? BagrutAdvisor.summarizePace(members.map(r => r.ev)) : BagrutAdvisor.summarize(members.map(r => r.ev));
         const pct = bench.pace ? s.pctInclSpecialEd : s.eligibilityInclSpecialEd;
         return { key, value: s.counted ? pct : null, text: s.counted ? `${pct}%` : '—' };
       }
@@ -968,8 +968,8 @@ const App = {
     const rows = scope.rows;
     const st = this.state.bagrut, sim = this.state.sim;
     const evalRows = rows.filter(r => this.tierBased(r.ev)), paceRows = rows.filter(r => !this.tierBased(r.ev));
-    const stats = BagrutEngine.summarize(evalRows.map(r => r.ev));
-    const all = BagrutEngine.summarize(rows.map(r => r.ev));
+    const stats = BagrutAdvisor.summarize(evalRows.map(r => r.ev));
+    const all = BagrutAdvisor.summarize(rows.map(r => r.ev));
     const list = this.bagrutList(rows);
     const tierCount = [0, 0, 0, 0, 0, 0];
     evalRows.forEach(r => { tierCount[r.ev.tier]++; });
@@ -995,7 +995,7 @@ const App = {
 
     this.renderCohortInfo(rows);
     this.renderBagrutKpis(stats, tierCount, TT, paceRows);
-    const drillOpts = BagrutEngine.drillOptions();
+    const drillOpts = BagrutAdvisor.drillOptions();
     if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
     setHtml('bagrutSubjectDrillSelect',
       `<option value="all" ${st.drill === 'all' ? 'selected' : ''}>📊 מבט על – כל המקצועות</option>` +
@@ -1028,7 +1028,7 @@ const App = {
       </div>` : '';
     let pace = '';
     if (paceRows.length) {
-      const ps = BagrutEngine.summarizePace(paceRows.map(r => r.ev));
+      const ps = BagrutAdvisor.summarizePace(paceRows.map(r => r.ev));
       const grades = Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
       const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}); שאלוני שכבות עליונות אינם נספרים כחוסר`;
       pace = `${eligible ? divider : ''}
@@ -1050,7 +1050,7 @@ const App = {
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
   bagrutSubjectMatrix(rows) {
     const st = this.state.bagrut;
-    const m = BagrutEngine.subjectMatrix(st.drill, rows.map(r => r.t));
+    const m = BagrutAdvisor.subjectMatrix(st.drill, rows.map(r => r.t));
     if (!m) return '<div class="text-center text-slate-400 py-8">המקצוע אינו פעיל בכללים</div>';
     const { mxSort: sort, mxDir: dir } = st;
     const qKey = q => `q:${q.key}`;
