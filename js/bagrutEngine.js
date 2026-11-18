@@ -552,13 +552,13 @@ const BagrutEngine = (() => {
   }
 
   /**
-   * תקינות צבירה לשכבה: כל שאלוני הליבה והיחידות הפנימיות של החניך, מול השכבה שבה הם אמורים להיבחן.
+   * תקינות צבירה לשכבה: שאלוני מקצועות הליבה (שער 1) של החניך, מול השכבה שבה הם אמורים להיבחן. יחידות פנימיות (שער 3) אינן נכללות.
    * שאלון "מועדו הגיע" (isDueForGrade) אם שכבת היעד שלו <= שכבת החניך, או שכבר דווח לחניך ציון בו.
    * שאלון עתידי (isFutureForGrade) – שכבת היעד גבוהה משל החניך וטרם דווח בו ציון.
    * "פעיל לקצב" = מועדו הגיע וגם נבחן בפועל: דווח לו ציון, מועדו בשכבה קודמת, מצב תעודה סופית,
    * או שהשכבה שלו כבר קיבלה בו ציונים (סף הדיווח השכבתי) – כך שאלון שהשכבה טרם נבחנה בו אינו חוסר.
    */
-  function computePace(tz, ctx, subjects, majorCands, gateOn) {
+  function computePace(tz, ctx, subjects, gateOn) {
     const rules = ctx.rules, pass = rules.passGrade, rank = ctx.rank;
     const items = [];
     if (gateOn(1)) {
@@ -568,17 +568,8 @@ const BagrutEngine = (() => {
         score: c.state === 'num' ? (c.reportedNum ?? c.num) : null
       })));
     }
-    if (gateOn(3) && !ctx.ignoreInternals) {
-      const scienceMajors = scienceMajorCount(rules, majorCands);
-      activeOnly(rules.internals).forEach(it => {
-        if ((it.exemptWithScienceMajors ?? it.id === 'science') && scienceMajors >= 2) return;
-        const b = Store.bagrutBest(tz, it.codes);
-        items.push({
-          subject: it.name, code: it.codes[0], target: Util.ord(it.expectedGrade) || 12, cohortTaken: cohortOf(ctx.gradeKey, it.codes).taken,
-          kind: b && ['num', 'pass', 'fail'].includes(b.kind) ? b.kind : 'none', score: b && b.kind === 'num' ? b.num : null
-        });
-      });
-    }
+    /* יחידות פנימיות (שער 3) אינן נכללות בתקינות צבירה: הן מדווחות רק בסוף י"ב ונבדקות אך ורק בזכאות הסופית,
+       בלי קשר לשכבה הצפויה שנרשמה לשאלון שלהן בהגדרות */
 
     items.forEach(it => {
       it.has = it.kind !== 'none';
@@ -909,7 +900,7 @@ const BagrutEngine = (() => {
     subjects.forEach(s => { cells[s.id] = subjectCell(tz, s, ctx); });
 
     /* שכבות י' / י"א נשפטות לפי קצב הצבירה לשכבה ולא לפי זכאות מלאה; י"ב – לפי הצפי המלא */
-    const paceInfo = computePace(tz, ctx, subjects, major.cands, gateOn);
+    const paceInfo = computePace(tz, ctx, subjects, gateOn);
     /* ללא נתוני בגרות כל השאלונים "חסרים", ולכן אין מה לשפוט */
     if (noBagrut) Object.assign(paceInfo, { dueCount: 0, passedDueCount: 0, failedActualCount: 0, missingDueList: [], failedList: [], focus: [], blockedSubjects: [] });
     const paceStatus = paceStatusOf(paceInfo, tier, noBagrut);

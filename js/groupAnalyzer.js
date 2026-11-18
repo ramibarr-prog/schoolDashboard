@@ -10,6 +10,14 @@
 /* ציון עובר בציונים שוטפים: מתחתיו המקצוע נחשב נכשל (טקסט אדמדם בלבד, ללא אייקונים) */
 const SADIN_PASS = 55;
 
+/* מקצועות שגרתיים שבהם רישום לשתי קבוצות / ריבוי מורים הוא תקין (חינוך, מגדר, מפגש בוקר) */
+const ROUTINE_DUPLICATE_SUBJECTS = ['חינוך', 'מגדר', 'מפגש בוקר'];
+/** האם שם המקצוע זהה לאחד המקצועות השגרתיים או מכיל אותו (מנורמל מגרשיים) */
+function isRoutineDuplicateSubject(subjectName) {
+  const s = Util.norm(subjectName);
+  return !!s && ROUTINE_DUPLICATE_SUBJECTS.some(term => s.includes(Util.norm(term)));
+}
+
 const Store = {
   raw: { groups: [], grades: [], bagrut: [], roster: [] },
   loaded: { groups: false, grades: false, bagrut: false, roster: false },
@@ -606,7 +614,7 @@ const GroupAnalyzer = {
     const brief = gs => gs.map(g => ({ groupId: g.groupId, teacher: g.teacher || '', subject: g.subject }));
     const rows = [];
     const add = (t, category, kind, kindLabel, subject, groups, sadinGroups = []) =>
-      rows.push({ tz: t.tz, t, category, kind, kindLabel, subject, groups, sadinGroups });
+      rows.push({ tz: t.tz, t, category, kind, kindLabel, subject, groups, sadinGroups, isRoutineDuplicate: category === 'duplicate' && isRoutineDuplicateSubject(subject) });
 
     const analysis = this.analyzeGroupAnomalies(roster, 'all');
     analysis.items.forEach(a => {
@@ -614,6 +622,11 @@ const GroupAnalyzer = {
       if (!t) return;
       if (a.kind === 'none') add(t, 'missing', 'none', 'היעדר מקצוע ליבה', a.subject, []);
       else if (a.kind === 'dup') add(t, 'duplicate', 'dup', 'כפילות קבוצה', a.subject, brief(a.groups));
+      else if (a.kind === 'nomajor') {
+        /* מגמה חלקית: קבוצת מגמה שיח"ל המוצהרות בה מתחת לדרישה, ולכן אינה נחשבת מגמה 5 יח"ל */
+        const partial = Store.groupsOf(t.tz).filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).kind === 'major');
+        add(t, 'missing_major', 'nomajor', 'ללא שיבוץ מגמה', this.MAJOR_LABEL, brief(partial));
+      }
     });
 
     const KIND_LABEL = { outlier: 'חשד לשיבוץ שגוי: בודד מכיתתו', grade: 'חריג שכבה', 'sadin-other': 'פער מול סדין' };
@@ -635,10 +648,14 @@ const GroupAnalyzer = {
       });
     }));
 
-    const ORDER = { missing: 0, duplicate: 1, suspect: 2 };
+    const ORDER = { missing: 0, missing_major: 1, duplicate: 2, suspect: 3 };
     rows.sort((a, b) => ORDER[a.category] - ORDER[b.category] || Util.ord(a.t.gradeKey) - Util.ord(b.t.gradeKey) || natural(a.t.classKey, b.t.classKey) || a.t.name.localeCompare(b.t.name, 'he') || natural(a.subject, b.subject));
-    return { rows, outside: { nomajor: analysis.counts.nomajor, unmatched: analysis.counts.unmatched, unmatchedList: analysis.unmatched } };
+    return { rows, outside: { unmatched: analysis.counts.unmatched, unmatchedList: analysis.unmatched } };
   },
+
+  /** תווית "מקצוע" לחריגת היעדר מגמה, ומפתח המקצוע המיוחד שמעביר את בדיקת קבוצת היעד למצב השוואת מגמות */
+  MAJOR_LABEL: 'מגמת בחירה (5 יח"ל)',
+  MAJOR_KEY: '__MAJOR__',
 
   /**
    * "בדיקת קבוצת יעד ותפוסה": כל קבוצות המקצוע (לפי תווית הקטגוריה) להשוואה עבור חניך:
@@ -648,6 +665,7 @@ const GroupAnalyzer = {
   targetGroupInspector(tz, subjectName) {
     const t = Store.trainees.get(tz);
     if (!t) return null;
+    const isMajor = subjectName === this.MAJOR_KEY;
     const diagBy = new Map();
     this.explorerModel().groups.forEach(g => g.members.forEach(m => { if (m.diag.length) diagBy.set(`${g.groupId}|${m.t.tz}`, m.diag); }));
     const sadinIds = new Set(Store.currentOf(tz).filter(e => e.groupId).map(e => e.groupId));
@@ -664,13 +682,13 @@ const GroupAnalyzer = {
         enrolled: g.members.has(tz), inSadin: sadinIds.has(g.groupId), members
       };
     };
-    const all = [...Store.groups.values()].filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).label === subjectName).map(card);
+    const all = [...Store.groups.values()].filter(g => g.inFile && !g.reinforcement && (isMajor ? this.categoryOf(g).kind === 'major' : this.categoryOf(g).label === subjectName)).map(card);
     const rank = (a, b) => b.homeroomN - a.homeroomN || b.total - a.total || natural(a.teacher, b.teacher) || natural(a.groupId, b.groupId);
     const sameGrade = all.filter(g => g.gradeKey === t.gradeKey).sort(rank);
     const otherGrades = all.filter(g => g.gradeKey !== t.gradeKey)
       .sort((a, b) => Util.ord(a.gradeKey) - Util.ord(b.gradeKey) || rank(a, b));
     return {
-      t, subject: subjectName, sameGrade, otherGrades,
+      t, subject: isMajor ? this.MAJOR_LABEL : subjectName, isMajor, sameGrade, otherGrades,
       current: all.filter(g => g.enrolled),
       sadin: all.filter(g => g.inSadin && !g.enrolled)
     };
