@@ -10,6 +10,9 @@
 /* ציון עובר בציונים שוטפים: מתחתיו המקצוע נחשב נכשל (טקסט אדמדם בלבד, ללא אייקונים) */
 const SADIN_PASS = 55;
 
+/** סף "נכשל" בסדין: ציון העובר של כללי הזכאות הפעילים (ברירת מחדל 55) */
+function sadinPass() { return Number(Config.rules().passGrade) || SADIN_PASS; }
+
 /* מקצועות שגרתיים שבהם רישום לשתי קבוצות / ריבוי מורים הוא תקין (חינוך, מגדר, מפגש בוקר) */
 const ROUTINE_DUPLICATE_SUBJECTS = ['חינוך', 'מגדר', 'מפגש בוקר'];
 /* מקצועות שמכילים "חינוך" אך אינם שגרתיים: חינוך גופני ותעבורתי לעולם לא מוסתרים */
@@ -530,7 +533,7 @@ const GroupAnalyzer = {
 
   /** גיליון רוחבי: ממוצע משוקלל לאירועים בכל מקצוע, וממוצע כללי שווה-משקל למקצועות. */
   sadinSheet(roster, filters = {}) {
-    const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = SADIN_PASS;
+    const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = sadinPass();
     const teacherOf = e => (Store.groups.get(e.groupId) || {}).teacher || e.teacher || '';
     const eventKey = (groupId, subjectName, teacherName, name, date, weight) => JSON.stringify([groupId || '', subjectName, teacherName, name || '', date || '', weight]);
     const matches = (s, t) => (subject === 'all' || subject === s) && (teacher === 'all' || teacher === t);
@@ -583,7 +586,7 @@ const GroupAnalyzer = {
   },
 
   /** מקצוע בסדין נחשב חוסם לחניך: ממוצע מתחת לציון עובר או אירוע הערכה שהוחמץ */
-  isRiskSubject(s) { return (s.avg != null && s.avg < SADIN_PASS) || s.missed.size > 0; },
+  isRiskSubject(s) { return (s.avg != null && s.avg < sadinPass()) || s.missed.size > 0; },
 
   riskSubjects(row) { return [...row.subjects.values()].filter(s => this.isRiskSubject(s)); },
 

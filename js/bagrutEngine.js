@@ -557,8 +557,11 @@ const BagrutEngine = (() => {
       const expDue = full ? ord <= ctx.ord : ord < ctx.ord;
       /* צפי מותאם: יחידה פנימית שהשכבה טרם קיבלה בה ציונים (מתחת לסף הדיווח) אינה חוסר – "בתהליך השנה" */
       const required = expDue && (ctx.strict || cohortOf(ctx.gradeKey, it.codes).taken);
-      const done = !!b && (b.kind === 'pass' || (b.kind === 'num' && b.num >= rules.passGrade));
-      const res = { id: it.id, name: it.name, required, pending: !required && !done, done, explicitFail: !!(b && b.kind === 'fail'), value: b ? (b.kind === 'num' ? b.num : b.kind) : null, ignored: false, exempt: false,
+      /* מעורבות חברתית מדווחת בסולם 1–4: 1 (או 0) לא עבר, 2–4 עבר; ציון 0–100 נשפט לפי ציון עובר */
+      const social = it.scale === '1-4' || it.id === 'social';
+      const done = !!b && (b.kind === 'pass' || (b.kind === 'num' && ((social && b.num >= 2 && b.num <= 4) || b.num >= rules.passGrade)));
+      const explicitFail = !!b && (b.kind === 'fail' || (social && b.kind === 'num' && (b.num === 1 || b.num === 0)));
+      const res = { id: it.id, name: it.name, required, pending: !required && !done, done, explicitFail, value: b ? (b.kind === 'num' ? b.num : b.kind) : null, ignored: false, exempt: false,
         inGroup: !!(it.groupKeywords && it.groupKeywords.length && Store.groupsOf(tz).some(g => Util.matchKeywords(g.subject, it.groupKeywords))) };
       if (!required || done) return res;
       if ((it.exemptWithScienceMajors ?? it.id === 'science') && scienceMajors >= 2) { res.exempt = true; return res; }

@@ -861,7 +861,7 @@ const App = {
     };
 
     const notLoaded = 'טרם נטען קובץ';
-    const attentionGo = Store.loaded.bagrut && (!m.multi.length || m.bagrutRisk.length >= m.multi.length) ? 'data-go="bagrut" data-chip="notok" data-scope="all"' : 'data-go="sadin" data-strip="multiple"';
+    const attentionGo = Store.loaded.bagrut ? 'data-go="bagrut" data-chip="attention" data-scope="all"' : 'data-go="sadin" data-strip="multiple"';
     const card1 = card(attentionGo, 'חניכים במעקב / דורש תשומת לב', m.attention.size,
       bagrutOn || sadinOn ? `${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ ציונים שליליים או חסרים · מתוך ${m.list.length}` : notLoaded, '', ICONS.attn);
     const card2 = card('data-go="sadin" data-strip="all"', 'ממוצע הישגים שוטפים', m.avg == null ? '—' : Util.fmt(m.avg, 1),
@@ -997,8 +997,22 @@ const App = {
       ${pill('12', `🎓 שכבת י"ב${cohort('יב')}`)}${pill('11', `📈 שכבת י"א${cohort('יא')}`)}${pill('10', `🌱 שכבת י'${cohort('י')}`)}${pill('all', '📋 כל השכבות')}</div>`;
   },
 
+  /** חניכים הדורשים תשומת לב: סיכון בבגרות או 2+ מקצועות בסיכון בסדין (אותה הגדרה כמו כרטיס חדר הבקרה) */
+  attentionTzs() {
+    const list = this.filtered();
+    const set = new Set(list.filter(t => this.getEval(t.tz).atRisk).map(t => t.tz));
+    if (Store.loaded.grades) GroupAnalyzer.sadinSheet(list, {}).forEach(r => { if (GroupAnalyzer.riskSubjects(r).length >= 2) set.add(r.t.tz); });
+    return set;
+  },
+
+  filterByChip(rows, chip) {
+    if (chip === 'attention') this._att = this.attentionTzs();
+    try { return rows.filter(r => this.chipMatch(r, chip)); } finally { this._att = null; }
+  },
+
   chipMatch(r, chip) {
     const ev = r.ev;
+    if (chip === 'attention') return (this._att || this.attentionTzs()).has(r.t.tz);
     if (chip === 'exception') return ev.manual;
     if (chip === 'suspect') return !ev.manual && ev.isPotentialException;
     if (chip === 'manualReview') return !!(ev.manualReview && ev.manualReview.required);
@@ -1051,7 +1065,8 @@ const App = {
       option('near', `חסם בודד (${all.singleBlocker})`) +
       option('exception', `⚡ חריג ידני (${all.exceptions})`) +
       option('suspect', `חשד לחריג (${all.potentialExceptions})`) +
-      option('manualReview', `🔎 נדרשת בדיקה ידנית (${all.manualReview})`));
+      option('manualReview', `🔎 נדרשת בדיקה ידנית (${all.manualReview})`) +
+      option('attention', `👀 דורשים תשומת לב (${this.filterByChip(rows, 'attention').length})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
     const modeBtn = (full, label, title) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${!!sim.fullMode === full}" title="${E(title)}">${label}</button>`;
@@ -1067,7 +1082,7 @@ const App = {
       `<option value="all" ${st.drill === 'all' ? 'selected' : ''}>📊 מבט על – כל המקצועות</option>` +
       drillOpts.map(o => `<option value="${E(o.value)}" ${st.drill === o.value ? 'selected' : ''}>${E(o.label)}</option>`).join(''));
     if (!Store.hasData()) return this.noRoster([], 'bagrut-table');
-    if (st.drill !== 'all') return setHtml('bagrut-table', this.bagrutSubjectMatrix(rows.filter(r => this.chipMatch(r, st.chip))));
+    if (st.drill !== 'all') return setHtml('bagrut-table', this.bagrutSubjectMatrix(this.filterByChip(rows, st.chip)));
     setHtml('bagrut-table', this.bagrutTable(list));
   },
 
@@ -1188,7 +1203,7 @@ const App = {
   bagrutList(rows) {
     const { chip, sort, dir } = this.state.bagrut;
     const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: this.tierBased(r.ev) ? r.ev.tier : BagrutEngine.PACE_TIER[r.ev.paceStatus], tz: r.t.tz, diag: r.ev.diagnostic })[sort];
-    return rows.filter(r => this.chipMatch(r, chip)).sort((a, b) => {
+    return this.filterByChip(rows, chip).sort((a, b) => {
       const x = val(a), y = val(b);
       return ((typeof x === 'number' ? x - y : natural(x, y)) || natural(a.t.name, b.t.name)) * dir;
     });
@@ -1894,7 +1909,7 @@ const App = {
   /** ציון כטקסט שטוח בשורה אחת, בלי רקע או מסגרת: אדום כהה לנכשל/חסר/מסומן, אפור-כהה לעובר */
   sadinScore(value, missed = false) {
     const text = value == null ? (missed ? 'חסר' : '—') : Util.fmt(value, 0);
-    const alert = missed || (value != null && value < SADIN_PASS);
+    const alert = missed || (value != null && value < (Number(Config.rules().passGrade) || 55));
     return `<span class="sadin-score ${alert ? 'is-bad' : value == null ? 'is-empty' : ''}">${text}</span>`;
   },
 
@@ -2336,7 +2351,8 @@ const App = {
       groups: `<table class="grid w-full"><thead><tr><th class="text-right">קבוצה</th><th class="text-right">מקצוע</th><th class="text-right">מורה</th><th class="text-right">ממוצע</th></tr></thead><tbody>${groupsRows || emptyRow(4, 'אין שיבוצים')}</tbody></table>`
     };
 
-    const focus = this.profileFocus(ev);
+    /* כל פריט מיקוד שהיועץ מציג בטבלה (ev.focus) מופיע גם כאן; יעדי "מחשבון הפוך" כבר מוצגים בניסוח מפורט ב-profileFocus */
+    const focus = [...new Set([...this.profileFocus(ev), ...ev.focus.filter(f => !f.target && !/לא מספיק/.test(f.text)).map(f => f.text)])];
     const focusList = rows => `<ul class="list-disc pr-4 space-y-1">${rows.map(text => `<li>${E(text)}</li>`).join('')}</ul>`;
     const hasGrades = ev.subjects.some(s => s.comps.some(c => c.state === 'num' || c.state === 'pass')) || majors.some(c => c.bagrut != null);
     const focusHtml = focus.length ? focusList(focus.slice(0, 5)) + (focus.length > 5 ? `<details class="mt-1"><summary class="cursor-pointer font-semibold text-indigo-700">עוד ${focus.length - 5} סעיפים</summary>${focusList(focus.slice(5))}</details>` : '') :

@@ -79,15 +79,16 @@ const Util = {
   },
 
   /**
-   * ציון מספרי. מקבל גם "85%" ו-"85 - טוב מאוד", אך לא "9 - לא עבר" (טקסט שלילי נשאר ערך מילולי).
+   * ציון מספרי בטווח 0..100 (ערך מחוץ לטווח אינו ציון תקין ומוחזר כ-null). מקבל גם "85%" ו-"85 - טוב מאוד", אך לא "9 - לא עבר" (טקסט שלילי נשאר ערך מילולי).
    */
   parseScore(v) {
-    if (typeof v === 'number') return isFinite(v) ? v : null;
+    const inRange = n => (n >= 0 && n <= 100 ? n : null);
+    if (typeof v === 'number') return isFinite(v) ? inRange(v) : null;
     const s = String(v ?? '').trim().replace(',', '.');
-    if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+    if (/^-?\d+(\.\d+)?$/.test(s)) return inRange(parseFloat(s));
     const m = s.match(/^(-?\d+(?:\.\d+)?)\s*(?:%|(?:%?\s*[-–:]\s*(.+)))$/);
     if (!m) return null;
-    return m[2] && /לא|חסם|נכשל|ח\.?\s?ד/.test(m[2]) ? null : parseFloat(m[1]);
+    return m[2] && /לא|חסם|נכשל|ח\.?\s?ד/.test(m[2]) ? null : inRange(parseFloat(m[1]));
   },
 
   /** מחזיר תאריך בפורמט YYYY-MM-DD (או מחרוזת ריקה). תומך ב-Date, מספר סידורי של Excel, dd/mm/yyyy ו-ISO */

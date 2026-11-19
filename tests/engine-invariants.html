@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Engine invariants tests</title>
+<pre id="results">Running...</pre>
+<script>
+window.fetch = () => { throw new Error('Outbound network blocked by engine invariant tests (QA-0.4)'); };
+</script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/bagrutEngine.js"></script>
+<script src="../js/bagrutAdvisor.js"></script>
+<script src="../js/groupAnalyzer.js"></script>
+<script>
+(async () => {
+  const results = document.getElementById('results');
+  const outcome = [];
+  let active = null, section = '';
+
+  /* assertions never throw: every failure is collected so one run lists all gaps */
+  const check = (condition, message) => { if (!condition) active.failures.push(`${section ? section + ': ' : ''}${message}`); };
+  const same = (actual, expected, message) => check(JSON.stringify(actual) === JSON.stringify(expected), `${message} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
+  const near = (actual, expected, message) => check(typeof actual === 'number' && Math.abs(actual - expected) < 1e-9, `${message} (expected ${expected}, got ${actual})`);
+  const part = async (id, fn) => {
+    section = id;
+    try { await fn(); } catch (e) { active.failures.push(`${id}: EXCEPTION ${e && e.stack ? e.stack : e}`); }
+    section = '';
+  };
+  const group = async (title, fn) => {
+    active = { title, failures: [] };
+    outcome.push(active);
+    try { await fn(); } catch (e) { active.failures.push(`EXCEPTION ${e && e.stack ? e.stack : e}`); }
+  };
+
+  /* ---------- synthetic data helpers (100% invented IDs and names) ---------- */
+  const T = n => String(900000000 + n);
+  const stu = (n, grade, homeroom, extra = {}) => ({ tz: T(n), firstName: 'חניך' + n, lastName: 'בדיקה', grade, homeroom, track: 'רגילה', ...extra });
+  const BAGRUT_MAP = { tz: 'tz', subject: 'subject', questionnaireCode: 'code', finalGrade: 'final', examGrade: 'exam', submissionGrade: 'sub', moed: 'moed' };
+  const GROUP_MAP = { tz: 'tz', grade: 'grade', classNum: 'cls', groupId: 'gid', isTeacher: 'teacher' };
+  const SADIN_MAP = { tz: 'tz', event: 'ev', score: 'sc', group: 'grp', date: 'dt' };
+  const bagrutRows = list => Parser.normalize('bagrut', list, BAGRUT_MAP).rows;
+  const groupRows = list => Parser.normalize('groups', list, GROUP_MAP).rows;
+  const sadinRows = list => Parser.normalize('grades', list, SADIN_MAP).rows;
+
+  /* a fully eligible 12th grader: every core subject, a 5-unit physics major and all internal units */
+  const BASE = {
+    '22283': 70, '22261': 70, '34221': 70, '34225': 70, '8283': 70, '8281': 70, '1263': 70, '1264': 70, '11283': 70, '11281': 70,
+    '16382': 80, '16471': 80, '35471': 80, '35472': 80, '36361': 80,
+    '86083': 'עמד בדרישות', '41083': 'בוצע', '43183': 70, '82083': 'בוצע'
+  };
+  const profile = (tz, changes = {}) => Object.entries({ ...BASE, ...changes }).filter(([, value]) => value !== null)
+    .map(([code, value]) => (value !== null && typeof value === 'object' ? { tz, code, ...value } : { tz, code, final: value }));
+  const partial = (n, map) => Object.entries(map).map(([code, final]) => ({ tz: T(n), code, final }));
+
+  let saved = null;
+  const resetConfig = () => {
+    Config.data = Config.defaults();
+    Config._activeCohort = Config.data.gradeCohortMap['12'];
+    Config._rulesOverride = null;
+    Config._syncQuestionnaires();
+    Config._cache = {};
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+  };
+  const world = ({ roster = [], bagrut = [], groups = [], sadin = [] } = {}) => {
+    const norm = Config.normalizeRosterRows(roster);
+    const stamp = Date.now();
+    const cache = { masterRoster: { data: norm.rows, ignoredIds: norm.ignoredIds, fileName: 'synthetic-roster.xlsx', uploadedAt: stamp } };
+    [['bagrutData', bagrut], ['groupsData', groups], ['sadinData', sadin]].forEach(([key, rows]) => {
+      if (rows.length) cache[key] = { data: rows, fileName: `synthetic-${key}.xlsx`, uploadedAt: stamp };
+    });
+    Config._cache = cache;
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+    Store.refresh();
+    return norm;
+  };
+  const solo = (changes = {}, grade = 'יב', homeroom = grade + '1', extra = {}) => {
+    world({ roster: [stu(1, grade, homeroom)], bagrut: bagrutRows(profile(T(1), changes)), ...extra });
+    return T(1);
+  };
+  const evalFull = (tz = T(1), opts = {}) => BagrutEngine.evaluate(tz, { fullMode: true, ...opts });
+  const subj = (ev, id) => ev.subjects.find(s => s.id === id);
+  const kinds = ev => ev.blockers.filter(b => !b.info).map(b => b.k);
+
+  const scan = (value, path, found, seen = new WeakSet()) => {
+    if (typeof value === 'number') { if (!Number.isFinite(value)) found.push(`${path}=${value}`); return; }
+    if (typeof value === 'string') { if (/\b(NaN|undefined|Infinity)\b/.test(value)) found.push(`${path}="${value}"`); return; }
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    const entries = value instanceof Map ? [...value.entries()] : value instanceof Set ? [...value].map((v, i) => [i, v]) : Object.entries(value);
+    entries.forEach(([k, v]) => scan(v, `${path}.${k}`, found, seen));
+  };
+  const noNaN = (value, label) => { const found = []; scan(value, label, found); check(!found.length, `NaN/undefined/Infinity leaked: ${found.slice(0, 5).join('; ')}`); };
+
+  const rng = seed => () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const shuffled = (list, seed) => {
+    const next = rng(seed), out = [...list];
+    for (let i = out.length - 1; i > 0; i--) { const j = Math.floor(next() * (i + 1)); [out[i], out[j]] = [out[j], out[i]]; }
+    return out;
+  };
+
+  /* ---------- rich synthetic school: grades 10 / 11 / 12 with every case family ---------- */
+  const ELEVENTH = { '22283': 70, '34221': 70, '8283': 70, '1263': 70, '11283': 70, '16382': 70, '35471': 70 };
+  const schoolFixture = () => {
+    const roster = [], bagrut = [], groups = [], sadin = [];
+    const senior = (n, cls, changes) => { roster.push(stu(n, 'יב', cls)); bagrut.push(...bagrutRows(profile(T(n), changes))); };
+    senior(1, 'יב1', {});
+    senior(2, 'יב1', { '22283': 50, '22261': 50 });
+    senior(3, 'יב1', { '22283': 30, '22261': 30, '16382': 75, '16471': 75, '35471': 75, '35472': 75 });
+    senior(4, 'יב1', { '11283': 50, '11281': 50 });
+    senior(5, 'יב2', { '22283': 30, '22261': 30, '34221': 30, '34225': 30 });
+    senior(6, 'יב2', { '22283': null, '22261': 60 });
+    senior(7, 'יב2', { '22283': null, '22261': 20 });
+    senior(8, 'יב2', { '35571': 80, '35471': 60, '35472': 70 });
+    senior(9, 'יב2', { '43183': null, '43351': 80 });
+    senior(10, 'יב2', { ...Object.fromEntries(Object.keys(BASE).map(code => [code, null])) });
+    senior(11, 'יב2', { '22283': 30, '22261': 30, '34221': 30, '34225': 30, '5384': { final: 70, subject: 'אנגלית' } });
+    senior(12, 'יב1', { '22283': 55, '22261': 54 });
+    for (let n = 21; n <= 27; n++) { roster.push(stu(n, 'יא', n < 25 ? 'יא1' : 'יא2')); bagrut.push(...bagrutRows(partial(n, ELEVENTH))); }
+    roster.push(stu(28, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(28, { ...ELEVENTH, '8283': null }).filter(r => r.final !== null)));
+    roster.push(stu(29, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(29, { ...ELEVENTH, '8283': null, '1263': null }).filter(r => r.final !== null)));
+    roster.push(stu(31, 'י', 'י1'));
+    roster.push(stu(32, 'י', 'י1')); bagrut.push(...bagrutRows(partial(32, { '16381': 60, '16382': 60 })));
+    roster.push(stu(33, 'י', 'י2')); bagrut.push(...bagrutRows(partial(33, { '16381': 30 })));
+    const english = 'אנגלית 4 יח"ל יב1-יב2 דוד בדיקה [7001]', reinforcement = 'תגבור מתמטיקה 5 יח"ל יב1-יב2 מיכל בדיקה [7002]';
+    groups.push(...groupRows([1, 2, 3, 4, 5, 6].map(n => ({ tz: T(n), grade: 'יב', cls: n < 5 ? 'יב1' : 'יב2', gid: english }))));
+    groups.push(...groupRows([2, 3].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: reinforcement }))));
+    sadin.push(...sadinRows([[1, 90, 80], [2, 60, 70], [3, 40, 55]].flatMap(([n, a, b]) => [
+      { tz: T(n), ev: 'מבחן (50)', sc: a, grp: english, dt: '01/10/2026' }, { tz: T(n), ev: 'בוחן (50)', sc: b, grp: english, dt: '15/10/2026' }
+    ])));
+    return { roster, bagrut, groups, sadin };
+  };
+
+  try {
+    await Config.ready;
+    saved = {
+      data: Config.data, cache: Config._cache, ignored: Config._ignoredCache, active: Config._activeCohort, override: Config._rulesOverride,
+      write: Config._write, put: Config._storePut, raw: Store.raw, loaded: Store.loaded
+    };
+    /* nothing in this page may touch the browser's real localStorage / IndexedDB data */
+    Config._write = () => ({ ok: true });
+    Config._storePut = async () => ({ ok: true });
+    Util.idWarn.sci = 0;
+    resetConfig();
+
+    /* ====================================================================
+       קבוצה 0 — חסימת רשת (QA-0.4)
+       ==================================================================== */
+    await group('Group 0 — QA-0.4 all outbound cloud traffic is blocked', async () => {
+      await part('QA-0.4', async () => {
+        let blocked = false;
+        try { window.fetch('https://script.google.com/macros/s/synthetic/exec', { method: 'POST', body: '{}' }); } catch (e) { blocked = /blocked/.test(e.message); }
+        check(blocked, 'fetch to script.google.com must throw synchronously');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה A — שלמות נתונים ואינווריאנטים
+       QA-1.1, QA-1.2, QA-1.3/INV-1, QA-1.12/INV-2, QA-1.14/INV-10
+       ==================================================================== */
+    await group('Group A — data integrity: QA-1.1, QA-1.2, QA-1.3/INV-1, QA-1.12/INV-2, QA-1.14/INV-10', async () => {
+      resetConfig();
+      await part('QA-1.1 roster counts per grade and class; no vanished or duplicated IDs', async () => {
+        const spec = [['י', 'י1', 3], ['י', 'י2', 2], ['יא', 'יא1', 3], ['יא', 'יא2', 3], ['יב', 'יב1', 4], ['יב', 'יב2', 3], ['יב', 'יב3', 2]];
+        const rows = []; let n = 100;
+        spec.forEach(([grade, cls, count]) => { for (let i = 0; i < count; i++) rows.push(stu(++n, grade, cls)); });
+        const expectedIds = rows.map(r => r.tz);
+        rows[1] = { ...rows[1], tz: ` ${rows[1].tz} ` };
+        rows[2] = { ...rows[2], tz: rows[2].tz.slice(0, 3) + '-' + rows[2].tz.slice(3) };
+        rows.push({ ...rows[10] });
+        rows.push(stu(500, 'ט', 'ט1'));
+        rows.push({ ...stu(501, 'יב', 'יב1'), tz: '' });
+        const norm = world({ roster: rows });
+        check(norm.rows.length === 20 && norm.duplicates === 1 && norm.skipped === 1, `Roster normalisation: ${norm.rows.length} rows, ${norm.duplicates} duplicates, ${norm.skipped} skipped`);
+        same(norm.ignoredIds, [T(500)], 'Junior student ID must be remembered only as ignored');
+        check(Store.trainees.size === 20, `Store must hold exactly 20 trainees, got ${Store.trainees.size}`);
+        same(expectedIds.filter(id => !Store.trainees.has(id)), [], 'Students vanished from the Store');
+        const byGrade = {}, byClass = {};
+        Store.traineeList().forEach(t => { byGrade[t.gradeKey] = (byGrade[t.gradeKey] || 0) + 1; byClass[t.classKey] = (byClass[t.classKey] || 0) + 1; });
+        same(byGrade, { 'י': 5, 'יא': 6, 'יב': 9 }, 'Per-grade counts');
+        same(Object.fromEntries(spec.map(([, cls, count]) => [cls, count])), byClass, 'Per-class counts');
+        check(new Set(Store.traineeList().map(t => t.tz)).size === Store.trainees.size, 'Duplicate IDs inside the Store');
+      });
+
+      await part('QA-1.2 / QA-1.3 INV-1 normId unifies every ID form and is idempotent', async () => {
+        const canonical = '012345678';
+        const forms = ['12345678', '012345678', ' 12345678 ', '1234-5678', '012-345-678', 12345678, '12345678.0', '012345678.0'];
+        forms.forEach(f => check(Util.normId(f) === canonical, `normId(${JSON.stringify(f)}) = ${Util.normId(f)}`));
+        const idempotent = [...forms, 'A1234567', 'a-123 4567', '', '   ', null, undefined, 0, 5, '12345678901', '1.23457E+08'];
+        idempotent.forEach(f => { const once = Util.normId(f); check(Util.normId(once) === once, `normId not idempotent for ${JSON.stringify(f)}`); });
+        Util.idWarn.sci = 0;
+
+        const roster = [{ ...stu(1, 'יב', 'יב1'), tz: ' 12345678 ' }];
+        const bagrut = bagrutRows([{ tz: '012-345-678', code: '22283', final: 70 }]);
+        const groups = groupRows([{ tz: 12345678, grade: 'יב', cls: 'יב1', gid: 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]' }]);
+        const sadin = sadinRows([{ tz: '12345678.0', ev: 'מבחן (50)', sc: 80, grp: 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]', dt: '01/10/2026' }]);
+        world({ roster, bagrut, groups, sadin });
+        same([bagrut[0].tz, groups[0].tz, sadin[0].tz], [canonical, canonical, canonical], 'File rows must carry the canonical ID');
+        same(Store.unknown, { groups: [], grades: [], bagrut: [] }, 'No file may leave unmatched IDs');
+        const t = Store.trainees.get(canonical);
+        check(t && t.inGroups && t.inGrades && t.inBagrut, 'The roster student must be matched in groups, sadin and bagrut files');
+      });
+
+      await part('QA-1.12 INV-2 importing the same files twice equals importing once', async () => {
+        const rosterRows = [1, 2, 3].map(n => stu(n, 'יב', 'יב1'));
+        const gid = 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]';
+        const sets = {
+          bagrutData: bagrutRows([
+            { tz: T(1), code: '22283', final: 60, moed: 'חורף' }, { tz: T(1), code: '22283', final: 70, moed: 'קיץ' },
+            { tz: T(2), code: '22261', final: 80 }, { tz: T(3), code: '36361', final: 90 }
+          ]),
+          groupsData: groupRows([
+            ...[1, 2, 3].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid })), { tz: '', gid, teacher: 'כן' }
+          ]),
+          sadinData: sadinRows([1, 2, 3].map(n => ({ tz: T(n), ev: 'מבחן (50)', sc: 60 + n, grp: gid, dt: '01/10/2026' })))
+        };
+        const snapshot = () => JSON.stringify({
+          trainees: Store.traineeList(),
+          groups: [...Store.groups.values()].map(g => ({ ...g, members: [...g.members].sort(), gradeMembers: [...g.gradeMembers].sort() })).sort((a, b) => a.groupId.localeCompare(b.groupId)),
+          current: [...Store._current.entries()].sort(([a], [b]) => a.localeCompare(b)),
+          attempts: Store.traineeList().map(t => Store.attemptsOf(t.tz)), unknown: Store.unknown, missed: Store.missed
+        });
+        const load = async () => {
+          for (const [key, rows] of Object.entries(sets)) check((await Config.upsertDataset(key, rows, { fileName: key + '.xlsx' })).ok, `upsert ${key}`);
+          Store.refresh();
+          return { snapshot: snapshot(), data: Object.fromEntries(Object.keys(sets).map(key => [key, JSON.stringify(Config.getRows(key))])) };
+        };
+        world({ roster: rosterRows });
+        const once = await load();
+        const twice = await load();
+        same(Object.keys(sets).map(k => JSON.parse(twice.data[k]).length), Object.keys(sets).map(k => JSON.parse(once.data[k]).length), 'Row counts changed after the second import');
+        check(JSON.stringify(once.data) === JSON.stringify(twice.data), 'Stored datasets differ between one and two imports');
+        check(once.snapshot === twice.snapshot, 'Store state (grades, events, group placements) differs between one and two imports');
+      });
+
+      await part('QA-1.14 INV-10 abnormal grade values', async () => {
+        const classes = { 'לא נבחן': 'none', 'טקסט חופשי': 'none', 'פטור': 'pass' };
+        Object.entries(classes).forEach(([text, kind]) => check(Parser.classify(text).kind === kind, `classify("${text}") should be ${kind}, got ${Parser.classify(text).kind}`));
+        check(Parser.classify(55.5).kind === 'num' && Parser.classify(55.5).num === 55.5, 'A fractional grade must stay numeric');
+        check(Parser.classify(101).kind !== 'num', 'A grade of 101 must not be accepted as a valid numeric grade');
+        check(Parser.classify(-5).kind !== 'num', 'A grade of -5 must not be accepted as a valid numeric grade');
+
+        const textual = solo({ '22283': 'לא נבחן', '22261': 'טקסט חופשי', '34221': 'פטור', '34225': 'פטור' });
+        const ev = evalFull(textual);
+        check(subj(ev, 'history').final === null && subj(ev, 'history').status !== 'fail', 'Unattended/free-text history must stay missing, never a numeric failure');
+        check(subj(ev, 'civics').status === 'pass', 'Exempt text ("פטור") must be handled as passed');
+        noNaN(ev, 'ev');
+        noNaN([BagrutAdvisor.summarize([ev]), BagrutAdvisor.summarizePace([ev])], 'advisor');
+
+        const fraction = evalFull(solo({ '22283': 55.5, '22261': 55.5 }));
+        check(subj(fraction, 'history').comps[0].num === 55.5 && subj(fraction, 'history').status === 'pass', '55.5 must be a valid passing grade');
+        noNaN(fraction, 'fraction');
+
+        [101, -5].forEach(bad => {
+          const tz = solo({ '22283': bad, '22261': bad });
+          const out = evalFull(tz);
+          const accepted = out.subjects.flatMap(s => s.comps).filter(c => c.state === 'num' && (c.num > 100 || c.num < 0));
+          check(!accepted.length, `Out-of-range bagrut grade ${bad} was accepted as a valid numeric grade (${accepted.length} components)`);
+          noNaN(out, 'out-of-range ' + bad);
+        });
+
+        const g = 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]';
+        const average = events => { world({ roster: [stu(1, 'יב', 'יב1')], sadin: sadinRows(events.map((sc, i) => ({ tz: T(1), ev: `אירוע${i} (10)`, sc, grp: g, dt: '01/10/2026' }))) }); return Store.currentOf(T(1))[0]; };
+        const mixed = average(['לא נבחן', 80]);
+        check(mixed.avg === 80 && mixed.n === 1, `A non-attended sadin event must not count as zero (avg ${mixed.avg}, n ${mixed.n})`);
+        const ranged = average([80, 105, -3]);
+        check(ranged.avg === 80 && ranged.n === 1, `Out-of-range sadin scores 105 / -3 must be ignored (avg ${ranged.avg}, n ${ranged.n})`);
+      });
+    });
+
+    /* ====================================================================
+       קבוצה B — מנוע זכאות לבגרות
+       QA-2.1..QA-2.7, QA-2.9..QA-2.14, INV-7 + רגרסיית מעורבות חברתית
+       ==================================================================== */
+    await group('Group B — eligibility engine: QA-2.1..2.7, QA-2.9..2.14, INV-7, social-involvement regression', async () => {
+      resetConfig();
+      await part('QA-2.1 fully eligible 12th grader', async () => {
+        const ev = evalFull(solo());
+        same([ev.tier, ev.manual, kinds(ev)], [1, false, []], 'Eligible student must be tier 1 without blockers');
+        same(ev.gates, { 1: 'pass', 2: 'pass', 3: 'pass' }, 'All gates must pass');
+        check(ev.subjects.length === 7 && ev.subjects.every(s => s.status === 'pass'), 'All seven core subjects must pass');
+        check(ev.major.chosen && ev.major.chosen.id === 'physics', 'The 5-unit major must be chosen');
+        check(ev.internals.length === 4 && ev.internals.every(i => i.done), 'All internal units must be done');
+      });
+
+      await part('QA-2.2 pass threshold: 55 passes, 54 fails without compensation', async () => {
+        const history = grade => subj(evalFull(solo({ '22283': grade, '22261': grade })), 'history');
+        check(history(55).status === 'pass', '55 must pass');
+        check(history(54).status !== 'pass', '54 must not pass');
+        Config.setCompensation({ enabled: false });
+        const ev54 = evalFull(solo({ '22283': 54, '22261': 54 })), ev55 = evalFull(solo({ '22283': 55, '22261': 55 }));
+        check(ev54.tier >= 3 && kinds(ev54).includes('fail'), '54 must block eligibility when compensation is disabled');
+        check(ev55.tier === 1, '55 must stay eligible when compensation is disabled');
+        resetConfig();
+      });
+
+      await part('QA-2.3 rounding at the threshold', async () => {
+        const history = (a, b) => subj(evalFull(solo({ '22283': a, '22261': b })), 'history');
+        const low = history(53, 55), edge = history(53.3, 55), high = history(51, 56);
+        near(low.final, 54.4, 'Weighted 54.4'); near(edge.final, 54.49, 'Weighted 54.49'); near(high.final, 54.5, 'Weighted 54.5');
+        check(low.status !== 'pass' && edge.status !== 'pass', '54.4 and 54.49 must not pass');
+        check(high.status === 'pass', '54.5 must pass');
+      });
+
+      await part('QA-2.4 a missing grade is not a zero', async () => {
+        const missing = subj(evalFull(solo({ '22283': null })), 'history');
+        check(missing.final === null && missing.status === 'missing' && missing.comps[0].state === 'missing', 'No grade must stay missing and out of the average');
+        const zero = subj(evalFull(solo({ '22283': 0 })), 'history');
+        check(zero.comps[0].state === 'num' && zero.comps[0].num === 0 && zero.final === 49 && zero.status === 'comp', 'An entered zero must count in the average (49)');
+        const absent = evalFull(solo({ '22283': 'לא ניגש' }));
+        check(subj(absent, 'history').comps[0].failed && subj(absent, 'history').final === null && !kinds(absent).includes('bagrut-block'), '"לא ניגש" must be a reported failure without an invented average');
+        const blocked = evalFull(solo({ '22283': 'חסם' }));
+        check(subj(blocked, 'history').comps[0].blocked && kinds(blocked).includes('bagrut-block'), '"חסם" must raise a bagrut-block blocker');
+        check(Store.weightedAverage([{ score: null, weight: 1 }, { score: 80, weight: 1 }]).avg === 80, 'Sadin: missing event is not a zero');
+        check(Store.weightedAverage([{ score: 0, weight: 1 }, { score: 80, weight: 1 }]).avg === 40, 'Sadin: an entered zero counts');
+      });
+
+      const ENG = { 3: ['16381', '16382'], 4: ['16382', '16471'], 5: ['16471', '16582'] };
+      const MATH = { 3: ['35173', '35371', '35372'], 4: ['35471', '35472'], 5: ['35571', '35572'] };
+      const levelChanges = (e, m, ge, gm) => {
+        const changes = { '16382': null, '16471': null, '35471': null, '35472': null };
+        ENG[e].forEach(code => { changes[code] = ge; });
+        MATH[m].forEach(code => { changes[code] = gm; });
+        return changes;
+      };
+      const pointsCase = (e, m, ge, gm, withMajor = false) => evalFull(solo({ '22283': 30, '22261': 30, ...levelChanges(e, m, ge, gm), ...(withMajor ? {} : { '36361': null }) }));
+
+      await part('QA-2.5 allowed single failure and points compensation', async () => {
+        const range = evalFull(solo({ '22283': 50, '22261': 50 }));
+        check(range.tier === 2 && range.compensation && range.compensation.type === 'range' && subj(range, 'history').compApplied === 'range', 'One 45-54 failure outside Hebrew must be compensated (tier 2)');
+        const two = evalFull(solo({ '22283': 50, '22261': 50, '34221': 50, '34225': 50 }));
+        check(kinds(two).includes('comp-over') && two.tier >= 3, 'A second 45-54 failure exceeds the compensation quota');
+        [[3, 3, 150], [3, 4, 148], [4, 4, 146], [4, 5, 144], [5, 5, 140]].forEach(([e, m, required]) => {
+          const ok = pointsCase(e, m, required / 2, required / 2);
+          check(subj(ok, 'history').compApplied === 'points' && !kinds(ok).includes('severe') && ok.notes.some(n => n.includes('פיצוי נקודות')), `Units ${e}+${m}: ${required} points must compensate`);
+          const short = pointsCase(e, m, required / 2, required / 2 - 1);
+          const blocker = short.blockers.find(b => b.k === 'severe');
+          check(blocker && blocker.text.includes(`נמוך מהנדרש ${required}`) && !subj(short, 'history').compApplied, `Units ${e}+${m}: ${required - 1} points must not compensate`);
+        });
+        const full = pointsCase(4, 4, 75, 75, true);
+        check(full.tier === 2 && full.compensation && full.compensation.type === 'points' && subj(full, 'history').compApplied === 'points' && !full.blockers.length, 'A student with a major and enough points must be eligible (tier 2) through points compensation');
+      });
+
+      await part('QA-2.6 non-compensable failures stay blocked', async () => {
+        [50, 30].forEach(grade => {
+          const ev = evalFull(solo({ '11283': grade, '11281': grade, ...levelChanges(4, 4, 80, 80) }));
+          check(ev.tier >= 3 && ev.gates[1] === 'fail' && kinds(ev).includes('critical'), `Hebrew ${grade} must block eligibility even with strong other subjects`);
+        });
+        const below5 = evalFull(solo({ '22283': 3, '22261': 3 }));
+        check(below5.tier >= 3 && kinds(below5).includes('fail'), 'A grade below 5 must block eligibility');
+        const short = pointsCase(4, 4, 73, 72);
+        check(kinds(short).includes('severe') && short.tier >= 3, 'Points below the required sum must block eligibility');
+      });
+
+      await part('QA-2.7 two failing subjects are not eligible', async () => {
+        const severePair = evalFull(solo({ '22283': 30, '22261': 30, '34221': 30, '34225': 30 }));
+        check(severePair.tier === 4 && severePair.tierText === BagrutEngine.TIER_TEXT.full[4], 'Two 5-44 subjects must be tier 4 (not eligible)');
+        const failPair = evalFull(solo({ '22283': 3, '22261': 3, '34221': 3, '34225': 3 }));
+        check(failPair.tier === 4, 'Two failing subjects below 5 must be tier 4');
+        const mixed = evalFull(solo({ '22283': 50, '22261': 50, '34221': 30, '34225': 30 }));
+        check(mixed.tier >= 3, 'A compensated subject plus a severe failure must not be eligible');
+      });
+
+      await part('QA-2.9 level change 5 -> 4 is counted once', async () => {
+        const ev = evalFull(solo({ '35571': 80, '35471': 60, '35472': 70 }));
+        const math = subj(ev, 'math');
+        check(math.units === '4' && math.comps.length === 2, 'Level 4 questionnaires must determine the level');
+        near(math.final, 65, 'Only level-4 grades may enter the average (no double counting)');
+        check(ev.isPotentialException && ev.suspect.some(s => s.includes('רמות יח"ל מעורבות')), 'Mixed levels must be flagged for review');
+        const gid = (subject, id) => `${subject} יב1 מורה [${id}]`;
+        world({
+          roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(1), { '35471': null, '35472': null, '35571': 80, '35572': 80 })),
+          groups: groupRows([{ tz: T(1), grade: 'יב', cls: 'יב1', gid: gid('תגבור מתמטיקה 3 יח"ל', 9002) }, { tz: T(1), grade: 'יב', cls: 'יב1', gid: gid('מתמטיקה 5 יח"ל', 9001) }])
+        });
+        check(subj(evalFull(T(1)), 'math').units === '5', 'A reinforcement group must never override the real math level');
+      });
+
+      await part('QA-2.10 repeated sittings use the best grade once', async () => {
+        const list = [...profile(T(1), { '22283': null }), { tz: T(1), code: '22283', final: 50, moed: 'חורף' }, { tz: T(1), code: '22283', final: 80, moed: 'קיץ' }];
+        world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(list) });
+        const history = subj(evalFull(T(1)), 'history');
+        check(history.comps[0].num === 80 && Math.abs(history.final - 73) < 1e-9, 'Best sitting (80) must be used once: final 73');
+        check(Store.attemptsOf(T(1)).filter(a => a.code === '22283').length === 2, 'Both sittings must stay visible');
+      });
+
+      await part('QA-2.11 introduction to science: exempt with two science majors, required with one', async () => {
+        const one = evalFull(solo({ '43183': null }));
+        const sci1 = one.internals.find(i => i.id === 'science');
+        check(sci1.required && !sci1.exempt && kinds(one).includes('internal'), 'One science major must still require the science unit');
+        const two = evalFull(solo({ '43183': null, '43351': 80 }));
+        const sci2 = two.internals.find(i => i.id === 'science');
+        check(sci2.exempt === true && two.tier === 1 && !kinds(two).length, 'Two science majors must exempt the science unit');
+      });
+
+      await part('QA-2.12 an extended core subject doubling as the major is counted once', async () => {
+        const lit = Config.rulesForGrade('יב').coreSubjects.find(s => s.id === 'literature');
+        lit.units = 5; lit.majorEligible = true;
+        const ev = evalFull(solo({ '36361': null }));
+        check(ev.major.chosen && ev.major.chosen.coreId === 'literature' && !kinds(ev).length && ev.tier === 1, 'The extended literature subject must satisfy the major gate');
+        check(ev.subjects.filter(s => s.id === 'literature').length === 1 && ev.major.cands.filter(c => c.coreId === 'literature').length === 1, 'The subject must not be duplicated');
+        resetConfig();
+      });
+
+      await part('QA-2.13 multi-stage weighting with a missing part', async () => {
+        const strict = subj(evalFull(solo({ '22283': null, '22261': 60 })), 'history');
+        check(strict.final === null && strict.status === 'missing' && strict.reverse, 'A missing 30% part must not invent a grade');
+        check(strict.reverse.required30 === 42 && strict.reverse.level === 'info' && strict.reverse.pct === 30, 'Reverse calculator must ask for 42 in the 30%');
+        near(strict.reverse.externalScore, 60, 'External score');
+        const hit = subj(evalFull(solo({ '22283': 42, '22261': 60 })), 'history'), miss = subj(evalFull(solo({ '22283': 41, '22261': 60 })), 'history');
+        check(hit.status === 'pass' && miss.status !== 'pass', '42 must pass and 41 must not (60 x 70% + internal x 30%)');
+        const adaptive = subj(BagrutEngine.evaluate(solo({ '22283': null, '22261': 40 })), 'history');
+        check(adaptive.status === 'await' && adaptive.partial && adaptive.partial.donePct === 70 && adaptive.reverse && adaptive.reverse.required30 === 89, 'A partial subject must await the missing part (needs 89)');
+        near(adaptive.final, 40, 'Partial score is only the reported part');
+      });
+
+      await part('QA-2.14 INV-7 determinism under shuffled input (10 shuffles)', async () => {
+        const fx = schoolFixture();
+        const fingerprint = () => {
+          const ids = Store.traineeList().map(t => t.tz).sort();
+          const defaults = ids.map(tz => BagrutEngine.evaluate(tz));
+          const finals = ids.map(tz => BagrutEngine.evaluate(tz, { fullMode: true }));
+          return JSON.stringify([defaults, finals, BagrutAdvisor.summarize(defaults), BagrutAdvisor.summarizePace(defaults), BagrutAdvisor.summarize(finals)]);
+        };
+        world(fx);
+        const first = fingerprint();
+        check(first === fingerprint(), 'The same input must evaluate identically twice');
+        for (let seed = 1; seed <= 10; seed++) {
+          world({ roster: shuffled(fx.roster, seed), bagrut: shuffled(fx.bagrut, seed + 100), groups: shuffled(fx.groups, seed + 200), sadin: shuffled(fx.sadin, seed + 300) });
+          check(fingerprint() === first, `Shuffle ${seed} changed the engine/advisor output`);
+        }
+      });
+
+      await part('Regression: social involvement (86083) uses the 1-4 scale in gate 3', async () => {
+        [[1, false, true], [0, false, true], [2, true, false], [3, true, false], [4, true, false], ['עמד בדרישות', true, false], ['בוצע', true, false], [70, true, false], ['לא עמד בדרישות', false, true]].forEach(([value, done, fail]) => {
+          const ev = evalFull(solo({ '86083': value }));
+          const social = ev.internals.find(i => i.id === 'social');
+          check(social.done === done && social.explicitFail === fail, `Social ${JSON.stringify(value)}: expected done=${done}/explicitFail=${fail}, got ${social.done}/${social.explicitFail}`);
+          check(ev.gates[3] === (done ? 'pass' : 'fail'), `Social ${JSON.stringify(value)}: gate 3 must ${done ? 'pass' : 'fail'}`);
+        });
+        const pe = evalFull(solo({ '41083': 3 })).internals.find(i => i.id === 'pe');
+        check(!pe.done && !pe.explicitFail, 'Other internal units must keep the 0-100 behaviour (3 is not a pass)');
+        const science = evalFull(solo({ '43183': 4 })).internals.find(i => i.id === 'science');
+        check(!science.done && !science.explicitFail, 'Science must not adopt the 1-4 scale');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה C — יועץ קצב התקדמות
+       QA-3.1..QA-3.7, INV-4, INV-6
+       ==================================================================== */
+    await group('Group C — progress advisor: QA-3.1..3.7, INV-4, INV-6', async () => {
+      resetConfig();
+      const paceWorld = () => {
+        const roster = [stu(31, 'י', 'י1')], bagrut = [];
+        for (let n = 21; n <= 29; n++) roster.push(stu(n, 'יא', 'יא1'));
+        for (let n = 21; n <= 27; n++) bagrut.push(...partial(n, ELEVENTH));
+        bagrut.push(...partial(28, { ...ELEVENTH, '8283': undefined }).filter(r => r.final !== undefined));
+        bagrut.push(...partial(29, { ...ELEVENTH, '8283': undefined, '1263': undefined }).filter(r => r.final !== undefined));
+        world({ roster, bagrut: bagrutRows(bagrut) });
+      };
+
+      await part('QA-3.1 10th grade without grades is not critical', async () => {
+        paceWorld();
+        const ev = BagrutEngine.evaluate(T(31));
+        check(ev.paceStatus === 'not_started' && ev.atRisk === false, `A 10th grader with no grades must be "not started" and not at risk (got ${ev.paceStatus}, atRisk ${ev.atRisk})`);
+        check(ev.focus.every(f => !f.hard), 'No hard recommendations may be produced for a 10th grader without grades');
+      });
+
+      await part('QA-3.2 11th grade distinguishes on-track, gap and risk', async () => {
+        paceWorld();
+        const evals = Store.traineeList().filter(t => t.gradeKey === 'יא').map(t => BagrutEngine.evaluate(t.tz));
+        const status = n => evals.find(e => e.tz === T(n)).paceStatus;
+        same([status(21), status(28), status(29)], ['on_track', 'pace_warning', 'pace_lag'], 'On-track / single gap / risk classification');
+        const summary = BagrutAdvisor.summarizePace(evals);
+        check(summary.onTrack === 7 && summary.warning === 1 && summary.lag === 1, `Pace summary counts: ${JSON.stringify(summary)}`);
+      });
+
+      await part('QA-3.3 12th grade: fixable gap vs structural blocker', async () => {
+        const fixable = evalFull(solo({ '22283': null, '22261': 60 }));
+        check(fixable.tier === 3 && fixable.savable === true && fixable.reverse.every(r => r.level !== 'red'), 'A single missing 30% part must be fixable (savable)');
+        const lost = evalFull(solo({ '22283': null, '22261': 20 }));
+        check(lost.reverse.some(r => r.level === 'red') && lost.savable === false, 'A part that even 100 cannot rescue must not be savable');
+        const structural = evalFull(solo({ '11283': 50, '11281': 50, '34221': 3, '34225': 3 }));
+        check(structural.tier === 4 && structural.savable === false && structural.atRisk === true, 'Two hard blockers must be a structural risk');
+      });
+
+      await part('QA-3.4 INV-6 / QA-3.7 the computed target passes when fed back (30/70 and 20/80)', async () => {
+        [['history', '22283', '22261'], ['civics', '34221', '34225']].forEach(([id, internal, external]) => {
+          [45, 50, 55, 60, 70, 80].forEach(ext => {
+            const s = subj(evalFull(solo({ [internal]: null, [external]: ext })), id);
+            check(!!s.reverse, `${id} ext ${ext}: reverse calculator missing`);
+            if (!s.reverse) return;
+            const need = Math.max(1, s.reverse.required30);
+            check(subj(evalFull(solo({ [internal]: need, [external]: ext })), id).status === 'pass', `${id} ext ${ext}: target ${need} must pass`);
+            if (s.reverse.required30 > 1) check(subj(evalFull(solo({ [internal]: need - 1, [external]: ext })), id).status !== 'pass', `${id} ext ${ext}: ${need - 1} must not pass (target is not minimal)`);
+          });
+        });
+        [40, 50, 55, 60].forEach(ext => {
+          const tz = solo({ '22283': null, '22261': ext });
+          const engine = subj(evalFull(tz), 'history').reverse;
+          if (!engine) return;
+          const row = BagrutAdvisor.subjectMatrix('core:history', [Store.trainees.get(tz)]).rows[0];
+          const target = Math.ceil(row.need * 100 / row.remainingW);
+          check(target >= engine.required30, `ext ${ext}: matrix target ${target} is lower than the engine minimum ${engine.required30}`);
+          check(subj(evalFull(solo({ '22283': target, '22261': ext })), 'history').status === 'pass', `ext ${ext}: matrix target ${target} must pass in the engine`);
+        });
+      });
+
+      await part('QA-3.5 a target above 100 is never recommended', async () => {
+        const ev = evalFull(solo({ '22283': null, '22261': 20 }));
+        const s = subj(ev, 'history');
+        check(s.reverse.level === 'red' && /גם 100/.test(s.reverse.text), 'The reverse calculator must say that even 100 is not enough');
+        const lines = [ev.reverseText, ev.cells.history.sub, ...ev.focus.map(f => f.text).filter(t => /גם 100/.test(t))];
+        check(lines.every(l => /גם 100/.test(l) && (l.match(/\b\d{1,3}\b/g) || []).every(n => Number(n) <= 100)), `A displayed recommendation contains a number above 100: ${JSON.stringify(lines)}`);
+      });
+
+      await part('QA-3.6 INV-4 advisor never contradicts the engine (whole synthetic school)', async () => {
+        world(schoolFixture());
+        const rows = [];
+        Store.traineeList().forEach(t => { rows.push(BagrutEngine.evaluate(t.tz)); rows.push(BagrutEngine.evaluate(t.tz, { fullMode: true })); });
+        rows.forEach(ev => {
+          if (ev.manual || ev.tier === 0) return;
+          const label = `${ev.tz}/${ev.adaptive ? 'adaptive' : 'full'}`;
+          const texts = [...ev.focus.map(f => f.text), ...ev.blockers.filter(b => !b.info && b.k !== 'enroll').map(b => b.text)];
+          ev.subjects.filter(s => s.status === 'pass' && !s.unresolved.length).forEach(s => {
+            check(!texts.some(t => t.includes(s.name)), `${label}: advisor recommends action on the completed subject ${s.name}`);
+          });
+          if (ev.paceInfo.isSenior) {
+            check(ev.tier > 2 ? ev.focus.length > 0 : ev.focus.every(f => !f.hard), `${label}: tier ${ev.tier} contradicts the advisor focus list`);
+            check(ev.atRisk === (ev.tier === 4), `${label}: atRisk ${ev.atRisk} contradicts tier ${ev.tier}`);
+          } else {
+            check(ev.atRisk === (ev.paceInfo.failedActualCount > 0 || ev.paceInfo.missingDueList.length > 0), `${label}: junior atRisk contradicts the pace data`);
+            if (ev.atRisk) check(ev.focus.length > 0, `${label}: at-risk student has no advisor focus`);
+          }
+        });
+        noNaN(rows, 'school');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה D — שאלון זר, החזרה למקור ובידוד מחזורים
+       QA-4.1, QA-4.3/INV-9, QA-5.6/INV-10, QA-6.4, QA-7.4/INV-8
+       ==================================================================== */
+    await group('Group D — foreign questionnaires, reversibility, cohort isolation: QA-4.1, QA-4.3/INV-9, QA-5.6/INV-10, QA-6.4, QA-7.4/INV-8', async () => {
+      resetConfig();
+      await part('QA-4.1 foreign questionnaires are surfaced, never swallowed', async () => {
+        const tz = solo({ '22283': 30, '22261': 30, '34221': 30, '34225': 30, '35571': { final: 80, subject: 'מתמטיקה' }, '5384': { final: 70, subject: 'אנגלית' }, '999001': { final: 60, subject: 'אזרחות מותאמת' } });
+        const ev = evalFull(tz);
+        check(ev.manualReview.required === true, 'A non-eligible student with unknown questionnaires must require manual review');
+        const found = Object.fromEntries(ev.manualReview.foreignCodes.map(f => [f.code, f.reason]));
+        same(found, { '35571': 'other-level', '5384': 'immigrant', '999001': 'unlisted-code' }, 'Foreign codes and reasons');
+        const lines = BagrutAdvisor.manualReviewLines(ev);
+        check(lines.length === 3 && ['35571', '5384', '999001'].every(code => lines.some(l => l.includes(code))), 'The advisor must list every foreign questionnaire');
+        check(BagrutAdvisor.summarize([ev]).manualReview === 1, 'The KPI must count the manual-review student');
+      });
+
+      await part('QA-4.3 INV-9 setting then removing a coordinator decision restores the engine result', async () => {
+        const tz = solo({ '22283': 30, '22261': 30, '34221': 30, '34225': 30 });
+        const before = JSON.stringify(evalFull(tz)), exceptionsBefore = JSON.stringify(Config.data.traineeExceptions);
+        check(Config.setException(tz, { isException: true, overrideStatus: 'eligible', reason: 'synthetic decision' }).ok, 'setException');
+        const decided = evalFull(tz);
+        check(decided.manual && decided.tier === 1, 'The manual decision must take effect immediately');
+        check(Config.setException(tz, { isException: false, overrideStatus: '', reason: '' }).ok, 'remove decision');
+        check(JSON.stringify(evalFull(tz)) === before && JSON.stringify(Config.data.traineeExceptions) === exceptionsBefore, 'Removing the decision must restore the original engine result and stored exceptions');
+      });
+
+      await part('QA-7.4 INV-8 setting then removing a roster override restores the student', async () => {
+        const tz = solo({}, 'יב', 'יב1');
+        const state = () => JSON.stringify([Store.trainees.get(tz), evalFull(tz), BagrutEngine.evaluate(tz)]);
+        const before = state(), overridesBefore = JSON.stringify(Config.getRosterOverrides());
+        check(Config.setRosterOverride(tz, { grade: 'יא', homeroom: 'יא2' }).ok, 'setRosterOverride');
+        Store.refresh();
+        check(Store.trainees.get(tz).gradeKey === 'יא' && Store.trainees.get(tz).classKey === 'יא2', 'The override must move the student');
+        check(Config.removeRosterOverride(tz).ok, 'removeRosterOverride');
+        Store.refresh();
+        check(state() === before && JSON.stringify(Config.getRosterOverrides()) === overridesBefore, 'Removing the override must restore the exact original state');
+      });
+
+      await part('QA-6.4 a rule change for grade 10 leaves grades 11 and 12 untouched', async () => {
+        const build = () => world({
+          roster: [stu(1, 'י', 'י1'), stu(2, 'יא', 'יא1'), stu(3, 'יב', 'יב1')],
+          bagrut: bagrutRows([1, 2, 3].flatMap(n => [{ tz: T(n), code: '16381', final: 57 }, { tz: T(n), code: '16382', final: 57 }]))
+        });
+        const english = n => evalFull(T(n)).subjects.find(s => s.id === 'english');
+        build();
+        const before = [1, 2, 3].map(n => JSON.stringify(evalFull(T(n))));
+        check([1, 2, 3].every(n => english(n).status === 'pass'), '57 must pass at the default pass grade');
+        Config.setActiveCohort(Config.getCohortIdForGrade('י'));
+        check(Config.setRuleParam('passGrade', 60).ok, 'raise the pass grade for the 10th-grade cohort');
+        build();
+        check(english(1).status !== 'pass', 'The 10th-grade cohort must use the new pass grade');
+        same([2, 3].map(n => JSON.stringify(evalFull(T(n)))), before.slice(1), 'Grades 11 and 12 must evaluate exactly as before');
+        resetConfig();
+      });
+
+      await part('QA-5.6 INV-10 weights that do not sum to 100', async () => {
+        const warnings = Config.updateRules(r => { const h = r.coreSubjects.find(s => s.id === 'history'); h.components[0].weight = 30; h.components[1].weight = 60; });
+        check(warnings.ok && warnings.warnings.some(w => w.includes('היסטוריה') && w.includes('90%')), `A 30+60 weight set must raise a validation warning, got ${JSON.stringify(warnings)}`);
+        const tz = solo({ '22283': 70, '22261': 70 });
+        const ev = evalFull(tz);
+        near(subj(ev, 'history').final, 70, 'The partial weights must still average correctly');
+        noNaN(ev, '30+60');
+        Config.updateRules(r => { r.coreSubjects.find(s => s.id === 'history').components.forEach(c => { c.weight = 0; }); });
+        noNaN(evalFull(solo()), 'zero weights');
+        noNaN(BagrutAdvisor.summarize([evalFull(T(1))]), 'zero weights advisor');
+        const invalid = Config.updateRules(r => { r.coreSubjects.find(s => s.id === 'history').components[0].weight = 150; });
+        check(invalid.ok === false, 'A weight above 100 must be rejected');
+        resetConfig();
+      });
+    });
+  } catch (e) {
+    outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });
+  } finally {
+    if (saved) {
+      Config.data = saved.data; Config._cache = saved.cache; Config._ignoredCache = saved.ignored; Config._activeCohort = saved.active;
+      Config._rulesOverride = saved.override; Config._write = saved.write; Config._storePut = saved.put;
+      Store.raw = saved.raw; Store.loaded = saved.loaded; Config._invalidateRoster();
+    }
+  }
+
+  const failed = outcome.filter(g => g.failures.length);
+  results.textContent = outcome.map(g => (g.failures.length ? `FAIL ${g.title}\n${g.failures.map(f => '  - ' + f).join('\n')}` : `PASS ${g.title}`)).join('\n') +
+    (failed.length ? `\n${failed.length} of ${outcome.length} groups failed.` : '\nAll tests passed.');
+  document.title = failed.length ? 'FAIL - Engine invariants tests' : 'PASS - Engine invariants tests';
+})();
+</script>

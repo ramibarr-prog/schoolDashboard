@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Cross-view invariants tests</title>
+<pre id="results">Running...</pre>
+<script>
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, options) => {
+  const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+  if (url.origin !== location.origin) throw new Error('Outbound network blocked by cross-view tests (QA-0.4)');
+  return nativeFetch(input, options);
+};
+</script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/bagrutEngine.js"></script>
+<script src="../js/bagrutAdvisor.js"></script>
+<script src="../js/groupAnalyzer.js"></script>
+<script>
+(async () => {
+  const results = document.getElementById('results');
+  const outcome = [];
+  let active = null, section = '';
+
+  /* assertions never throw: every failure is collected so one run lists all gaps */
+  const check = (condition, message) => { if (!condition) active.failures.push(`${section ? section + ': ' : ''}${message}`); };
+  const same = (actual, expected, message) => check(JSON.stringify(actual) === JSON.stringify(expected), `${message} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
+  const near = (actual, expected, message) => check(typeof actual === 'number' && Math.abs(actual - expected) < 1e-9, `${message} (expected ${expected}, got ${actual})`);
+  const part = async (id, fn) => {
+    section = id;
+    try { await fn(); } catch (e) { active.failures.push(`${id}: EXCEPTION ${e && e.stack ? e.stack : e}`); }
+    section = '';
+  };
+  const group = async (title, fn) => {
+    active = { title, failures: [] };
+    outcome.push(active);
+    try { await fn(); } catch (e) { active.failures.push(`EXCEPTION ${e && e.stack ? e.stack : e}`); }
+  };
+  const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms));
+
+  /* ---------- synthetic data helpers (100% invented IDs and names) ---------- */
+  const T = n => String(900000000 + n);
+  const stu = (n, grade, homeroom, extra = {}) => ({ tz: T(n), firstName: 'חניך' + n, lastName: 'בדיקה', grade, homeroom, track: 'רגילה', ...extra });
+  const BAGRUT_MAP = { tz: 'tz', subject: 'subject', questionnaireCode: 'code', finalGrade: 'final', examGrade: 'exam', submissionGrade: 'sub', moed: 'moed' };
+  const GROUP_MAP = { tz: 'tz', grade: 'grade', classNum: 'cls', groupId: 'gid', isTeacher: 'teacher' };
+  const SADIN_MAP = { tz: 'tz', event: 'ev', score: 'sc', group: 'grp', date: 'dt' };
+  const bagrutRows = list => Parser.normalize('bagrut', list, BAGRUT_MAP).rows;
+  const groupRows = list => Parser.normalize('groups', list, GROUP_MAP).rows;
+  const sadinRows = list => Parser.normalize('grades', list, SADIN_MAP).rows;
+
+  const BASE = {
+    '22283': 70, '22261': 70, '34221': 70, '34225': 70, '8283': 70, '8281': 70, '1263': 70, '1264': 70, '11283': 70, '11281': 70,
+    '16382': 80, '16471': 80, '35471': 80, '35472': 80, '36361': 80,
+    '86083': 'עמד בדרישות', '41083': 'בוצע', '43183': 70, '82083': 'בוצע'
+  };
+  const profile = (tz, changes = {}) => Object.entries({ ...BASE, ...changes }).filter(([, value]) => value !== null)
+    .map(([code, value]) => (typeof value === 'object' ? { tz, code, ...value } : { tz, code, final: value }));
+  const partial = (n, map) => Object.entries(map).map(([code, final]) => ({ tz: T(n), code, final }));
+  const ELEVENTH = { '22283': 70, '34221': 70, '8283': 70, '1263': 70, '11283': 70, '16382': 70, '35471': 70 };
+  const FULL = { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: true };
+  const ADAPTIVE = { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false };
+
+  /* ---------- isolated persistence: nothing touches the browser's real localStorage / IndexedDB ---------- */
+  const storage = new Map();
+  let saved = null, appSource = null;
+  const resetConfig = () => {
+    storage.clear();
+    Config.data = Config.defaults();
+    Config._activeCohort = Config.data.gradeCohortMap['12'];
+    Config._rulesOverride = null;
+    Config._syncQuestionnaires();
+    Config._cache = {};
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+  };
+  const world = ({ roster = [], bagrut = [], groups = [], sadin = [] } = {}) => {
+    const norm = Config.normalizeRosterRows(roster);
+    const stamp = Date.now();
+    const cache = {};
+    if (roster.length) cache.masterRoster = { data: norm.rows, ignoredIds: norm.ignoredIds, fileName: 'synthetic-roster.xlsx', uploadedAt: stamp };
+    [['bagrutData', bagrut], ['groupsData', groups], ['sadinData', sadin]].forEach(([key, rows]) => {
+      if (rows.length) cache[key] = { data: rows, fileName: `synthetic-${key}.xlsx`, uploadedAt: stamp };
+    });
+    Config._cache = cache;
+    Config._ignoredCache = new Set();
+    storage.delete(Config.KEYS.masterRoster);
+    if (cache.masterRoster) Config._write(Config.KEYS.masterRoster, cache.masterRoster);
+    Config._invalidateRoster();
+    Store.refresh();
+    return norm;
+  };
+
+  /* ---------- the real App object, loaded the same way as tests/cloud-sync.html (no boot, no network) ---------- */
+  const parsed = {};
+  const makeApp = () => {
+    const doc = new Proxy(document, { get(target, key) {
+      if (key === 'readyState') return 'loading';
+      if (key === 'addEventListener') return () => {};
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const cloud = { configured: () => false, hasUnpublished: () => false, status: { kind: 'none' }, meta: () => ({ syncedAt: 0, dirty: false, rev: 0 }), url: () => '', passcode: () => '' };
+    const instance = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', appSource + '\nreturn App;')(
+      Util, Config, cloud, doc, async (file, type) => parsed[type], () => true, Store
+    );
+    instance.toasts = [];
+    instance.toast = (message, kind) => { instance.toasts.push({ message, kind }); };
+    instance.state.sim = { ...FULL };
+    instance.state.bagrutScope = 'all';
+    instance.state.bagrutScopeSet = true;
+    return instance;
+  };
+  const MOUNT = `<div id="mainContent"></div>
+    <div id="bagrut-kpis"></div><select id="bagrutStatusSelect"></select><select id="bagrutSubjectDrillSelect"></select><div id="bagrut-whatif"></div><div id="bagrut-cohort"></div><div id="bagrut-table"></div>
+    <div id="overview-body"></div>
+    <select id="sadinSubjectSelect"></select><select id="sadinTeacherSelect"></select><select id="sadinFilterSelect"></select><div id="sadin-table"></div>
+    <div id="groups-head"><div id="groups-mode"></div></div><div id="groups-kpis"></div><div id="groups-table"></div><div id="groups-strip"></div><div id="groups-master"></div><div id="groups-detail"></div><select id="groupSubjectSelect"></select><select id="groupTeacherSelect"></select>
+    <select id="profSelect"></select><div id="profName"></div><div id="profMeta"></div><div id="profBadges"></div><div id="profKpis"></div><div id="profBody"></div>
+    <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button>`;
+  const mount = () => {
+    let stage = document.getElementById('stage');
+    if (!stage) { stage = document.createElement('div'); stage.id = 'stage'; document.body.appendChild(stage); }
+    const modal = document.getElementById('modal-root');
+    if (modal) modal.innerHTML = '';
+    stage.innerHTML = MOUNT;
+    return stage;
+  };
+  const $id = id => document.getElementById(id);
+  const stageText = () => $id('stage').textContent + ($id('modal-root') ? $id('modal-root').textContent : '');
+  const noGarbage = label => check(!/\b(NaN|undefined|Infinity)\b/.test(stageText()), `${label}: NaN/undefined/Infinity leaked into the screen`);
+  const newApp = filters => {
+    const instance = makeApp();
+    instance.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '', ...(filters || {}) };
+    mount();
+    return instance;
+  };
+  const errorsOf = instance => instance.toasts.filter(t => /שגיאה בהצגת הפאנל/.test(t.message));
+
+  /* ---------- DOM readers ---------- */
+  const rowFor = (table, tz) => { const b = [...table.querySelectorAll('button[data-act="openProfile"]')].find(x => x.dataset.tz === tz); return b ? b.closest('tr') : null; };
+  const colIndex = (table, label) => [...table.querySelectorAll('thead th')].findIndex(th => th.textContent.trim().includes(label));
+  const cellOf = (table, tz, label) => { const tr = rowFor(table, tz), i = colIndex(table, label); return tr && i >= 0 ? tr.children[i] : null; };
+  const tzsIn = table => [...new Set([...table.querySelectorAll('button[data-act="openProfile"][data-tz]')].map(b => b.dataset.tz))].sort();
+  const optionCounts = select => [...select.options].map(o => ({ value: o.value, n: Number((/\((\d+)\)\s*$/.exec(o.textContent) || [])[1]) }));
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const trackOfStudent = t => Config.trackFor(t.tz, t.track, t.classKey);
+
+  /* ---------- rich synthetic school: tracks, special-ed class, exceptions, groups and sadin ---------- */
+  const schoolFixture = () => {
+    const roster = [], bagrut = [], groups = [], sadin = [];
+    const add = (n, grade, cls, rows, extra) => { roster.push(stu(n, grade, cls, extra)); if (rows) bagrut.push(...bagrutRows(rows)); };
+    add(1, 'יב', 'יב1', profile(T(1)));
+    add(2, 'יב', 'יב1', profile(T(2), { '22283': 50, '22261': 50 }), { track: 'אתגר' });
+    add(3, 'יב', 'יב1', profile(T(3), { '22283': 30, '22261': 30, '16382': 75, '16471': 75, '35471': 75, '35472': 75 }), { track: 'מב"ר' });
+    add(4, 'יב', 'יב1', profile(T(4), { '11283': 50, '11281': 50 }), { track: 'חנ"מ' });
+    add(5, 'יב', 'יב2', profile(T(5), { '22283': 30, '22261': 30, '34221': 30, '34225': 30 }));
+    add(6, 'יב', 'יב2', profile(T(6), { '22283': null, '22261': 60 }));
+    add(7, 'יב', 'יב2', profile(T(7), { '22283': null, '22261': 20 }));
+    add(8, 'יב', 'יב2', profile(T(8), { '35571': 80, '35471': 60, '35472': 70 }));
+    add(9, 'יב', 'יב3', profile(T(9)));
+    add(10, 'יב', 'יב3', profile(T(10), { '22283': 30, '22261': 30, '34221': 30, '34225': 30 }));
+    add(11, 'יב', 'יב2', null);
+    add(12, 'יב', 'יב2', profile(T(12)));
+    add(13, 'יב', 'יב2', profile(T(13), { '22283': 30, '22261': 30, '34221': 30, '34225': 30 }));
+    add(14, 'יב', 'יב1', profile(T(14)), { track: 'אתגר' });
+    for (let n = 21; n <= 27; n++) add(n, 'יא', n < 25 ? 'יא1' : 'יא2', partial(n, ELEVENTH), n === 24 ? { track: 'מב"ר' } : {});
+    add(28, 'יא', 'יא2', partial(28, { ...ELEVENTH, '8283': undefined }).filter(r => r.final !== undefined));
+    add(29, 'יא', 'יא2', partial(29, { ...ELEVENTH, '8283': undefined, '1263': undefined }).filter(r => r.final !== undefined));
+    add(31, 'י', 'י1', null);
+    add(32, 'י', 'י1', partial(32, { '16381': 60, '16382': 60 }));
+    add(33, 'י', 'י2', partial(33, { '16381': 30 }));
+    const math = 'מתמטיקה 4 יח"ל יב1-יב2 דוד בדיקה [9001]', english = 'אנגלית 4 יח"ל יב1 מיכל בדיקה [9101]';
+    groups.push(...groupRows([
+      ...[1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ tz: T(n), grade: 'יב', cls: n < 5 ? 'יב1' : 'יב2', gid: math })),
+      { tz: T(900), gid: math, teacher: 'כן' }
+    ]));
+    sadin.push(...sadinRows([
+      { tz: T(1), ev: 'מבחן א (50)', sc: 40, grp: math, dt: '01/10/2026' }, { tz: T(1), ev: 'מבחן ב (50)', sc: 40, grp: math, dt: '08/10/2026' },
+      { tz: T(1), ev: 'מבחן א (50)', sc: 40, grp: english, dt: '01/10/2026' }, { tz: T(1), ev: 'מבחן ב (50)', sc: 40, grp: english, dt: '08/10/2026' },
+      { tz: T(2), ev: 'מבחן א (50)', sc: 80, grp: math, dt: '01/10/2026' }, { tz: T(2), ev: 'מבחן ב (50)', sc: 80, grp: math, dt: '08/10/2026' },
+      { tz: T(3), ev: 'מבחן א (50)', sc: 80, grp: math, dt: '01/10/2026' }, { tz: T(3), ev: 'מבחן ב (50)', sc: 80, grp: math, dt: '08/10/2026' }
+    ]));
+    return { roster, bagrut, groups, sadin };
+  };
+  const applySchoolConfig = () => {
+    Config.setSpecialEdClass('יב3', true);
+    Config.setException(T(1), { trackOverride: 'חנ"מ' });
+    Config.setException(T(12), { isException: true, overrideStatus: 'twelve', reason: 'מסלול 12 שנות לימוד סינתטי' });
+    Config.setException(T(13), { isException: true, overrideStatus: 'eligible', reason: 'החלטה סינתטית' });
+    Config.setRosterOverride(T(31), { track: 'חנ"מ' });
+    Store.refresh();
+  };
+  const EXPECTED_TRACK = { [T(1)]: 'חנ"מ', [T(2)]: 'אתגר', [T(3)]: 'מב"ר', [T(4)]: 'חנ"מ', [T(9)]: 'חנ"מ', [T(10)]: 'חנ"מ', [T(14)]: 'אתגר', [T(24)]: 'מב"ר', [T(31)]: 'חנ"מ' };
+  const expectedTrack = tz => EXPECTED_TRACK[tz] || 'רגילה';
+  const tallies = list => {
+    const counted = list.filter(x => x.ev.tier !== 5 && x.ev.tier !== 0);
+    const ok = x => x.ev.tier === 1 || x.ev.tier === 2;
+    const special = x => trackOfStudent(x.t) === 'חנ"מ';
+    const noSpecial = counted.filter(x => !special(x));
+    return {
+      total: list.length, counted: counted.length, noBagrut: list.filter(x => x.ev.tier === 0).length, twelve: list.filter(x => x.ev.tier === 5).length,
+      specialEd: list.filter(special).length, incl: pct(counted.filter(ok).length, counted.length), ex: pct(noSpecial.filter(ok).length, noSpecial.length),
+      exceptions: list.filter(x => x.ev.manual).length
+    };
+  };
+
+  try {
+    await Config.ready;
+    saved = {
+      data: Config.data, cache: Config._cache, ignored: Config._ignoredCache, active: Config._activeCohort, override: Config._rulesOverride,
+      write: Config._write, read: Config._read, put: Config._storePut, cleared: Config.setRosterCleared, raw: Store.raw, loaded: Store.loaded
+    };
+    Config._write = (key, value) => { storage.set(key, JSON.stringify(value)); return { ok: true }; };
+    Config._read = key => { const raw = storage.get(key); return raw ? JSON.parse(raw) : null; };
+    Config._storePut = async () => ({ ok: true });
+    Config.setRosterCleared = () => {};
+    resetConfig();
+    appSource = await (await window.fetch('../js/app.js')).text();
+
+    /* ====================================================================
+       קבוצה 0 — חסימת רשת (QA-0.4)
+       ==================================================================== */
+    await group('Group 0 — QA-0.4 outbound cloud traffic is blocked', async () => {
+      await part('QA-0.4', async () => {
+        let blocked = false;
+        try { window.fetch('https://script.google.com/macros/s/synthetic/exec', { method: 'POST', body: '{}' }); } catch (e) { blocked = /blocked/.test(e.message); }
+        check(blocked, 'fetch to script.google.com must throw synchronously');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה A — מסלולים, חריגים, דריסות וכיול כללים
+       QA-4.2, QA-5.2, QA-6.3, QA-6.5, QA-7.6, QA-8.1, QA-8.2
+       ==================================================================== */
+    await group('Group A — tracks, exceptions, overrides, rule calibration: QA-4.2, QA-5.2, QA-6.3, QA-6.5, QA-7.6, QA-8.1, QA-8.2', async () => {
+      await part('QA-4.2 coordinator decision with a reason: immediate, persisted, identical after reload and backup', async () => {
+        resetConfig();
+        const app = newApp();
+        const tz = T(1);
+        world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(tz, { '22283': 30, '22261': 30, '34221': 30, '34225': 30 })) });
+        app.evals.clear();
+        const before = JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim));
+        check(app.getEval(tz).tier === 4 && !app.getEval(tz).manual, 'Precondition: two failing subjects are tier 4');
+        app.openExceptionModal(tz);
+        check($id('xmIs') && $id('xmStatus') && $id('xmReason'), 'The exception form must open');
+        $id('xmIs').checked = true; $id('xmStatus').value = 'eligible'; $id('xmReason').value = '  החלטה סינתטית: הקלות  ';
+        app.acts.excModalSave.call(app, { dataset: { tz } });
+        app.evals.clear();
+        const decided = app.getEval(tz);
+        check(decided.manual && decided.tier === 1 && decided.exceptionReason === 'החלטה סינתטית: הקלות', 'The decision must take effect immediately in the engine');
+        const stored = JSON.parse(storage.get(Config.KEYS.config) || '{}');
+        check(stored.traineeExceptions && stored.traineeExceptions[tz] && stored.traineeExceptions[tz].reason === 'החלטה סינתטית: הקלות' && stored.traineeExceptions[tz].overrideStatus === 'eligible', 'The decision must be persisted with its reason');
+
+        const exceptionBefore = JSON.stringify(Config.getException(tz)), evalBefore = JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim));
+        const keep = { ...Config._cache };
+        Config.load();
+        Object.keys(keep).forEach(key => { if (key !== 'masterRoster') Config._cache[key] = keep[key]; });
+        Store.refresh();
+        check(JSON.stringify(Config.getException(tz)) === exceptionBefore && JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim)) === evalBefore, 'After a reload the decision and the engine result must be identical');
+
+        const backup = JSON.stringify(Config.exportObject());
+        check(backup.includes('החלטה סינתטית: הקלות'), 'The backup must contain the decision');
+        Config.data.traineeExceptions = {};
+        await Config.importJSON(backup, { silent: true });
+        check(JSON.stringify(Config.getException(tz)) === exceptionBefore && JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim)) === evalBefore, 'Restoring the backup must bring the decision back unchanged');
+        app.acts.excModalClear.call(app, { dataset: { tz } });
+        check(JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim)) === before, 'Removing the decision must restore the original engine result');
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
+
+      await part('QA-5.2 weight change 30/70 -> 40/60 updates grade and status in engine, advisor and screens', async () => {
+        resetConfig();
+        const app = newApp();
+        const tz = T(1);
+        world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(tz, { '22283': 40, '22261': 63 })) });
+        app.evals.clear();
+        const history = () => { const ev = app.getEval(tz); return { ev, s: ev.subjects.find(x => x.id === 'history') }; };
+        const first = history();
+        near(first.s.final, 56.1, 'Final with weights 30/70');
+        check(first.s.status === 'pass' && first.ev.tier === 1 && first.ev.cells.history.text === '56', 'Before: pass, tier 1, advisor cell 56');
+        app.renderBagrutPanel();
+        check(cellOf($id('bagrut-table'), tz, 'היסטוריה').textContent.trim() === '56', 'Before: the eligibility table must show 56');
+        const res = Config.updateRules(r => { const h = r.coreSubjects.find(s => s.id === 'history'); h.components[0].weight = 40; h.components[1].weight = 60; });
+        check(res.ok, 'The weight change must be accepted');
+        app.evals.clear();
+        const second = history();
+        near(second.s.final, 53.8, 'Final with weights 40/60');
+        check(second.s.status === 'comp' && second.ev.tier === 2 && second.ev.cells.history.text === '54' && second.ev.cells.history.sub === 'קיזוז', 'After: compensation (tier 2) with advisor cell 54 / קיזוז');
+        check(BagrutEngine.evaluate(tz, FULL).tier === 2, 'A fresh engine evaluation must agree');
+        app.renderBagrutPanel();
+        const cell = cellOf($id('bagrut-table'), tz, 'היסטוריה');
+        check(cell && /54/.test(cell.textContent) && /קיזוז/.test(cell.textContent), 'After: the eligibility table must show 54 + קיזוז');
+        app.state.profileTz = tz;
+        app.renderTrainee360Panel();
+        check(/קיזוז/.test($id('profBody').textContent), 'After: the 360 card must mention the compensation');
+      });
+
+      await part('QA-6.3 passGrade 55 -> 60 on a borderline 57: one consistent change across engine, advisor, sadin, control room', async () => {
+        resetConfig();
+        const app = newApp();
+        const g = 'היסטוריה יב1 דוד בדיקה [7001]';
+        world({
+          roster: [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב1'), stu(3, 'יב', 'יב1')],
+          bagrut: bagrutRows([...profile(T(1), { '22283': 57, '22261': 57 }), ...profile(T(2)), ...profile(T(3))]),
+          sadin: sadinRows([[1, 57], [2, 80], [3, 80]].flatMap(([n, sc]) => [{ tz: T(n), ev: 'מבחן א (50)', sc, grp: g, dt: '01/10/2026' }, { tz: T(n), ev: 'מבחן ב (50)', sc, grp: g, dt: '08/10/2026' }]))
+        });
+        app.evals.clear();
+        const overviewPct = () => { app.renderOverviewPanel(); const m = /כולל חנ"מ: (\d+)%/.exec($id('overview-body').textContent); return m ? Number(m[1]) : null; };
+        const snapshot = () => {
+          app.evals.clear();
+          const ev = app.getEval(T(1)), s = ev.subjects.find(x => x.id === 'history');
+          app.renderBagrutPanel();
+          const bagrutCell = cellOf($id('bagrut-table'), T(1), 'היסטוריה');
+          app.renderSadinPanel();
+          const sadinRow = rowFor($id('sadin-table'), T(1));
+          const sheetRow = GroupAnalyzer.sadinSheet([Store.trainees.get(T(1))], {})[0];
+          return {
+            status: s.status, tier: ev.tier, cell: ev.cells.history.state, focus: ev.focus.length,
+            tableAlert: !!(bagrutCell && bagrutCell.querySelector('.score-alert')), pct: overviewPct(),
+            eligibleChip: optionCounts($id('bagrutStatusSelect')).find(o => o.value === 'eligible').n,
+            status360: app.profileSubjectStatus(s), sadinFailing: sheetRow.failing, sadinBad: !!(sadinRow && sadinRow.querySelector('.sx-avg .sadin-score.is-bad'))
+          };
+        };
+        const before = snapshot();
+        check(before.status === 'pass' && before.tier === 1 && before.pct === 100 && before.eligibleChip === 3 && !before.tableAlert && /עובר/.test(before.status360), 'Precondition at passGrade 55');
+        check(Config.setRuleParam('passGrade', 60).ok, 'Raise the pass grade');
+        const after = snapshot();
+        check(after.status !== 'pass' && after.tier >= 3, `Engine: 57 must stop passing at 60 (status ${after.status}, tier ${after.tier})`);
+        check(after.cell === 'fail' && after.focus > 0, 'Advisor: the cell must fail and recommendations must appear');
+        check(after.tableAlert, 'Eligibility table: the 57 must be highlighted as failing');
+        check(/נכשל/.test(after.status360), '360 card: the subject must be shown as failed');
+        check(after.pct === 67 && after.eligibleChip === 2, `Control room: eligibility must drop to 67% (2 of 3), got ${after.pct}% / chip ${after.eligibleChip}`);
+        check(after.sadinFailing === 1 && after.sadinBad, 'Sadin: the 57 average must be highlighted as failing after passGrade 60 (SADIN_PASS is a fixed 55, not linked to the rules)');
+      });
+
+      await part('QA-6.5 rule reset keeps overrides, exceptions, nicknames and student data', async () => {
+        resetConfig();
+        const app = newApp();
+        const fx = schoolFixture();
+        world(fx);
+        applySchoolConfig();
+        Config.setRosterOverride(T(2), { grade: 'יא', homeroom: 'יא2' });
+        Config.setNickname('יב1', 'כיתה סינתטית');
+        const baseline = JSON.stringify(Config.rulesForGrade('12'));
+        const otherCohort = JSON.stringify(Config.rulesForGrade('11'));
+        Config.setRuleParam('passGrade', 60);
+        Config.updateRules(r => { r.coreSubjects.find(s => s.id === 'history').components[0].weight = 40; });
+        Config.setQuestionnaire('99999', { name: 'שאלון סינתטי', expectedGrade: 'יב' });
+        check(JSON.stringify(Config.rulesForGrade('12')) !== baseline, 'Precondition: the rules were changed');
+        const kept = () => JSON.stringify({
+          overrides: Config.getRosterOverrides(), exceptions: Config.data.traineeExceptions, nick: Config.data.classNicknames, special: Config.data.specialEdClasses,
+          roster: Config.getRosterEntry().data, datasets: ['bagrutData', 'groupsData', 'sadinData'].map(k => Config.getRows(k).length), trainees: Store.traineeList().length
+        });
+        const keptBefore = kept();
+        const res = Config.resetRules();
+        app.applyRule(res);
+        check(res.ok && JSON.stringify(Config.rulesForGrade('12')) === baseline, 'Rules must return exactly to the defaults');
+        check(JSON.stringify(Config.rulesForGrade('11')) === otherCohort, 'Other cohorts must stay untouched');
+        Store.refresh();
+        check(kept() === keptBefore, 'Overrides, exceptions, nicknames, roster and datasets must survive a rules reset');
+        check(app.toasts.length === 0, 'No error toast');
+      });
+
+      await part('QA-7.6 reloading the roster file (replace and merge) keeps rosterOverrides', async () => {
+        resetConfig();
+        const app = newApp();
+        const row = (n, grade, homeroom) => stu(n, grade, homeroom);
+        world({ roster: [row(1, 'יב', 'יב1'), row(2, 'יב', 'יב1'), row(3, 'יא', 'יא1'), row(4, 'י', 'י1')], bagrut: bagrutRows(profile(T(1))) });
+        Config.setRosterOverride(T(2), { grade: 'יא', homeroom: 'יא2' });
+        Config.setRosterOverride(T(1), { track: 'אתגר' });
+        Config.setRosterOverride(T(4), { hidden: true, note: 'עזב' });
+        const overrides = JSON.stringify(Config.getRosterOverrides());
+        check(Object.keys(Config.getRosterOverrides()).length === 3, 'Precondition: three overrides');
+        const importWith = async (rows, choice) => {
+          parsed.roster = { rows, ignoredIds: [], warnings: [], sheets: ['Sheet'], skipped: 0, duplicates: 0 };
+          const done = app.importRoster({ name: 'roster.xlsx' });
+          await tick();
+          check(!!document.querySelector(`#modal-root [data-choice="${choice}"]`), `The confirmation must offer "${choice}"`);
+          app.acts.rosterImportChoice.call(app, { dataset: { choice } });
+          return done;
+        };
+        check(await importWith([row(1, 'יב', 'יב1'), row(2, 'יב', 'יב1'), row(3, 'יא', 'יא1'), row(4, 'י', 'י1'), row(5, 'יב', 'יב2')], 'replace'), 'Full replacement failed');
+        const afterReplace = Store.trainees;
+        check(JSON.stringify(Config.getRosterOverrides()) === overrides, 'Replace: the overrides must be unchanged');
+        check(afterReplace.has(T(5)) && afterReplace.get(T(2)).gradeKey === 'יא' && afterReplace.get(T(2)).classKey === 'יא2' && app.trackOf(afterReplace.get(T(1))) === 'אתגר' && !afterReplace.has(T(4)), 'Replace: overrides must still apply on the new file (moved class, track, hidden student)');
+        check(await importWith([row(3, 'יא', 'יא1'), row(6, 'יא', 'יא1')], 'merge'), 'Merge failed');
+        check(JSON.stringify(Config.getRosterOverrides()) === overrides, 'Merge: the overrides must be unchanged');
+        const merged = Store.trainees;
+        check(merged.has(T(6)) && merged.has(T(1)) && merged.has(T(5)) && merged.get(T(2)).classKey === 'יא2', 'Merge: other grades must be preserved and overrides applied');
+        check(Config.getRosterEntry().data.some(r => r.tz === T(4)), 'Merge: the hidden student must stay in the stored roster');
+      });
+
+      await part('QA-8.1 tracks and special-ed classes drive filters, and every student lands in exactly one track', async () => {
+        resetConfig();
+        const app = newApp();
+        world(schoolFixture());
+        applySchoolConfig();
+        app.evals.clear();
+        const all = Store.traineeList();
+        const wrong = all.filter(t => app.trackOf(t) !== expectedTrack(t.tz)).map(t => `${t.tz}:${app.trackOf(t)}`);
+        same(wrong, [], 'Effective track per student (exception > roster override > special-ed class > roster file)');
+        let total = 0;
+        ['רגילה', 'אתגר', 'מב"ר', 'חנ"מ'].forEach(track => {
+          app.state.filters.track = track;
+          const list = app.filtered();
+          total += list.length;
+          same(list.map(t => t.tz).sort(), all.filter(t => expectedTrack(t.tz) === track).map(t => t.tz).sort(), `Track filter ${track}`);
+        });
+        app.state.filters.track = 'all';
+        check(total === all.length && app.filtered().length === all.length, 'The four tracks must partition the school');
+        check(app.trackOf(Store.trainees.get(T(31))) === 'חנ"מ' && app.trackOf(Store.trainees.get(T(1))) === 'חנ"מ', 'Override and exception tracks must apply');
+      });
+
+      await part('QA-8.1 + QA-8.2 special-ed / excluded students: counts and eligibility percentages, with and without special-ed', async () => {
+        resetConfig();
+        const app = newApp({ grade: 'יב' });
+        world(schoolFixture());
+        applySchoolConfig();
+        app.evals.clear();
+        const list = Store.traineeList().filter(t => t.gradeKey === 'יב').map(t => ({ t, ev: app.getEval(t.tz) }));
+        const expected = tallies(list);
+        const summary = BagrutAdvisor.summarize(list.map(x => x.ev));
+        check(summary.counted + summary.noBagrut + expected.twelve === summary.total && summary.total === expected.total, 'counted + no-bagrut + 12-years must equal the whole group');
+        same([summary.counted, summary.noBagrut, summary.specialEd, summary.exceptions], [expected.counted, expected.noBagrut, expected.specialEd, expected.exceptions], 'Summary counts');
+        same([summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd], [expected.incl, expected.ex], 'Eligibility percentages incl. / excl. special-ed');
+        check(expected.twelve === 1 && list.find(x => x.t.tz === T(12)).ev.tier === 5, 'The 12-years student must be tier 5 and excluded from the denominator');
+        app.renderOverviewPanel();
+        const text = $id('overview-body').textContent;
+        const incl = /כולל חנ"מ: (\d+)%/.exec(text), ex = /ללא חנ"מ: (\d+)%/.exec(text);
+        check(incl && Number(incl[1]) === expected.incl && ex && Number(ex[1]) === expected.ex, `The control room must show ${expected.incl}% incl. / ${expected.ex}% excl. special-ed`);
+        const withSpecial = list.filter(x => trackOfStudent(x.t) === 'חנ"מ').length;
+        check(withSpecial === expected.specialEd && withSpecial > 0, 'Special-ed students must be counted');
+        noGarbage('overview');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה B — סדין ציונים שוטפים ובקרת קבוצות
+       QA-9.2, QA-11.2..QA-11.8
+       ==================================================================== */
+    await group('Group B — current-grades sheet and group control: QA-9.2, QA-11.2..QA-11.8', async () => {
+      await part('QA-9.2 sadin: below-threshold and real zero fail and count; an empty cell is neither a zero nor a failure', async () => {
+        resetConfig();
+        const g = 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]';
+        const events = [['מבחן א (10)', '01/10/2026'], ['מבחן ב (10)', '08/10/2026'], ['מבחן ג (10)', '15/10/2026']];
+        const scores = { 1: [80, 90, 70], 2: [54, 54, 54], 3: [0, 80, 80], 4: [null, 80, 80] };
+        const rows = Object.entries(scores).flatMap(([n, list]) => list.map((sc, i) => (sc === null ? null : { tz: T(Number(n)), ev: events[i][0], sc, grp: g, dt: events[i][1] })).filter(Boolean));
+        world({ roster: [1, 2, 3, 4].map(n => stu(n, 'יב', 'יב1')), sadin: sadinRows(rows) });
+        const sheet = Object.fromEntries(GroupAnalyzer.sadinSheet(Store.traineeList(), {}).map(r => [r.t.tz, r]));
+        const subject = tz => sheet[tz].subjects.get('אנגלית');
+        near(subject(T(1)).avg, 80, 'Student A average');
+        near(subject(T(2)).avg, 54, 'Student B (54) average');
+        near(subject(T(3)).avg, (0 + 80 + 80) / 3, 'Student C: a real zero must lower the average');
+        near(subject(T(4)).avg, 80, 'Student D: an empty cell must not lower the average');
+        same([T(1), T(2), T(3), T(4)].map(tz => sheet[tz].failing), [0, 1, 1, 0], 'Failing subjects (below 55): 54 and the zero fail, the empty cell does not');
+        same([T(1), T(2), T(3), T(4)].map(tz => subject(tz).missed.size), [0, 0, 1, 1], 'Missed events: the real zero and the empty cell are flagged');
+        check([...subject(T(3)).missed.values()][0].kind === 'zero', 'A real zero must be marked as zero');
+        check([...subject(T(4)).missed.values()][0].kind === 'no-row', 'An empty cell must be marked as missing, never as a zero');
+        check(!subject(T(4)).events.some(e => e.score === 0), 'An empty cell must not create a zero event');
+        const app = newApp();
+        app.renderSadinPanel();
+        const table = $id('sadin-table');
+        const bad = tz => { const tr = rowFor(table, tz); return tr ? tr.querySelectorAll('.is-bad').length : -1; };
+        check(bad(T(1)) === 0 && bad(T(2)) > 0 && bad(T(3)) > 0, 'Screen: the 54 and the zero must be highlighted, a healthy student must not');
+        check(!/NaN|undefined/.test(table.textContent), 'No NaN on the sheet');
+      });
+
+      await part('QA-11.8 (P0) importing groups for one grade keeps the groups of the other grades', async () => {
+        resetConfig();
+        const app = newApp();
+        world({ roster: [1, 2, 3].map(n => stu(n, 'י', 'י1')).concat([11, 12, 13].map(n => stu(n, 'יא', 'יא1')), [21, 22, 23].map(n => stu(n, 'יב', 'יב1'))) });
+        const file = (ns, grade, cls, gid) => [...ns.map(n => ({ tz: T(n), grade, cls, gid })), { tz: '', gid, teacher: 'כן' }];
+        const g10 = 'מתמטיקה 3 יח"ל י1 מורה [8001]', g11 = 'מתמטיקה 4 יח"ל יא1 מורה [8002]', g12 = 'מתמטיקה 4 יח"ל יב1 מורה [8003]';
+        const load = async rows => { parsed.groups = { rows: groupRows(rows), type: 'groups', skipped: 0, ignored: 0, unmatchedIds: [], warnings: [] }; return app.importDataset('groupsData', { name: 'groups.xlsx' }); };
+        check(await load([...file([1, 2, 3], 'י', 'י1', g10), ...file([21, 22, 23], 'יב', 'יב1', g12)]), 'First import (grades 10 and 12)');
+        check(await load(file([11, 12, 13], 'יא', 'יא1', g11)), 'Second import (grade 11 only)');
+        Store.refresh();
+        same([...Store.groups.keys()].sort(), ['8001', '8002', '8003'], 'All three grade groups must exist');
+        same(['8001', '8002', '8003'].map(id => Store.groups.get(id).members.size), [3, 3, 3], 'Members per group');
+        const rows = Config.getRows('groupsData');
+        check(rows.filter(r => !r.isTeacher).length === 9 && rows.filter(r => r.isTeacher).length === 3, 'Student and teacher rows of other grades must be preserved');
+        check(await load(file([11, 12, 13], 'יא', 'יא1', g11)) && Config.getRows('groupsData').length === rows.length, 'Re-importing the same grade must not duplicate anything');
+        check(app.toasts.every(t => t.kind !== 'error'), 'No error toast');
+      });
+
+      const groupsWorld = () => {
+        const roster = [];
+        for (let n = 1; n <= 6; n++) roster.push(stu(n, 'יב', 'יב1'));
+        for (let n = 7; n <= 12; n++) roster.push(stu(n, 'יב', 'יב2'));
+        roster.push(stu(31, 'יא', 'יא1'));
+        const g1 = 'מתמטיקה 4 יח"ל יב1-יב2 דוד בדיקה (29 תלמידים) [9001]', g2 = 'מתמטיקה 4 יח"ל יב1-יב2 מיכל בדיקה [9002]', r3 = 'תגבור מתמטיקה 5 יח"ל יב1 נועם בדיקה [9003]';
+        const member = (n, gid) => { const r = roster.find(x => x.tz === T(n)); return { tz: T(n), grade: r.grade, cls: r.homeroom, gid }; };
+        const rows = [...[1, 2, 3, 4, 5, 6, 7, 31].map(n => member(n, g1)), ...[2, 9, 10, 11, 12].map(n => member(n, g2)), member(3, r3), { tz: T(900), gid: g1, teacher: 'כן' }];
+        world({ roster, groups: groupRows(rows) });
+      };
+
+      await part('QA-11.2..QA-11.7 stray / outlier, duplicates, reinforcement, missing placement, declared count, teacher rows', async () => {
+        resetConfig();
+        groupsWorld();
+        const everyone = Store.traineeList();
+        const analysis = GroupAnalyzer.analyzeGroupAnomalies(everyone, 'all');
+        same(analysis.items.filter(i => i.kind === 'none').map(i => i.tz), [T(8)], 'QA-11.5: only the student without a math group is missing a mandatory placement');
+        same(analysis.items.filter(i => i.kind === 'dup').map(i => [i.tz, i.groups.map(g => g.groupId).sort()]), [[T(2), ['9001', '9002']]], 'QA-11.3: duplicate placement in the same subject');
+        check(!analysis.items.some(i => i.tz === T(3)), 'QA-11.4: parent group + reinforcement group must not be a false duplicate');
+        check(!analysis.items.some(i => i.tz === T(31)), 'A student from another grade is not "missing" the 12th-grade group');
+        const model = GroupAnalyzer.explorerModel().groups;
+        const g9001 = model.find(g => g.groupId === '9001'), g9003 = model.find(g => g.groupId === '9003');
+        const diag = tz => (g9001.members.find(m => m.t.tz === tz) || { diag: [] }).diag.map(d => d.kind).sort();
+        same([diag(T(7)), diag(T(31)), diag(T(2)), diag(T(3)), diag(T(1))], [['outlier'], ['grade'], ['dup'], [], []], 'QA-11.2: outlier (single student from another class), grade straggler, duplicate, reinforcement, regular student');
+        check(g9003.reinforcement === true && g9003.members.every(m => !m.diag.some(d => d.kind === 'dup')), 'QA-11.4: the reinforcement group must not carry duplicate marks');
+        check(g9001.declared === 29 && g9001.total === 8, `QA-11.6: declared 29 vs actual 8 (got ${g9001.declared} / ${g9001.total})`);
+        check(Store.groups.get('9001').teacher === 'דוד בדיקה' && !Store.groups.get('9001').members.has(T(900)) && Store.groups.get('9001').actual === 8, 'QA-11.7: a teacher row names the teacher but is not a member');
+        check(!Store.unknown.groups.includes(T(900)) && Store.trainees.size === 13 && g9001.members.every(m => m.t.tz !== T(900)), 'QA-11.7: teacher rows must not become trainees or unknown IDs');
+        const am = GroupAnalyzer.placementAnomalies(everyone);
+        const byCategory = category => am.rows.filter(r => r.category === category).map(r => `${r.tz}:${r.kind}`).sort();
+        same([byCategory('missing'), byCategory('duplicate'), byCategory('suspect')], [[`${T(8)}:none`], [`${T(2)}:dup`], [`${T(7)}:outlier`, `${T(31)}:grade`]], 'Placement anomaly table by category');
+
+        const app = newApp();
+        app.renderGroupsPanel();
+        const count = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
+        same([count('all'), count('missing'), count('missing_major'), count('duplicate'), count('suspect')], [4, 1, 0, 1, 2], 'Anomaly cards on the screen');
+        check(count('all') === am.rows.length, 'The "all" card must equal the table rows');
+        app.renderGroupDetail(g9001, [], () => false, g9001.cat);
+        check(/מוצהר 29/.test($id('groups-detail').textContent) && /תפוסה: 8/.test($id('groups-detail').textContent), 'QA-11.6: the declared-count mismatch badge must be shown');
+        noGarbage('groups');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה C — אגרגציות חדר בקרה והצלבה משולשת 360
+       INV-3 / QA-12.3, QA-12.4, QA-12.2, INV-5 / QA-10.2, QA-10.3, QA-10.7
+       ==================================================================== */
+    await group('Group C — control-room aggregations and the triple cross-check: INV-3/QA-12.3, QA-12.4, QA-12.2, INV-5/QA-10.2, QA-10.3, QA-10.7', async () => {
+      const buildSchool = () => { resetConfig(); world(schoolFixture()); applySchoolConfig(); };
+
+      await part('INV-3 / QA-12.3 every filter combination: status categories sum exactly to the active slice', async () => {
+        buildSchool();
+        const app = newApp();
+        const all = Store.traineeList();
+        const combos = [];
+        ['all', 'י', 'יא', 'יב'].forEach(grade => {
+          const classes = ['all', ...(grade === 'all' ? [] : [...new Set(all.filter(t => t.gradeKey === grade).map(t => t.classKey))].sort())];
+          classes.forEach(cls => ['all', 'רגילה', 'אתגר', 'מב"ר', 'חנ"מ'].forEach(track => (grade === 'all' ? ['12', '11', '10', 'all'] : [null]).forEach(scope => combos.push({ grade, cls, track, scope }))));
+        });
+        check(combos.length > 60, 'The combination matrix must be large');
+        let emptySlices = 0;
+        combos.forEach(({ grade, cls, track, scope }) => {
+          const label = `${grade}/${cls}/${track}/${scope}`;
+          app.state.filters = { grade, cls, track, q: '' };
+          app.state.bagrutScope = scope || 'all'; app.state.bagrutScopeSet = true; app.state.bagrut.chip = 'all'; app.state.bagrut.drill = 'all';
+          app.evals.clear();
+          app.renderBagrutPanel();
+          const expected = all.filter(t => (grade === 'all' || t.gradeKey === grade) && (cls === 'all' || t.classKey === cls) && (track === 'all' || trackOfStudent(t) === track) && (grade !== 'all' || scope === 'all' || Util.ord(t.gradeKey) === Number(scope)));
+          if (!expected.length) emptySlices++;
+          const options = optionCounts($id('bagrutStatusSelect'));
+          const total = (options.find(o => o.value === 'all') || {}).n;
+          const tiers = options.filter(o => /^tier\d$/.test(o.value)).reduce((s, o) => s + o.n, 0), pace = options.filter(o => o.value.startsWith('pace:')).reduce((s, o) => s + o.n, 0);
+          if (total !== expected.length) { check(false, `${label}: "all" shows ${total}, the slice has ${expected.length}`); return; }
+          check(tiers + pace === total, `${label}: tier (${tiers}) + pace (${pace}) categories must equal the slice (${total})`);
+          check(tzsIn($id('bagrut-table')).length === total, `${label}: table rows must equal the slice`);
+          const rows = expected.map(t => ({ t, ev: app.getEval(t.tz) })).filter(x => app.tierBased(x.ev));
+          const stats = tallies(rows);
+          const kpi = $id('bagrut-kpis').textContent;
+          const incl = /(\d+)%\s*צפי זכאות · כולל חנ"מ/.exec(kpi), ex = /(\d+)%\s*צפי זכאות · ללא חנ"מ/.exec(kpi);
+          if (incl && ex) {
+            check(Number(incl[1]) === stats.incl && Number(ex[1]) === stats.ex, `${label}: KPI shows ${incl[1]}% / ${ex[1]}%, expected ${stats.incl}% / ${stats.ex}%`);
+            if (stats.counted) {
+              const byTier = [1, 2, 3, 4].map(n => rows.filter(x => x.ev.tier === n).length);
+              check(byTier.reduce((a, b) => a + b, 0) <= stats.counted && Math.abs(byTier.reduce((a, b) => a + pct(b, stats.counted), 0) - pct(byTier.reduce((a, b) => a + b, 0), stats.counted)) <= 2, `${label}: category percentages are inconsistent with the denominator`);
+            }
+          }
+          check(!/NaN|undefined|Infinity/.test($id('stage').textContent), `${label}: NaN/undefined on screen`);
+        });
+        check(emptySlices > 0, 'The matrix must include empty slices');
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
+
+      await part('QA-12.4 an empty slice: no division by zero, no NaN, no errors', async () => {
+        buildSchool();
+        const app = newApp({ grade: 'י', cls: 'י2', track: 'חנ"מ' });
+        check(app.filtered().length === 0, 'Precondition: the slice is empty');
+        const errors = [], originalError = console.error;
+        console.error = (...args) => { errors.push(args.map(String).join(' ')); };
+        try {
+          app.evals.clear();
+          app.renderBagrutPanel(); app.renderOverviewPanel(); app.renderSadinPanel(); app.renderGroupsPanel(); app.renderTrainee360Panel();
+          const model = app.overviewModel();
+          same([model.stats.total, model.stats.counted, model.avg, model.attention.size], [0, 0, null, 0], 'Empty overview model');
+          same([BagrutAdvisor.summarize([]).eligibilityInclSpecialEd, BagrutAdvisor.summarize([]).eligibilityExSpecialEd, BagrutAdvisor.summarizePace([]).pctInclSpecialEd], [0, 0, 0], 'Empty summaries');
+        } finally { console.error = originalError; }
+        same(errors, [], 'No console errors');
+        noGarbage('empty slice');
+        check(/אין חניכים בסינון הנוכחי/.test($id('profName').textContent) && /אין שורות להצגה/.test($id('bagrut-table').textContent), 'Clear "nothing to show" messages');
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
+
+      await part('QA-12.2 KPI drill-down: every counter matches the list it opens (number and ID set)', async () => {
+        buildSchool();
+        const app = newApp();
+        app.evals.clear();
+        const everyone = Store.traineeList();
+        app.renderBagrutPanel();
+        const options = optionCounts($id('bagrutStatusSelect'));
+        check(options.length > 8, 'The status selector must be populated');
+        options.forEach(({ value, n }) => {
+          app.state.bagrut.chip = value;
+          app.renderBagrutPanel();
+          const opened = tzsIn($id('bagrut-table'));
+          check(opened.length === n, `Chip ${value}: the counter says ${n}, the list opens ${opened.length}`);
+          const expected = everyone.filter(t => app.chipMatch({ t, ev: app.getEval(t.tz) }, value)).map(t => t.tz).sort();
+          same(opened, expected, `Chip ${value}: opened ID set`);
+        });
+        app.state.bagrut.chip = 'all';
+        app.renderBagrutPanel();
+        [...$id('bagrut-kpis').querySelectorAll('[data-chip]')].forEach(btn => {
+          const n = Number(btn.querySelector('span:last-child').textContent);
+          app.state.bagrut.chip = btn.dataset.chip;
+          app.renderBagrutPanel();
+          check(tzsIn($id('bagrut-table')).length === n, `KPI button ${btn.dataset.chip}: ${n} vs ${tzsIn($id('bagrut-table')).length}`);
+        });
+
+        app.state.bagrut.chip = 'all';
+        app.renderOverviewPanel();
+        const cards = [...$id('overview-body').querySelectorAll('button.ov-card')];
+        const valueOf = card => parseInt((card.querySelector('.ov-value') || {}).textContent, 10);
+        const readTable = () => tzsIn($id('bagrut-table'));
+
+        const eligibilityCard = cards[2];
+        app.acts.ovGo.call(app, eligibilityCard);
+        const model = app.overviewModel();
+        same(readTable(), model.bench.rows.map(r => r.t.tz).sort(), 'Eligibility card: the opened list must be the benchmark population');
+        const opened = readTable().map(tz => app.getEval(tz)).filter(ev => ev.tier !== 0 && ev.tier !== 5);
+        check(valueOf(eligibilityCard) === pct(opened.filter(ev => ev.tier === 1 || ev.tier === 2).length, opened.length), 'Eligibility card: the percentage must match the opened population');
+
+        app.renderOverviewPanel();
+        const attention = [...$id('overview-body').querySelectorAll('button.ov-card')][0];
+        const shown = valueOf(attention);
+        app.acts.ovGo.call(app, attention);
+        const destination = attention.dataset.go === 'bagrut' ? readTable().length : tzsIn($id('sadin-table')).length;
+        check(shown === destination, `Attention card: it counts ${shown} students but opens a list of ${destination} (the card unites bagrut risk and sadin risk, the link opens only one of them)`);
+
+        app.renderOverviewPanel();
+        const placement = [...$id('overview-body').querySelectorAll('button.ov-card')][3];
+        const anomalies = parseInt((placement.querySelector('.ov-value') || {}).textContent, 10);
+        app.state.groupsViewMode = 'anomalies';
+        app.renderGroupsPanel();
+        const cardN = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
+        check(anomalies === cardN('missing') + cardN('missing_major') + cardN('duplicate'), `Placement card: ${anomalies} vs destination missing+major+duplicate ${cardN('missing') + cardN('missing_major') + cardN('duplicate')}`);
+      });
+
+      await part('INV-5 / QA-10.2 / QA-10.3 / QA-10.7 every student: engine, eligibility table and 360 card agree', async () => {
+        buildSchool();
+        const app = newApp();
+        app.state.sim = { ...ADAPTIVE };
+        app.evals.clear();
+        app.renderBagrutPanel();
+        const table = $id('bagrut-table');
+        check(tzsIn(table).length === Store.trainees.size, 'The table must list every student');
+        for (const t of Store.traineeList()) {
+          const tz = t.tz, ev = app.getEval(tz), label = `${tz}(${t.gradeKey})`;
+          const tr = rowFor(table, tz);
+          if (!tr) { check(false, `${label}: missing from the table`); continue; }
+          app.state.profileTz = tz;
+          app.renderTrainee360Panel();
+          const profile360 = $id('profBody'), badges = $id('profBadges').textContent;
+          const statusText = app.tierBased(ev) ? ev.tierText : ev.paceText;
+          check(tr.textContent.includes(statusText) && badges.includes(statusText), `${label}: status "${statusText}" must appear in the table and in the 360 card`);
+
+          const rows360 = [...profile360.querySelectorAll('#profile-academic tbody tr')].filter(r => !r.classList.contains('room-divider')).map(r => [...r.children].map(c => c.textContent.trim()));
+          ev.subjects.forEach((s, i) => {
+            const cell = cellOf(table, tz, s.name), cell360 = rows360[i];
+            if (!cell || !cell360) { check(false, `${label}/${s.name}: cell missing (table ${!!cell}, 360 ${!!cell360})`); return; }
+            const number = /^\d+/.exec(cell.textContent.trim());
+            if (number) check(cell360[5] === number[0], `${label}/${s.name}: the table shows ${number[0]} but the 360 card shows "${cell360[5]}"`);
+            s.comps.forEach(c => check((cell.dataset.tip || '').includes(`שאלון ${c.code}`) && profile360.innerHTML.includes(`שאלון ${c.code}`), `${label}/${s.name}: questionnaire ${c.code} must be detailed in both views`));
+          });
+
+          const internalCell = [...tr.children].find((c, i) => i === colIndex(table, 'פנימיים'));
+          const internal360 = [...profile360.querySelectorAll('ul.space-y-1\\.5 li')].map(li => li.textContent);
+          const tableText = internalCell ? internalCell.textContent.trim() : '';
+          check((tableText === '✓ תקין') === internal360.every(x => /✓ עבר|✓ פטור|הוזנח/.test(x)), `${label}: internal units: table "${tableText}" vs 360 ${JSON.stringify(internal360)}`);
+          check((tableText === 'לא עבר') === internal360.some(x => /לא עבר/.test(x)), `${label}: explicit internal failure must appear in both views`);
+          check(ev.internals.length === internal360.length, `${label}: the same internal units in both views`);
+
+          const codes360 = [...profile360.querySelectorAll('#profile-more tbody tr')].map(r => r.children[0].textContent.trim()).filter(x => /^\d+$/.test(x)).sort();
+          same(codes360, Store.attemptsOf(tz).map(a => String(a.code)).sort(), `${label}: bagrut attempts in the 360 card`);
+
+          if (app.tierBased(ev) && !ev.manual) {
+            const focusCard = [...profile360.querySelectorAll('h3')].find(h => /מיקוד פדגוגי/.test(h.textContent)).parentElement;
+            const items = focusCard.querySelectorAll('li').length;
+            if (ev.focus.some(f => f.hard)) check(items > 0, `${label}: the advisor lists hard items in the table but the 360 card lists none`);
+            if (ev.tier === 1 && !ev.isPotentialException && !ev.subjects.some(s => s.compApplied)) check(items === 0, `${label}: tier 1 but the 360 card lists ${items} open items`);
+          }
+        }
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
+    });
+
+    /* ====================================================================
+       קבוצה D — אבטחת XSS, מעבר 360 ומצבי קצה
+       QA-13.2, QA-10.6, QA-13.3, QA-13.4
+       ==================================================================== */
+    await group('Group D — XSS, fast 360 switching and edge states: QA-13.2, QA-10.6, QA-13.3, QA-13.4', async () => {
+      await part('QA-13.2 (P0) hostile names, notes, reasons and group names are rendered as text only', async () => {
+        resetConfig();
+        window.__xss = undefined;
+        const P3 = '<script>window.__xss=1<\/script>', P4 = '"><img src=x onerror="window.__xss=1">';
+        const hostileTeacher = `'${P4}"`;
+        const roster = [stu(1, 'יב', 'יב1', { firstName: P4, lastName: `${P3}'` }), stu(2, 'יב', 'יב1'), stu(3, 'יב', 'יב1')];
+        const math = `מתמטיקה 4 יח"ל יב1 ${hostileTeacher} [9001]`, evil = `${P3} יב1 מורה [9002]`;
+        world({
+          roster, bagrut: bagrutRows([...profile(T(1), { '22283': { final: 50, subject: P4 } }), ...profile(T(2)), ...profile(T(3))]),
+          groups: groupRows([{ tz: T(2), grade: 'יב', cls: 'יב1', gid: math }, { tz: T(3), grade: 'יב', cls: 'יב1', gid: math }, { tz: T(2), grade: 'יב', cls: 'יב1', gid: evil }]),
+          sadin: sadinRows([{ tz: T(1), ev: `${P3} (10)`, sc: 40, grp: evil, dt: '01/10/2026' }, { tz: T(2), ev: 'מבחן (10)', sc: 80, grp: evil, dt: '01/10/2026' }])
+        });
+        Config.setNickname('יב1', `${P4}'`);
+        Config.setException(T(1), { isException: true, overrideStatus: 'noteligible', reason: `${P3}${P4}`, note: `${P4}'"` });
+        const app = newApp();
+        const name = Store.trainees.get(T(1)).name;
+        const injected = [];
+        const probe = label => {
+          const nodes = [$id('stage'), $id('modal-root')].filter(Boolean).flatMap(c => [...c.querySelectorAll('*')]);
+          if (nodes.some(el => el.tagName === 'IMG' || el.tagName === 'SCRIPT')) injected.push(`${label}: img/script element created from data`);
+          if (nodes.some(el => el.getAttributeNames().some(a => /^on/i.test(a)))) injected.push(`${label}: inline event-handler attribute created from data`);
+        };
+        app.renderBagrutPanel(); probe('bagrut');
+        app.renderOverviewPanel(); probe('overview');
+        app.renderSadinPanel(); probe('sadin');
+        app.renderGroupsPanel(); probe('groups');
+        app.state.profileTz = T(1);
+        for (const tab of ['bagrut', 'events', 'groups']) { app.state.profTab = tab; app.renderTrainee360Panel(); probe(`360/${tab}`); }
+        app.openExceptionModal(T(1)); probe('exception modal');
+        const model = GroupAnalyzer.explorerModel().groups.find(g => g.groupId === '9001');
+        app.renderGroupDetail(model, [], () => false, model.cat); probe('group detail');
+        app.openTargetGroupInspector(T(1), 'מתמטיקה'); probe('target group inspector');
+        await tick(150);
+        check(window.__xss === undefined, 'Injected code must never run (window.__xss must stay undefined)');
+        same(injected, [], 'No element or event-handler attribute may be created from data');
+        check($id('profName').textContent === name, 'The 360 header must show the hostile name as plain text');
+        app.renderBagrutPanel();
+        const button = [...$id('bagrut-table').querySelectorAll('button[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
+        check(button && button.textContent === name && button.getAttribute('title') === `ת.ז ${T(1)}`, 'The table name button must keep its text, ID and title intact');
+        app.renderSadinPanel();
+        const sadinButton = [...$id('sadin-table').querySelectorAll('button[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
+        check(sadinButton && sadinButton.getAttribute('title') === `${name} · ת.ז ${T(1)}`, 'The sadin name button must keep its title intact');
+        app.openProfile(T(1), button);
+        check(app.state.tab === 'profile' && app.state.profileTz === T(1) && $id('profName').textContent === name, 'The open-profile action must still work for a hostile name');
+        check(app.toasts.filter(t => t.kind === 'error').length === 0, 'No error toast');
+      });
+
+      await part('QA-10.6 (P0) fast 360 switching A -> B -> A leaks nothing between students', async () => {
+        resetConfig();
+        const A = T(1), B = T(2);
+        const gA = 'מתמטיקה 4 יח"ל יב1 TEACHER-A [9001]', gB = 'מתמטיקה 4 יח"ל יב1 TEACHER-B [9002]';
+        world({
+          roster: [stu(1, 'יב', 'יב1', { firstName: 'ALPHA-A' }), stu(2, 'יב', 'יב1', { firstName: 'BETA-B' })],
+          bagrut: bagrutRows([...profile(A, { '22283': { final: 71, moed: 'MOED-A', subject: 'SUBJ-A' } }), ...profile(B, { '22283': { final: 66, moed: 'MOED-B', subject: 'SUBJ-B' } })]),
+          groups: groupRows([{ tz: A, grade: 'יב', cls: 'יב1', gid: gA }, { tz: B, grade: 'יב', cls: 'יב1', gid: gB }]),
+          sadin: sadinRows([{ tz: A, ev: 'EVENT-A (10)', sc: 51, grp: gA, dt: '01/10/2026' }, { tz: B, ev: 'EVENT-B (10)', sc: 88, grp: gB, dt: '01/10/2026' }])
+        });
+        Config.setException(A, { isException: true, overrideStatus: 'noteligible', reason: 'REASON-A', note: 'NOTE-A' });
+        const app = newApp();
+        const snapshot = () => ({
+          name: $id('profName').textContent, meta: $id('profMeta').innerHTML, badges: $id('profBadges').innerHTML, kpis: $id('profKpis').innerHTML, body: $id('profBody').innerHTML,
+          note: $id('excNote').value, openText: $id('excOpen').textContent, openTz: $id('excOpen').dataset.tz, pos: $id('profPos').textContent
+        });
+        const tokensA = ['ALPHA-A', A, 'TEACHER-A', 'EVENT-A', 'MOED-A', 'SUBJ-A', 'REASON-A', 'NOTE-A'];
+        for (const tab of ['bagrut', 'events', 'groups']) {
+          app.state.profTab = tab;
+          app.setProfile(A);
+          const first = snapshot();
+          check(first.name.includes('ALPHA-A') && first.note === 'NOTE-A' && /מצב חריג פעיל/.test(first.openText), `${tab}: student A must show his own data`);
+          app.setProfile(B);
+          const second = snapshot();
+          const text = JSON.stringify(second);
+          check(second.name.includes('BETA-B') && second.openTz === B, `${tab}: student B must show his own name and exception button`);
+          check(!tokensA.some(token => text.includes(token)), `${tab}: student A's data leaked into B's card: ${tokensA.filter(token => text.includes(token)).join(', ')}`);
+          check(second.note === '' && /הגדר מצב חריג/.test(second.openText), `${tab}: A's note / exception state leaked into B's controls`);
+          app.setProfile(A);
+          check(JSON.stringify(snapshot()) === JSON.stringify(first), `${tab}: going back to A must reproduce A's card exactly`);
+          app.profileStep(1);
+          check(snapshot().name.includes('BETA-B'), `${tab}: the next-student button must move to B`);
+          app.profileStep(-1);
+          check(JSON.stringify(snapshot()) === JSON.stringify(first), `${tab}: the previous-student button must return to A exactly`);
+        }
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
+
+      await part('QA-13.3 + QA-13.4 empty system, roster only, grades only: no errors and no NaN', async () => {
+        const panels = app => { app.renderBagrutPanel(); app.renderOverviewPanel(); app.renderSadinPanel(); app.renderGroupsPanel(); app.renderTrainee360Panel(); };
+        const errors = [], originalError = console.error;
+        console.error = (...args) => { errors.push(args.map(String).join(' ')); };
+        try {
+          resetConfig();
+          world({});
+          let app = newApp();
+          check(!Store.hasData() && BagrutEngine.evaluate(T(1), ADAPTIVE) === null, 'Empty system: no data, no evaluation');
+          panels(app);
+          noGarbage('empty system');
+          check(/טרם נטענה מצבת/.test($id('overview-body').textContent), 'Empty system: a clear "load a roster" message');
+          same([GroupAnalyzer.sadinSheet([], {}).length, GroupAnalyzer.analyzeGroupAnomalies([], 'all').items.length, BagrutAdvisor.summarize([]).total], [0, 0, 0], 'Empty analyzers');
+
+          world({ roster: [stu(1, 'יב', 'יב1'), stu(2, 'יא', 'יא1'), stu(3, 'י', 'י1')] });
+          app = newApp();
+          const evals = Store.traineeList().map(t => BagrutEngine.evaluate(t.tz, ADAPTIVE));
+          check(evals.every(ev => ev.tier === 0) && Store.loaded.roster && !Store.loaded.bagrut, 'Roster only: every student is "no bagrut data"');
+          panels(app);
+          noGarbage('roster only');
+          check(BagrutAdvisor.summarize(evals).counted === 0 && BagrutAdvisor.summarize(evals).eligibilityInclSpecialEd === 0, 'Roster only: no division by zero in the summaries');
+
+          const fx = schoolFixture();
+          Config._cache = {
+            bagrutData: { data: fx.bagrut, fileName: 'synthetic.xlsx', uploadedAt: Date.now() },
+            groupsData: { data: fx.groups, fileName: 'synthetic.xlsx', uploadedAt: Date.now() },
+            sadinData: { data: fx.sadin, fileName: 'synthetic.xlsx', uploadedAt: Date.now() }
+          };
+          storage.delete(Config.KEYS.masterRoster);
+          Config._invalidateRoster();
+          Store.refresh();
+          app = newApp();
+          check(!Store.hasData() && Store.unknown.bagrut.length > 0 && BagrutEngine.evaluate(T(1), ADAPTIVE) === null, 'Grades only: no active students; the IDs are reported as unmatched');
+          panels(app);
+          noGarbage('grades only');
+          check(GroupAnalyzer.unmatchedIds().length > 0, 'Grades only: unmatched IDs are listed');
+          check(errorsOf(app).length === 0, 'No panel error');
+        } finally { console.error = originalError; }
+        same(errors, [], 'No console errors in any edge state');
+      });
+    });
+  } catch (e) {
+    outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });
+  } finally {
+    const stage = document.getElementById('stage'), modal = document.getElementById('modal-root');
+    if (stage) stage.remove();
+    if (modal) modal.remove();
+    if (saved) {
+      Config.data = saved.data; Config._cache = saved.cache; Config._ignoredCache = saved.ignored; Config._activeCohort = saved.active;
+      Config._rulesOverride = saved.override; Config._write = saved.write; Config._read = saved.read; Config._storePut = saved.put;
+      Config.setRosterCleared = saved.cleared; Store.raw = saved.raw; Store.loaded = saved.loaded; Config._invalidateRoster();
+    }
+  }
+
+  const failed = outcome.filter(g => g.failures.length);
+  results.textContent = outcome.map(g => (g.failures.length ? `FAIL ${g.title}\n${g.failures.map(f => '  - ' + f).join('\n')}` : `PASS ${g.title}`)).join('\n') +
+    (failed.length ? `\n${failed.length} of ${outcome.length} groups failed.` : '\nAll tests passed.');
+  document.title = failed.length ? 'FAIL - Cross-view invariants tests' : 'PASS - Cross-view invariants tests';
+})();
+</script>

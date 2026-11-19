@@ -540,10 +540,10 @@ const Parser = (() => {
         if (!groupId || (!tz && !isTeacher)) { skipped++; return; }
         const cls = Util.parseClass(get(r, 'grade'), get(r, 'classNum'));
         /* כשהמחרוזת המלאה של משוב נמצאת בעמודת הקבוצה ואין שם קבוצה נפרד, היא משמשת כשם הקבוצה (מקצוע ומורה) */
-        const groupName = String(get(r, 'groupName')).trim() || (composite.groupId ? String(gidCell).trim() : '');
-        const teacherName = String(get(r, 'teacherName')).trim();
+        const groupName = String(get(r, 'groupName') ?? '').trim() || (composite.groupId ? String(gidCell).trim() : '');
+        const teacherName = String(get(r, 'teacherName') ?? '').trim();
         out.push({
-          tz, firstName: String(get(r, 'firstName')).trim(), lastName: String(get(r, 'lastName')).trim(),
+          tz, firstName: String(get(r, 'firstName') ?? '').trim(), lastName: String(get(r, 'lastName') ?? '').trim(),
           gradeKey: cls.gradeKey, classNum: cls.num, classKey: cls.classKey,
           groupId, groupName, isTeacher, ...(teacherName && !isTeacher ? { teacherName } : {})
         });
@@ -555,7 +555,7 @@ const Parser = (() => {
         const grp = parseGroupString(get(r, 'group'));
         const sv = get(r, 'score');
         out.push({
-          tz, name: String(get(r, 'name')).trim(), gender: String(get(r, 'gender')).trim(),
+          tz, name: String(get(r, 'name') ?? '').trim(), gender: String(get(r, 'gender') ?? '').trim(),
           gradeKey: cls.gradeKey, classNum: cls.num, classKey: cls.classKey,
           eventName: ev.eventName, weight: ev.weight, date: Util.parseDate(get(r, 'date')),
           score: Util.parseScore(sv), scoreRaw: sv,
@@ -571,10 +571,10 @@ const Parser = (() => {
         const res = resolveAttempt(fin, exam, submission);
         const g = Util.parseClass(get(r, 'grade'), '');
         out.push({
-          tz, name: String(get(r, 'name')).trim(), gradeKey: g.gradeKey,
-          subject: String(get(r, 'subject')).trim(), code, questionnaireCode: code,
+          tz, name: String(get(r, 'name') ?? '').trim(), gradeKey: g.gradeKey,
+          subject: String(get(r, 'subject') ?? '').trim(), code, questionnaireCode: code,
           submission: String(submission ?? '').trim(), exam: String(exam ?? '').trim(), final: String(fin ?? '').trim(),
-          moed: String(get(r, 'moed')).trim(), cls: res.cls, shown: res.shown, scoreRaw: res.shown, derived: res.derived, partial: res.partial
+          moed: String(get(r, 'moed') ?? '').trim(), cls: res.cls, shown: res.shown, scoreRaw: res.shown, derived: res.derived, partial: res.partial
         });
       }
     });
