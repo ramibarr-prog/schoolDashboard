@@ -93,6 +93,24 @@ window.fetch = (url, options) => {
     assert(posts.at(-1).force === true && !CloudSync.hasUnpublished() && CloudSync.meta().rev === 4, 'Force resolution failed');
     passed.push('Server conflict preserves dirty data; explicit pull and force-push resolution');
 
+    const tabPushes = () => posts.filter(p => p.action === 'push');
+    assert(CloudSync._tabRev === 4 && CloudSync.meta().rev === 4, 'Tab revision not tracking successful sync');
+    // Another tab syncs rev 5 and updates the shared localStorage while this tab's memory is still at rev 4.
+    remote = { ...remote, rev: 5, updatedAt: Date.now() + 5 };
+    CloudSync._setMeta({ rev: 5, syncedAt: remote.updatedAt });
+    assert(await CloudSync.pullCloudState() === 'applied' && CloudSync._tabRev === 5, 'Stale tab treated another tab revision as already synced');
+    remote = { ...remote, rev: 6, updatedAt: Date.now() + 6 };
+    CloudSync._setMeta({ rev: 6, syncedAt: remote.updatedAt });
+    const remoteBeforeStalePush = remote.payload;
+    Config.setException(tz, { note: 'Stale tab edit' }); stopTimer();
+    const pushesBefore = tabPushes().length;
+    assert(await CloudSync.pushCloudState() === 'kept-local', 'Stale tab push was not stopped');
+    assert(tabPushes().length === pushesBefore + 1 && tabPushes().at(-1).baseRev === 5 && !tabPushes().at(-1).force, 'Stale tab sent the shared localStorage revision');
+    assert(remote.rev === 6 && remote.payload === remoteBeforeStalePush && CloudSync.status.kind === 'conflict' && CloudSync.hasUnpublished() && CloudSync._tabRev === 5, 'Stale tab overwrote or acknowledged the other tab revision');
+    await CloudSync.pushCloudState({ force: true });
+    assert(CloudSync._tabRev === 7 && remote.rev === 7 && CloudSync.meta().rev === 7 && !CloudSync.hasUnpublished(), 'Force push did not refresh the tab revision');
+    passed.push('Two tabs: stale tab sends its own baseRev, stops on conflict, and only advances after its own pull/push');
+
     let releasePost, enteredPost;
     const enteredUpload = new Promise(resolve => { enteredPost = resolve; });
     const fetchBeforeHold = window.fetch;
@@ -331,7 +349,7 @@ window.fetch = (url, options) => {
     const realWipe = CloudSync.wipeLocalSession;
     CloudSync.wipeLocalSession = async () => { wiped = true; };
     try { await app.acts.cloudWipeLocal.call(app); } finally { CloudSync.wipeLocalSession = realWipe; }
-    assert(!wiped && confirmations.at(-1).includes('הענן יישארו ללא שינוי'), 'Local wipe did not warn or respect cancellation');
+    assert(!wiped && confirmations.at(-1).includes('הנתונים של בית הספר בענן לא יימחקו ויישארו שמורים') && !/localStorage|IndexedDB/.test(confirmations.at(-1)), 'Local wipe did not warn or respect cancellation');
     passed.push('Reset, config/backup import and shared-computer wipe warn explicitly and respect Cancel');
 
     const nativeCreate = URL.createObjectURL, nativeClick = HTMLAnchorElement.prototype.click;
@@ -350,6 +368,9 @@ window.fetch = (url, options) => {
     CloudSync._set('pass', 'wrong-pass');
     await rejects(() => CloudSync.importBackup(backupText), 'קוד בית-ספר');
     assert(JSON.stringify(Config.data) === beforeWrongPass, 'Wrong-pass backup modified local data');
+    CloudSync._set('pass', '');
+    await rejects(() => CloudSync.importBackup(backupText), "קובץ הגיבוי מוצפן — יש להזין את קוד בית-הספר למעלה וללחוץ על 'שמירת הגדרות' לפני השחזור.");
+    assert(JSON.stringify(Config.data) === beforeWrongPass, 'Backup without a passcode modified local data');
     CloudSync._set('pass', 'test-school-pass');
     assert(await CloudSync.importBackup(JSON.stringify(backupState)) === 'full', 'Plaintext full backup compatibility lost');
     assert(await CloudSync.importBackup(JSON.stringify(Config.exportObject())) === 'legacy', 'Legacy config compatibility lost');
@@ -428,7 +449,7 @@ window.fetch = (url, options) => {
         getId: () => 'file-' + (++nextId), getName: () => name, getParents: () => iterator([folder]),
         getBlob: () => ({ getDataAsString: () => stored }), setContent: text => { stored = text; },
         makeCopy: (name, parent) => { assert(parent === folder, 'Wrong backup folder'); const copy = file(name, stored); backups.push(copy); return copy; },
-        setTrashed: value => { f.trashed = value; }
+        setTrashed: value => { f.trashed = value; }, isTrashed: () => !!f.trashed
       };
       return f;
     };
@@ -436,7 +457,8 @@ window.fetch = (url, options) => {
       {
         getFileById: id => { if (!files.has(id)) throw new Error('File inaccessible'); return files.get(id); },
         createFile: (name, content) => { const f = file(name, content); const id = f.getId(); f.getId = () => id; files.set(id, f); return f; },
-        getRootFolder: () => folder
+        getRootFolder: () => folder,
+        getFilesByName: name => iterator([...files.values()].filter(f => f.getName() === name))
       },
       { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
       { PLAIN_TEXT: 'text' },
@@ -467,6 +489,37 @@ window.fetch = (url, options) => {
     assert(!post({ action: 'pull', token: 'server-token' }).ok && files.size === 1, 'Inaccessible configured file silently replaced');
     assert(waited === released, 'Lock not released on every path');
     passed.push('Apps Script: auth, POST-only reads, locks, fixed file, server clock, conflicts, daily backups and pruning');
+
+    const addSnapshot = (content, trashed = false) => {
+      const f = file('school-dashboard-snapshot.json', content), id = 'drive-' + (++nextId);
+      f.getId = () => id; f.trashed = trashed; files.set(id, f);
+      return f;
+    };
+    const stored = JSON.stringify({ rev: 3, updatedAt: 5, payload });
+    props.delete('FILE_ID'); props.set('REV', '3'); files.clear();
+    response = post({ action: 'pull', token: 'server-token' });
+    assert(response.ok && response.payload === null && files.size === 0 && !props.get('FILE_ID'), 'Pull without FILE_ID created a file');
+    response = post({ action: 'push', token: 'server-token', baseRev: 3, payload });
+    assert(response.ok && files.size === 1 && props.get('FILE_ID') === [...files.keys()][0], 'Zero existing snapshots did not create and persist a new file');
+
+    props.delete('FILE_ID'); props.set('REV', '3'); files.clear();
+    const existing = addSnapshot(stored);
+    addSnapshot('{"deleted":true}', true);
+    response = post({ action: 'pull', token: 'server-token' });
+    assert(response.ok && response.payload.data === payload.data && props.get('FILE_ID') === existing.getId() && files.size === 2, 'Single existing snapshot was not adopted');
+    props.delete('FILE_ID');
+    response = post({ action: 'push', token: 'server-token', baseRev: 3, payload: { ...payload, data: 'adopted' } });
+    assert(response.ok && files.size === 2 && props.get('FILE_ID') === existing.getId() && JSON.parse(existing.getBlob().getDataAsString()).payload.data === 'adopted', 'Push created a new file instead of using the single existing snapshot');
+
+    props.delete('FILE_ID'); props.set('REV', '4'); files.clear();
+    const first = addSnapshot(stored), second = addSnapshot(stored);
+    for (const body of [{ action: 'pull' }, { action: 'push', baseRev: 4, payload }]) {
+      response = post({ token: 'server-token', ...body });
+      assert(response.ok === false && response.error.includes('FILE_ID') && !props.get('FILE_ID') && files.size === 2, 'Ambiguous snapshots were guessed or a file was created for ' + body.action);
+    }
+    assert(first.getBlob().getDataAsString() === stored && second.getBlob().getDataAsString() === stored, 'Ambiguous snapshots were modified');
+    assert(waited === released, 'Lock not released after FILE_ID migration paths');
+    passed.push('Apps Script FILE_ID migration: 0 files create, 1 file adopted, >1 files rejected without guessing');
 
     results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
     document.title = 'PASS - Cloud sync regression tests';

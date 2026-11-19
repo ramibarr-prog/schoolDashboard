@@ -72,6 +72,8 @@ const CloudSync = {
   _suppress: 0,
   _timer: null,
   _revision: 0,
+  /* גרסת הענן שהלשונית הזו עצמה סנכרנה לאחרונה; localStorage משותף לכל הלשוניות ולכן אינו משמש לבדיקת דריסה */
+  _tabRev: 0,
   _settingsRevision: 0,
   _ready: false,
   _wiping: false,
@@ -96,6 +98,7 @@ const CloudSync = {
       this._revision++;
       this._settingsRevision++;
       this._ready = false;
+      this._tabRev = 0;
       this._setMeta({ syncedAt: 0, rev: 0 });
       this.emitStatus({ kind: 'none', text: '', updatedAt: 0 });
     }
@@ -135,7 +138,7 @@ const CloudSync = {
   },
   _conflict(remote) {
     clearTimeout(this._timer);
-    this.emitStatus({ kind: 'conflict', text: '☁️ קיימת גרסה חדשה בענן. יש לבחור כיצד להמשיך.' });
+    this.emitStatus({ kind: 'conflict', text: 'נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:' });
     window.dispatchEvent(new CustomEvent('sd:cloud-conflict', { detail: remote }));
     return 'kept-local';
   },
@@ -145,7 +148,7 @@ const CloudSync = {
       try {
         const remote = await this._post({ action: 'meta' });
         if (revision !== this._revision) return;
-        if (remote.rev > this.meta().rev) this._conflict(remote);
+        if (remote.rev > this._tabRev) this._conflict(remote);
       } catch (e) {
         this.emitStatus({ kind: 'error', text: '☁️ בדיקת הענן נכשלה', error: e.message });
         throw e;
@@ -348,7 +351,7 @@ const CloudSync = {
       const payload = await this.seal(state);
       const bodyData = {
         action: 'push',
-        baseRev: this.meta().rev || 0,
+        baseRev: this._tabRev,
         force: opts.force === true,
         payload
       };
@@ -357,6 +360,7 @@ const CloudSync = {
       if (settingsRevision !== this._settingsRevision) return 'kept-local';
       if (r.conflict) return this._conflict(r);
       this._ready = true;
+      this._tabRev = r.rev;
       this._setMeta({ dirty: revision !== this._revision, syncedAt: r.updatedAt, rev: r.rev });
       this.emitStatus({ kind: 'ok', updatedAt: r.updatedAt, text: '' });
       this._schedulePush();
@@ -384,11 +388,12 @@ const CloudSync = {
       const json = await this._post({ action: 'pull' });
       if (revision !== this._revision) return this._conflict(json);
       if (!json.payload) {
+        this._tabRev = json.rev;
         this._setMeta({ rev: json.rev, syncedAt: json.updatedAt });
         this.emitStatus({ kind: 'none', text: '☁️ אין עדיין נתונים בענן' }); return 'empty';
       }
       const meta = this.meta();
-      if (!opts.force && json.rev === meta.rev && meta.syncedAt) {
+      if (!opts.force && json.rev === this._tabRev && meta.syncedAt) {
         this.emitStatus({ kind: 'ok', updatedAt: meta.syncedAt, text: '' });
         return 'current';
       }
@@ -397,6 +402,7 @@ const CloudSync = {
         return this._conflict(json);
       }
       if (await this.applyState(state) === 'kept-local' || revision !== this._revision) return this._conflict(json);
+      this._tabRev = json.rev;
       this._setMeta({ dirty: false, syncedAt: json.updatedAt, rev: json.rev });
       this.emitStatus({ kind: 'ok', updatedAt: json.updatedAt, text: '' });
       return 'applied';
@@ -425,7 +431,10 @@ const CloudSync = {
     await Config.ready;
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
-    if (s && (s.enc === 'aes2' || s.enc === 'aes1')) s = await this.open(s);
+    if (s && (s.enc === 'aes2' || s.enc === 'aes1')) {
+      if (!this.passcode()) throw new Error("קובץ הגיבוי מוצפן — יש להזין את קוד בית-הספר למעלה וללחוץ על 'שמירת הגדרות' לפני השחזור.");
+      s = await this.open(s);
+    }
     if (this._wiping) throw new Error('השחזור בוטל בזמן מחיקת ההפעלה המקומית');
     const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'cohortProfiles', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
     const isFull = s && typeof s === 'object' && !Array.isArray(s) && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
@@ -451,6 +460,7 @@ const CloudSync = {
     Config._sessionClosing = true;
     this._revision++;
     this._settingsRevision++;
+    this._tabRev = 0;
     this._requestController?.abort();
     // Drain in-flight/queued work before deletion so late responses cannot restore data.
     await this._queue;
@@ -469,6 +479,7 @@ const CloudSync = {
   },
 
   init() {
+    this._tabRev = this.meta().rev || 0;
     if (location.hash.startsWith('#cloud=')) {
       const hash = location.hash.slice(7);
       history.replaceState(null, '', location.pathname + location.search);

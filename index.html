@@ -843,11 +843,11 @@
           <div id="cloudBody" class="space-y-3 text-sm"></div>
           <button type="button" class="btn btn-danger btn-sm" data-act="cloudWipeLocal">התנתק ומחק נתונים מקומיים (מחשב משותף)</button>
           <div id="cloudConflict" class="space-y-2 text-sm text-amber-800" role="alert" hidden>
-            <p>קיימת גרסה חדשה בענן. הסנכרון האוטומטי נעצר כדי לשמור על השינויים המקומיים. בחרו כיצד להמשיך:</p>
+            <p>נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:</p>
             <div class="flex flex-wrap gap-2">
-              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">משיכת הנתונים החדשים מהענן</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudForcePush">דחיפה כפויה של הנתונים המקומיים</button>
-              <button type="button" class="btn btn-primary btn-sm" data-act="backupExport">ייצוא גיבוי מקומי תחילה</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull" title="יחליף את מה שפתוח כרגע במסך">קבלת השינויים מהמחשב האחר</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudForcePush" title="ידרוס את השינויים שנשמרו במחשב האחר">שמירת השינויים שלי בלבד</button>
+              <button type="button" class="btn btn-primary btn-sm" data-act="backupExport">שמירת עותק גיבוי למחשב קודם</button>
             </div>
           </div>
         </div>

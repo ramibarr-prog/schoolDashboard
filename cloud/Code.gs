@@ -18,6 +18,18 @@ function snapshotFile_(create) {
   var fileId = props.getProperty('FILE_ID');
   // An inaccessible configured file is an error, not permission to replace it.
   if (fileId) return DriveApp.getFileById(fileId);
+  // FILE_ID is missing: adopt an existing snapshot instead of creating an empty file next to it.
+  var found = [];
+  var matches = DriveApp.getFilesByName(FILE_NAME);
+  while (matches.hasNext()) {
+    var candidate = matches.next();
+    if (!candidate.isTrashed()) found.push(candidate);
+  }
+  if (found.length > 1) return { error: 'נמצאו כמה קבצי ' + FILE_NAME + ' ב-Drive. יש להגדיר FILE_ID ידנית ב-Script Properties למזהה הקובץ הנכון.' };
+  if (found.length === 1) {
+    props.setProperty('FILE_ID', found[0].getId());
+    return found[0];
+  }
   if (!create) return null;
   var file = DriveApp.createFile(FILE_NAME, '', MimeType.PLAIN_TEXT);
   props.setProperty('FILE_ID', file.getId());
@@ -61,6 +73,7 @@ function doPost(e) {
     if (body.action === 'meta') return json_({ ok: true, rev: rev, updatedAt: updatedAt });
     if (body.action === 'pull') {
       var file = snapshotFile_(false);
+      if (file && file.error) return json_({ ok: false, error: file.error });
       var text = file ? file.getBlob().getDataAsString() : '';
       var snap = text ? JSON.parse(text) : null;
       return json_({ ok: true, rev: rev, updatedAt: updatedAt || (snap && snap.updatedAt) || 0, payload: snap ? snap.payload : null });
@@ -69,6 +82,7 @@ function doPost(e) {
     if (Number(body.baseRev) !== rev && !body.force) return json_({ ok: false, conflict: true, rev: rev, updatedAt: updatedAt });
     if (!body.payload || body.payload.enc !== 'aes2') return json_({ ok: false, error: 'Encrypted aes2 payload required' });
     var target = snapshotFile_(true);
+    if (target.error) return json_({ ok: false, error: target.error });
     backupDaily_(target, props, new Date().toISOString().slice(0, 10));
     var serverNow = Date.now();
     rev = rev + 1;
