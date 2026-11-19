@@ -59,8 +59,8 @@ const BagrutEngine = (() => {
 
   /** הסמל המייצג של הרכב: סמל הניסיון הטוב ביותר שדווח, ובהיעדרו הסמל הראשון */
   function codeOfComp(comp, b) {
-    if (b && b.kind !== 'none' && b.code) return String(b.code);
-    return String((comp && comp.codes && comp.codes[0]) || '');
+    if (b && b.kind !== 'none' && b.code) return Util.normQuestionnaireCode(b.code);
+    return Util.normQuestionnaireCode(comp && comp.codes && comp.codes[0]);
   }
 
   /**
@@ -73,10 +73,10 @@ const BagrutEngine = (() => {
     if (explicit) return explicit;
     const cat = Config.rules().questionnaires || {};
     if (b && b.kind !== 'none' && b.code) {
-      const r = validRank((cat[String(b.code)] || {}).expectedGrade);
+      const r = validRank((cat[Util.normQuestionnaireCode(b.code)] || {}).expectedGrade);
       if (r) return r;
     }
-    const entries = ((comp && comp.codes) || []).map(code => cat[String(code)]).filter(q => q && validRank(q.expectedGrade));
+    const entries = ((comp && comp.codes) || []).map(code => cat[Util.normQuestionnaireCode(code)]).filter(q => q && validRank(q.expectedGrade));
     const verified = entries.filter(q => !q.unverifiedGrade);
     const ranks = (verified.length ? verified : entries).map(q => validRank(q.expectedGrade));
     return ranks.length ? Math.max(...ranks) : 12;
@@ -166,7 +166,7 @@ const BagrutEngine = (() => {
   function detectLevel(tz, subj) {
     const levels = Object.keys(subj.levels || {}).sort();
     if (!levels.length) return null;
-    const g = Store.groupsOf(tz).find(x => Util.matchKeywords(x.subject, subj.keywords) && x.units && subj.levels[x.units]);
+    const g = Store.groupsOf(tz).find(x => !x.reinforcement && Util.matchKeywords(x.subject, subj.keywords) && x.units && subj.levels[x.units]);
     if (g) return g.units;
     let best = null, bestScore = 0;
     levels.forEach(l => {
@@ -196,7 +196,7 @@ const BagrutEngine = (() => {
     const re = /בית[\s\-־]?ספרי|פנימי/;
     if (re.test(comp.label || '')) return true;
     const cat = Config.rules().questionnaires || {};
-    if ((comp.codes || []).some(code => { const q = cat[String(code)]; return !!q && re.test(q.name || ''); })) return true;
+    if ((comp.codes || []).some(code => { const q = cat[Util.normQuestionnaireCode(code)]; return !!q && re.test(q.name || ''); })) return true;
     const list = siblings || [], weights = list.map(c => Number(c.weight) || 0), w = Number(comp.weight);
     return list.length > 1 && w > 0 && w <= 30 && w < Math.max(...weights);
   }

@@ -157,14 +157,16 @@ const Parser = (() => {
   /** גיליון הנתונים הסביר ביותר בחוברת (לפי זיהוי שורת הכותרת, ובשוויון – הגדול ביותר) */
   function pickBestSheet(wb) {
     let best = null;
+    const nonEmptySheets = [];
     wb.SheetNames.forEach(name => {
       const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
-      if (!aoa.length) return;
+      if (!aoa.some(row => row.some(value => String(value ?? '').trim()))) return;
+      nonEmptySheets.push(name);
       const { idx, score } = sniffHeader(aoa);
       if (!best || score > best.score || (score === best.score && aoa.length > best.aoa.length)) best = { name, aoa, idx, score };
     });
-    if (!best) throw new Error('הקובץ ריק או שלא נמצא בו גיליון עם נתונים.');
-    return best;
+    if (!best) throw new Error(`לא נמצאו נתונים בגיליונות: ${wb.SheetNames.map(name => `"${name}"`).join(', ')}.`);
+    return { ...best, skippedSheets: nonEmptySheets.filter(name => name !== best.name) };
   }
 
   async function readFile(file) {
@@ -175,6 +177,9 @@ const Parser = (() => {
     table.fileName = file.name;
     table.aoa = best.aoa;
     table.headerIdx = best.idx;
+    table.warnings = best.skippedSheets.length
+      ? [`יובא רק הגיליון "${best.name}". גיליונות נוספים עם נתונים לא יובאו: ${best.skippedSheets.map(name => `"${name}"`).join(', ')}.`]
+      : [];
     return table;
   }
 
@@ -245,9 +250,7 @@ const Parser = (() => {
   async function confirmRosterMapping(wb) {
     const best = pickBestSheet(wb);
     const table = buildTable(best.aoa, best.idx);
-    const confirmed = await openMappingModal('roster', table, autoMap('roster', table.headers));
-    if (confirmed) Config.setMapping('roster', confirmed);
-    return confirmed;
+    return openMappingModal('roster', table, autoMap('roster', table.headers));
   }
 
   /** קורא מצבת. מחזיר שורות בפורמט המצבת העליונה: tz, firstName, lastName, grade, homeroom, className, track */
@@ -258,45 +261,52 @@ const Parser = (() => {
       override = await confirmRosterMapping(wb);
       if (!override) return null;
     }
-    let res = extractRoster(wb, file, override);
+    const warnings = [];
+    let res = extractRoster(wb, file, override, warnings);
     /* כותרות המצבת לא זוהו אוטומטית: במקום להיכשל נפתח אשף מיפוי העמודות */
     if (!res && !override) {
       override = await confirmRosterMapping(wb);
       if (!override) return null;
-      res = extractRoster(wb, file, override);
+      warnings.length = 0;
+      res = extractRoster(wb, file, override, warnings);
     }
-    if (!res) throw new Error('לא נמצאו גיליונות מצבת. יש לוודא שכותרות ת.ז, שם (פרטי ומשפחה או שם מלא) וכיתה קיימות.');
+    if (!res) throw new Error(`לא נמצאו גיליונות מצבת. יש לוודא שכותרות ת.ז, שם (פרטי ומשפחה או שם מלא) וכיתה קיימות. ${warnings.join(' ')}`);
     return res;
   }
 
   /** מחזיר null כשלא זוהתה כותרת מצבת באף גיליון */
-  function extractRoster(wb, file, override) {
+  function extractRoster(wb, file, override, warnings) {
     Util.idWarn.sci = 0;
     const saved = override || Config.getMapping('roster');
-    const rows = [], seenIds = new Map(), nameVotes = new Map(), sheets = [], ignoredSheets = [], warnings = [];
+    const rows = [], seenIds = new Map(), nameVotes = new Map(), sheets = [], ignoredSheets = [];
     const juniorIds = new Set(), juniorSheets = [];
     let skipped = 0, duplicates = 0, firstHeaderRow = null;
 
     wb.SheetNames.forEach(name => {
       const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+      const warn = reason => warnings.push(`הגיליון "${name}" לא נקלט במצבת: ${reason}.`);
+      if (!aoa.some(row => row.some(value => String(value ?? '').trim()))) { warn('הגיליון ריק'); return; }
       const header = (override ? null : rosterHeader(aoa)) || rosterHeaderFromMapping(aoa, saved);
-      if (!header) return;
+      if (!header) { warn('לא זוהו כותרות מצבת תקינות'); return; }
       const tab = gradeFromSheet(name, aoa, header.rowIndex);
-      if (tab && !tab.gradeKey) { ignoredSheets.push(name); return; }
+      if (tab && !tab.gradeKey) { ignoredSheets.push(name); warn('השכבה המוצהרת אינה נתמכת'); return; }
       (tab && Util.isJunior(tab.gradeKey) ? juniorSheets : sheets).push(name);
       if (firstHeaderRow == null || header.rowIndex < firstHeaderRow) firstHeaderRow = header.rowIndex;
       const get = (row, key) => header.columns[key] === undefined ? '' : row[header.columns[key]];
+      const before = rows.length;
+      let nonEmptyRows = 0, juniorRows = 0, duplicateRows = 0;
 
       for (let i = header.rowIndex + 1; i < aoa.length; i++) {
         const row = aoa[i] || [];
         if (!row.some(value => String(value ?? '').trim())) continue;
+        nonEmptyRows++;
         const tz = normalizeTz(get(row, 'tz'));
         const gradeKey = tab ? tab.gradeKey : Util.normGrade(get(row, 'grade'));
         let cls = Util.parseClass(gradeKey, get(row, 'classNum'));
         /* עמודה אחת בלבד של כיתה (למשל "יב3") ללא מקבילה נפרדת */
         if (!cls.num && header.columns.classNum === undefined) cls = Util.parseClass('', get(row, 'grade'));
         /* חניכי ז-ט אינם נקלטים; ה-ת.ז שלהם נשמרת רק כדי להתעלם מהם בקובצי המשנה */
-        if (tz && Util.isJunior(cls.gradeKey)) { juniorIds.add(tz); continue; }
+        if (tz && Util.isJunior(cls.gradeKey)) { juniorIds.add(tz); juniorRows++; continue; }
         if (!tz || !cls.gradeKey || !cls.num) { skipped++; continue; }
 
         const where = `גיליון "${name}" שורה ${i + 1}`;
@@ -313,6 +323,7 @@ const Parser = (() => {
             throw new Error(`ת.ז ${tz} מופיעה במצבת ביותר מכיתת אם אחת: ${previous.record.homeroom} (${previous.where}) ו-${record.homeroom} (${where}).`);
           }
           duplicates++;
+          duplicateRows++;
           continue;
         }
         seenIds.set(tz, { record, where });
@@ -324,10 +335,16 @@ const Parser = (() => {
         }
         rows.push(record);
       }
+      if (rows.length === before) {
+        if (!nonEmptyRows) warn('לא נמצאו שורות נתונים אחרי הכותרת');
+        else if (juniorRows === nonEmptyRows) warn('חניכי ז-ט אינם נכללים במצבת התיכון');
+        else if (duplicateRows === nonEmptyRows) warn('כל החניכים כבר הופיעו בגיליון אחר באותה כיתה');
+        else warn('לא נמצאו חניכי תיכון תקינים עם ת.ז, שכבה וכיתת אם');
+      }
     });
 
     if (!sheets.length && !juniorSheets.length) return null;
-    if (!rows.length) throw new Error('לא נמצאו חניכי תיכון (י-יב) בגיליונות המצבת.');
+    if (!rows.length) throw new Error(`לא נמצאו חניכי תיכון (י-יב) בגיליונות המצבת. ${warnings.join(' ')}`);
 
     /* שם כיתה סותר אינו חוסם את הייבוא: נבחר השם השכיח ונדווח על הסתירה */
     const chosen = new Map();
@@ -339,7 +356,6 @@ const Parser = (() => {
       }
     });
     rows.forEach(r => { r.className = chosen.get(r.homeroom) || ''; });
-    if (ignoredSheets.length) warnings.push(`גיליונות עם שכבה שאינה נתמכת לא נקלטו: ${ignoredSheets.join(', ')}.`);
     warnings.push(...takeIdWarnings());
     const ignoredIds = [...juniorIds].filter(tz => !seenIds.has(tz));
     return { rows, skipped, duplicates, sheets, ignoredSheets, ignoredIds, warnings, headerRow: firstHeaderRow + 1, fileName: file.name };
@@ -517,8 +533,8 @@ const Parser = (() => {
       if (type === 'groups') {
         const gidCell = get(r, 'groupId');
         const composite = parseGroupString(gidCell);
-        const gidRaw = composite.groupId ? [composite.groupId] : String(gidCell).match(/\d+/);
-        const groupId = gidRaw ? gidRaw[0] : '';
+        const numericId = String(gidCell ?? '').trim();
+        const groupId = composite.groupId || (/^\d+$/.test(numericId) ? numericId : '');
         const isTeacher = truthyTeacher(get(r, 'isTeacher'));
         const tz = normalizeTz(get(r, 'tz'));
         if (!groupId || (!tz && !isTeacher)) { skipped++; return; }
@@ -549,7 +565,7 @@ const Parser = (() => {
       } else if (type === 'bagrut') {
         /* שורה שטוחה: חניך × שאלון × מועד. כל הניסיונות נשמרים; הציון הגבוה ביותר לכל סמל נבחר ב-Store.bestOf */
         const tz = normalizeTz(get(r, 'tz'));
-        const code = String(get(r, 'questionnaireCode')).replace(/\D/g, '');
+        const code = Util.normQuestionnaireCode(String(get(r, 'questionnaireCode')).replace(/\D/g, ''));
         if (!tz || !code) { skipped++; return; }
         const submission = get(r, 'submissionGrade'), exam = get(r, 'examGrade'), fin = get(r, 'finalGrade');
         const res = resolveAttempt(fin, exam, submission);
@@ -679,7 +695,7 @@ const Parser = (() => {
     header.forEach((c, i) => {
       const lines = String(c ?? '').split(/\r?\n/).map(cleanLine).filter(Boolean);
       if (lines.length < 3) return;
-      const code = (lines[0].match(/\((\d+)\)\s*$/) || [])[1];
+      const code = Util.normQuestionnaireCode((lines[0].match(/\((\d+)\)\s*$/) || [])[1]);
       const type = (TYPE.find(([re]) => re.test(lines[2])) || [])[1];
       if (!code || !type) return;
       const moed = lines[1].match(/^(.*?)\s*\((\d+)\)\s*$/);
@@ -749,7 +765,7 @@ const Parser = (() => {
   function openMappingModal(type, table, mapping) {
     return new Promise(resolve => {
       const modal = document.getElementById('mappingModal');
-      if (!modal) { resolve(missingRequired(type, mapping).length ? null : mapping); return; }
+      if (!modal) throw new Error('חלון אישור מיפוי העמודות אינו זמין');
       const $ = id => document.getElementById(id);
       const fields = SCHEMA[type].fields;
       const opts = cur => `<option value="">— לא ממופה —</option>${table.headers.map(h => `<option value="${Util.esc(h)}" ${h === cur ? 'selected' : ''}>${Util.esc(h)}</option>`).join('')}`;
@@ -768,6 +784,8 @@ const Parser = (() => {
         document.querySelectorAll('#mappingFields [data-map]').forEach(s => { if (s.value) chosen[s.dataset.map] = s.value; });
         const missing = missingRequired(type, chosen);
         if (missing.length) { $('mappingError').textContent = `חובה למפות: ${missing.join(', ')}`; return; }
+        const saved = Config.setMapping(type, chosen);
+        if (!saved.ok) { $('mappingError').textContent = saved.error; return; }
         finish(chosen);
       };
       const onCancel = () => finish(null);
@@ -819,7 +837,7 @@ const Parser = (() => {
       const check = validateAgainstRoster(rows);
       const grades = [...new Set(rows.map(r => r.gradeKey).filter(Boolean))];
       return { targetType, type, wide: true, grades, fileName: file.name, headerRow: table.headerRow, sheetName: table.sheetName, rows, skipped: wide.skipped, ignored,
-        mapping: null, unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: takeIdWarnings() };
+        mapping: null, unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: [...table.warnings, ...takeIdWarnings()] };
     }
 
     let mapping = autoMap(type, table.headers, table.rows);
@@ -828,7 +846,6 @@ const Parser = (() => {
       if (!confirmed) return null;
       mapping = confirmed;
     }
-    Config.setMapping(type, mapping);
 
     Util.idWarn.sci = 0;
     const normalized = normalize(type, table.rows, mapping);
@@ -836,7 +853,7 @@ const Parser = (() => {
     const { rows, ignored } = dropJunior(type, normalized.rows);
     const check = validateAgainstRoster(rows);
     return { targetType, type, fileName: file.name, headerRow: table.headerRow, sheetName: table.sheetName, rows, skipped, ignored, mapping,
-      unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: takeIdWarnings() };
+      unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: [...table.warnings, ...takeIdWarnings()] };
   }
 
   return {

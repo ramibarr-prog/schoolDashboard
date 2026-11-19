@@ -18,6 +18,11 @@ const Util = {
   stripQuotes(s) { return String(s ?? '').replace(/["'״׳”“’‘`]/g, ''); },
   norm(s) { return Util.stripQuotes(s).replace(/\s+/g, ' ').trim(); },
 
+  normQuestionnaireCode(value) {
+    const code = String(value ?? '').trim();
+    return /^\d+$/.test(code) ? code.replace(/^0+(?=\d)/, '') : code;
+  },
+
   esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   },
@@ -1234,8 +1239,24 @@ const Config = {
   },
 
   _syncQuestionnairesOf(r) {
+    const normalizeCodes = codes => [...new Set((codes || []).map(Util.normQuestionnaireCode).filter(Boolean))];
+    const items = [
+      ...r.coreSubjects.flatMap(s => s.variableUnits ? Object.values(s.levels || {}).flat() : (s.components || [])),
+      ...r.majors, ...r.internals
+    ];
+    items.forEach(item => {
+      item.codes = normalizeCodes(item.codes);
+      if (item.weights) item.weights = Object.fromEntries(Object.entries(item.weights).map(([code, weight]) => [Util.normQuestionnaireCode(code), weight]));
+    });
+    const catalog = r.questionnaires || {};
+    r.questionnaires = Object.fromEntries(Object.entries(catalog).map(([code, entry]) => {
+      const normalized = Util.normQuestionnaireCode(code);
+      return [normalized, catalog[normalized] || entry];
+    }));
+    if (r.exceptionDetection && Array.isArray(r.exceptionDetection.immigrantCodes)) {
+      r.exceptionDetection.immigrantCodes = normalizeCodes(r.exceptionDetection.immigrantCodes);
+    }
     this._backfillExpectedGrades(r);
-    r.questionnaires = r.questionnaires || {};
     const add = (code, name, expectedGrade) => {
       if (!code || code === 'פנימי') return;
       if (!r.questionnaires[code]) r.questionnaires[code] = { name: name || '', expectedGrade: expectedGrade || 'יב' };
@@ -1389,12 +1410,14 @@ const Config = {
 
   /** רק עדכון מפורש של שכבת היעד מאמת אותה; עריכת שם בלבד אינה משנה את סטטוס האימות */
   setQuestionnaire(code, patch) {
+    code = Util.normQuestionnaireCode(code);
     const verifies = !!(patch && 'expectedGrade' in patch && Util.normGrade(patch.expectedGrade));
     return this.updateRules(r => {
       r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, ...(verifies ? { verifiedGrade: true, unverifiedGrade: false } : {}) };
     });
   },
   removeQuestionnaire(code) {
+    code = Util.normQuestionnaireCode(code);
     return this.updateRules(r => { delete r.questionnaires[code]; });
   },
 

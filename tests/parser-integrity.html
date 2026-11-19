@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Parser integrity tests</title>
+<pre id="results">Running...</pre>
+<div id="mappingModal" class="hidden">
+  <h2 id="mappingTitle"></h2>
+  <div id="mappingError"></div><div id="mappingFields"></div><div id="mappingPreview"></div>
+  <button id="mappingConfirm">Confirm</button><button id="mappingCancel">Cancel</button><button id="mappingClose">Close</button>
+</div>
+<script>
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, options) => {
+  const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+  if (url.origin !== location.origin) throw new Error('Outbound cloud traffic blocked by parser tests');
+  return nativeFetch(input, options);
+};
+</script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/bagrutEngine.js"></script>
+<script src="../js/groupAnalyzer.js"></script>
+<script>
+(async () => {
+  const passed = [], results = document.getElementById('results');
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const waitFor = async predicate => {
+    const deadline = Date.now() + 5000;
+    while (!predicate()) {
+      assert(Date.now() < deadline, 'Mapping modal did not open');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  };
+  const workbook = sheets => {
+    const wb = XLSX.utils.book_new();
+    sheets.forEach(([name, rows]) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name));
+    return new File([XLSX.write(wb, { type: 'array', bookType: 'xlsx' })], 'test.xlsx');
+  };
+  const tz = Util.normId('123');
+  const rosterHeader = ['ת.ז', 'שם פרטי', 'שם משפחה', 'שכבה', 'כיתת אם'];
+  const rosterRow = ['123', 'Test', 'Student', 'י', 'י1'];
+  const groupTable = [['ת.ז', 'שם פרטי', 'מספר קבוצה'], ['123', 'Test', '1042']];
+  let originalData, originalCache, originalIgnored, storedConfig;
+  const originalMapping = Config.setMapping, originalGroups = Store.groupsOf;
+  try {
+    await Config.ready;
+    originalData = Config.data; originalCache = Config._cache; originalIgnored = Config._ignoredCache;
+    storedConfig = localStorage.getItem(Config.KEYS.config);
+    Config.data = Config.defaults();
+    Config._cache = { masterRoster: { data: [{ tz, firstName: 'Test', lastName: 'Student', grade: 'י', homeroom: 'י1', track: 'רגילה' }] } };
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+
+    const groups = Parser.normalize('groups', [
+      { id: 'מתמטיקה 5 יח"ל', tz: '123' }, { id: '1042', tz: '123' },
+      { id: '[1042] מתמטיקה 5 יח"ל', tz: '123' }, { id: ' 1042 ', tz: '123' },
+      { id: '1042.5', tz: '123' }, { id: '-1042', tz: '123' }
+    ], { groupId: 'id', tz: 'tz' });
+    assert(groups.skipped === 3 && groups.rows.length === 3 && groups.rows.every(r => r.groupId === '1042'), 'Units or partial numbers became group IDs');
+    passed.push('Group IDs require strict digits or explicit brackets; unit counts are not group IDs');
+
+    const roster = await Parser.readRosterFile(workbook([
+      ['תקין', [rosterHeader, rosterRow]], ['ללא כותרות', [['הערות בלבד']]],
+      ['ריק', []], ['כותרת בלבד', [rosterHeader]],
+      ['לא תקין', [rosterHeader, ['123', 'Test', 'Student', '13', '']]],
+      ['שכבה יג', [rosterHeader, ['222', 'Test', 'Student', 'יג', 'יג1']]],
+      ['ז', [rosterHeader, ['333', 'Test', 'Student', 'ז', 'ז1']]],
+      ['כפולים', [rosterHeader, rosterRow]]
+    ]));
+    for (const [name, reason] of [
+      ['ללא כותרות', 'כותרות'], ['ריק', 'ריק'], ['כותרת בלבד', 'שורות נתונים'],
+      ['לא תקין', 'תקינים'], ['שכבה יג', 'אינה נתמכת'], ['ז', 'ז-ט'], ['כפולים', 'כבר הופיעו']
+    ]) assert(roster.warnings.some(w => w.includes('"' + name + '"') && w.includes(reason)), 'Missing named sheet warning: ' + name);
+    assert(roster.rows.length === 1 && roster.ignoredIds.includes(Util.normId('333')), 'Warnings changed valid roster or junior exclusions');
+    let invalidError;
+    try { await Parser.readRosterFile(workbook([['לא תקין', [rosterHeader, ['123', 'Test', 'Student', '13', '']]]])); }
+    catch (e) { invalidError = e; }
+    assert(invalidError?.message.includes('"לא תקין"') && invalidError.message.includes('תקינים'), 'All-invalid roster failure lost its sheet reason');
+    let emptyError;
+    try { await Parser.readRosterFile(workbook([['ריק', []], ['רווחים', [['  ']]]])); }
+    catch (e) { emptyError = e; }
+    assert(emptyError?.message.includes('"ריק"') && emptyError.message.includes('"רווחים"') && emptyError.message.includes('נתונים'), 'All-empty workbook failure lost its sheet names/reason');
+    passed.push('Every skipped roster sheet reports its exact name and reason; all-invalid files retain diagnostics');
+
+    let mappingSaves = 0;
+    Config.setMapping = function(...args) { mappingSaves++; return originalMapping.apply(this, args); };
+    for (const [type, rows] of [
+      ['groups', groupTable],
+      ['sadin', [['ת.ז', 'שם', 'אירוע', 'ציון', 'קבוצה'], ['123', 'Test', 'מבחן', 80, 'מתמטיקה [1042]']]],
+      ['bagrut', [['ת.ז', 'שם', 'סמל שאלון', 'ציון סופי'], ['123', 'Test', '008283', 80]]]
+    ]) {
+      const imported = await Parser.parseExcelFile(workbook([['נבחר', rows], ['נתונים נוספים', [['הערה']]], ['רווחים בלבד', [['  ']]]]), type);
+      assert(imported.rows.length === 1 && imported.warnings.some(w => w.includes('"נבחר"') && w.includes('"נתונים נוספים"') && !w.includes('רווחים בלבד')), 'Missing extra-sheet warning: ' + type);
+      if (type === 'bagrut') assert(imported.rows[0].code === '8283' && imported.rows[0].questionnaireCode === '8283', 'Flat questionnaire code not normalized');
+    }
+    assert(mappingSaves === 0 && !Object.keys(Config.data.mappingProfiles).length, 'Unconfirmed automatic mappings were saved');
+    passed.push('All three secondary file types warn about non-empty extra sheets without saving auto-mappings');
+
+    const file = workbook([['Groups', groupTable]]);
+    let parsing = Parser.parseExcelFile(file, 'groups', { confirmMapping: true });
+    await waitFor(() => !document.getElementById('mappingModal').classList.contains('hidden'));
+    document.getElementById('mappingCancel').click();
+    assert(await parsing === null && mappingSaves === 0, 'Cancelled mapping was saved');
+    parsing = Parser.parseExcelFile(file, 'groups', { confirmMapping: true });
+    await waitFor(() => !document.getElementById('mappingModal').classList.contains('hidden'));
+    document.getElementById('mappingConfirm').click();
+    assert((await parsing).rows.length === 1 && mappingSaves === 1 && Config.getMapping('groups').groupId === 'מספר קבוצה', 'Explicit secondary mapping was not saved');
+    parsing = Parser.readRosterFile(workbook([['Roster', [rosterHeader, rosterRow]]]), { confirmMapping: true });
+    await waitFor(() => !document.getElementById('mappingModal').classList.contains('hidden'));
+    document.getElementById('mappingConfirm').click();
+    assert((await parsing).rows.length === 1 && mappingSaves === 2 && Config.getMapping('roster').tz === 'ת.ז', 'Explicit roster mapping was not saved');
+    const modal = document.getElementById('mappingModal');
+    modal.remove();
+    let modalError;
+    try { await Parser.parseExcelFile(file, 'groups', { confirmMapping: true }); } catch (e) { modalError = e; }
+    document.body.appendChild(modal);
+    assert(modalError && mappingSaves === 2, 'Missing modal silently confirmed a mapping');
+    passed.push('Only explicit mapping confirmation saves profiles; Cancel or missing modal never does');
+
+    const flat = Parser.normalize('bagrut', [{ tz: '123', code: '000000', grade: 70 }], { tz: 'tz', questionnaireCode: 'code', finalGrade: 'grade' });
+    assert(flat.rows[0].code === '0' && Util.normQuestionnaireCode('008283') === '8283' && Util.normQuestionnaireCode('פנימי') === 'פנימי', 'Questionnaire normalization edge cases failed');
+    const wide = await Parser.parseExcelFile(workbook([
+      ['Wide', [
+        ['ת.ז', 'שם', 'שכבה', 'כיתה', 'ספרות (008283)\nקיץ (2026)\nציון שנתי', 'ספרות (008283)\nקיץ (2026)\nציון בחינה', 'ספרות (008283)\nקיץ (2026)\nציון סופי'],
+        ['123', 'Test', 'י', 'י1', 70, 90, 80]
+      ]],
+      ['עוד נתונים', [['הערה']]]
+    ]), 'bagrut');
+    assert(wide.wide && wide.rows.length === 1 && wide.rows[0].code === '8283' && wide.rows[0].questionnaireCode === '8283' && wide.warnings.some(w => w.includes('"עוד נתונים"')), 'Wide code normalization or extra-sheet warning failed');
+    Config._cache.bagrutData = { data: Parser.slimRows('bagrut', wide.rows) };
+    Store.refresh();
+    assert(Store.bagrutBest(tz, ['8283'])?.num === 80 && BagrutEngine.compOrd({ codes: ['008283'] }) === 11 && BagrutEngine.isInternalComp({ codes: ['008283'] }), 'Imported padded codes do not match rules/catalog');
+    const rules = Util.clone(Config.rules()), literature = rules.coreSubjects.find(s => s.id === 'literature');
+    literature.components[0].codes = ['008283', '8283'];
+    rules.questionnaires['008283'] = { name: 'Old padded entry', expectedGrade: 'י' };
+    rules.majors[0].codes = ['008283']; rules.majors[0].weights = { '008283': 75 };
+    rules.exceptionDetection.immigrantCodes = ['005384'];
+    Config._syncQuestionnairesOf(rules);
+    assert(literature.components[0].codes.join() === '8283' && !rules.questionnaires['008283'] && rules.questionnaires['8283'].expectedGrade === 'יא', 'Rules/catalog canonicalization lost the canonical entry');
+    assert(rules.majors[0].weights['8283'] === 75 && rules.exceptionDetection.immigrantCodes.join() === '5384', 'Related questionnaire references were not normalized');
+    Config.withRules(rules, () => assert(Store.bagrutBest(tz, literature.components[0].codes)?.num === 80, 'Normalized custom rules did not match imported codes'));
+    assert(Config.setQuestionnaire('000999', { name: 'Test', expectedGrade: 'יא' }).ok && Config.rules().questionnaires['999'] && !Config.rules().questionnaires['000999'], 'Catalog edits saved a padded key');
+    assert(Config.removeQuestionnaire('000999').ok && !Config.rules().questionnaires['999'], 'Catalog removal did not normalize its key');
+    passed.push('Flat/wide codes, all-zero codes, rules, catalog edits and actual engine matching share canonical questionnaire codes');
+
+    const math = Config.rules().coreSubjects.find(s => s.id === 'math');
+    Store.groupsOf = () => [{ subject: 'מתמטיקה', units: '5', reinforcement: true }, { subject: 'מתמטיקה', units: '3', reinforcement: false }];
+    assert(BagrutEngine.detectLevel(tz, math) === '3', 'Reinforcement group overrode the real level');
+    Store.groupsOf = () => [{ subject: 'מתמטיקה', units: '5', reinforcement: true }];
+    assert(BagrutEngine.detectLevel(tz, math) === math.defaultLevel, 'Reinforcement-only group overrode fallback level');
+    Store.groupsOf = () => [{ subject: 'מתמטיקה', units: '5', reinforcement: false }];
+    assert(BagrutEngine.detectLevel(tz, math) === '5', 'Real subject group no longer determines level');
+    passed.push('detectLevel ignores reinforcement groups while preserving real groups and fallback detection');
+    results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
+    document.title = 'PASS - Parser integrity tests';
+  } catch (e) {
+    results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nFAIL ' + e.stack;
+    document.title = 'FAIL - Parser integrity tests';
+    console.error(e);
+  } finally {
+    Config.setMapping = originalMapping;
+    Store.groupsOf = originalGroups;
+    if (originalData) {
+      Config.data = originalData; Config._cache = originalCache; Config._ignoredCache = originalIgnored;
+      Config._invalidateRoster();
+      if (storedConfig === null) localStorage.removeItem(Config.KEYS.config);
+      else localStorage.setItem(Config.KEYS.config, storedConfig);
+    }
+  }
+})();
+</script>
+</html>
