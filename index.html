@@ -2,6 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>לוח בקרה פדגוגי – בגרות ושיבוצים</title>
@@ -41,7 +42,7 @@
     } } };
   </script>
   <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --forest: #355747; --sage: #75977D; --sage-soft: #B4CBB6; --sage-tint: #EBF2EC; --cream-bg: #FAF7EF; --card-bg: #FFFFFF; --card-border: #E6ECE6; --track: #ECEFE9;
@@ -840,6 +841,7 @@
         <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
           <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
           <div id="cloudBody" class="space-y-3 text-sm"></div>
+          <button type="button" class="btn btn-danger btn-sm" data-act="cloudWipeLocal">התנתק ומחק נתונים מקומיים (מחשב משותף)</button>
           <div id="cloudConflict" class="space-y-2 text-sm text-amber-800" role="alert" hidden>
             <p>קיימת גרסה חדשה בענן. הסנכרון האוטומטי נעצר כדי לשמור על השינויים המקומיים. בחרו כיצד להמשיך:</p>
             <div class="flex flex-wrap gap-2">
@@ -852,7 +854,7 @@
 
         <div class="card p-4 space-y-3 xl:col-span-2">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="save" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>גיבוי, שחזור ותחזוקת נתונים</div>
-          <p class="text-xs text-slate-500">גיבוי מלא של כל נתוני המערכת לקובץ אחד (מצבת, קובצי בגרות/קבוצות/סדין, דריסות שיוך, חריגים וכללי זכאות) וכלי תחזוקה.</p>
+          <p class="text-xs text-slate-500">גיבוי מלא של כל נתוני המערכת לקובץ אחד (מצבת, קובצי בגרות/קבוצות/סדין, דריסות שיוך, חריגים וכללי זכאות). אם הוגדר קוד בית-ספר, גם קובץ הגיבוי מוצפן ודורש את אותו קוד לשחזור.</p>
           <div class="flex flex-wrap gap-2">
             <button type="button" class="btn btn-primary" data-act="backupExport">📥 ייצוא גיבוי מלא (.json)</button>
             <label class="btn btn-ghost cursor-pointer">📤 שחזור מגיבוי (.json)
@@ -956,12 +958,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261119_1"></script>
-  <script src="js/storage.js?v=20261119_1"></script>
-  <script src="js/parser.js?v=20261119_1"></script>
-  <script src="js/bagrutEngine.js?v=20261119_1"></script>
-  <script src="js/bagrutAdvisor.js?v=20261119_1"></script>
-  <script src="js/groupAnalyzer.js?v=20261119_1"></script>
-  <script src="js/app.js?v=20261119_1"></script>
+  <script src="js/config.js?v=20261119_2"></script>
+  <script src="js/storage.js?v=20261119_2"></script>
+  <script src="js/parser.js?v=20261119_2"></script>
+  <script src="js/bagrutEngine.js?v=20261119_2"></script>
+  <script src="js/bagrutAdvisor.js?v=20261119_2"></script>
+  <script src="js/groupAnalyzer.js?v=20261119_2"></script>
+  <script src="js/app.js?v=20261119_2"></script>
 </body>
 </html>

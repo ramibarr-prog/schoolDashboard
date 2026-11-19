@@ -127,6 +127,7 @@ const App = {
   },
 
   openModal(html, wide = false) {
+    if (this._rosterImportResolve) { this._rosterImportResolve(null); this._rosterImportResolve = null; }
     let root = $('modal-root');
     if (!root) { root = document.createElement('div'); root.id = 'modal-root'; document.body.appendChild(root); }
     root.innerHTML = `
@@ -135,7 +136,11 @@ const App = {
       </div>`;
     this.icons();
   },
-  closeModal() { setHtml('modal-root', ''); this.formCtx = null; },
+  closeModal() {
+    if (this._rosterImportResolve) { this._rosterImportResolve(null); this._rosterImportResolve = null; }
+    setHtml('modal-root', '');
+    this.formCtx = null;
+  },
 
   /** חלון טופס כללי: fields = [{ key, label, type, value, options, placeholder }] */
   formModal(title, fields, onSubmit, submitLabel = 'שמירה') {
@@ -617,8 +622,7 @@ const App = {
     this.busy = true;
     try {
       if (key === 'masterRoster') {
-        await this.importRoster(list[0], opts);
-        this.lastFiles[key] = list[0];
+        if (await this.importRoster(list[0], opts)) this.lastFiles[key] = list[0];
       } else if (DATASETS[key]) {
         let imported = 0;
         for (const file of list) {
@@ -654,12 +658,41 @@ const App = {
     inp.click();
   },
 
+  confirmRosterImport(diff, fileName) {
+    this.openModal(`
+      <h3 class="text-lg font-semibold mb-3">אישור עדכון מצבת: ${E(fileName)}</h3>
+      <table class="mb-3"><thead><tr><th>שכבה</th><th>כיום</th><th>בקובץ החדש</th></tr></thead>
+        <tbody>${diff.grades.map(g => `<tr><td>${E(Util.gl(g.grade))}</td><td>${g.current}</td><td>${g.incoming}</td></tr>`).join('')}</tbody></table>
+      <p class="text-sm mb-3">בהחלפה מלאה: ${diff.added} חניכים יתווספו, ${diff.removed} יוסרו, ${diff.changed} יעברו כיתה או שכבה.</p>
+      ${diff.missingGrades.length ? `<p class="fresh-red border rounded-lg p-3 font-bold mb-3" role="alert">אזהרה: שכבות ${diff.missingGrades.map(g => E(Util.gl(g))).join(', ')} חסרות לחלוטין בקובץ החדש. החלפה מלאה תמחק את חניכיהן מהמצבת.</p>` : ''}
+      <p class="text-sm mb-3">השינוי יישמר מקומית ויסונכרן לענן אם הוגדר. דריסות שיוך קיימות ימשיכו לחול.</p>
+      <div class="flex flex-wrap gap-2">
+        ${diff.missingGrades.length ? '<button type="button" class="btn btn-primary" data-act="rosterImportChoice" data-choice="merge">מזג רק את השכבות שבקובץ (שמור שכבות אחרות)</button>' : ''}
+        <button type="button" class="btn ${diff.missingGrades.length ? 'btn-danger' : 'btn-primary'}" data-act="rosterImportChoice" data-choice="replace">${diff.missingGrades.length ? 'החלף את כל המצבת' : 'אשר החלפת מצבת'}</button>
+        <button type="button" class="btn btn-ghost" data-act="closeModal">ביטול</button>
+      </div>`);
+    document.querySelector('#modal-root [data-act="closeModal"]')?.focus();
+    return new Promise(resolve => { this._rosterImportResolve = resolve; });
+  },
+
   async importRoster(file, opts = {}) {
     const res = await parseExcelFile(file, 'roster', opts);
-    if (!res) { this.toast('הייבוא בוטל', 'info'); return; }
+    if (!res) { this.toast('הייבוא בוטל', 'info'); return false; }
     const previous = Config.getRosterEntry();
-    const saved = Config.setRoster(res.rows, file.name, res.ignoredIds);
-    if (!saved.ok) { this.toast(saved.error, 'error'); return; }
+    const diff = Config.rosterDiff(res.rows);
+    if (!diff.incoming.length) { this.toast('לא נמצאו חניכים תקינים בקובץ. המצבת לא הוחלפה.', 'error'); return false; }
+    let rows = diff.incoming;
+    if (previous) {
+      const choice = await this.confirmRosterImport(diff, file.name);
+      if (!choice) { this.toast('הייבוא בוטל', 'info'); return false; }
+      if (Config.getRosterEntry() !== previous) {
+        this.toast('המצבת השתנתה בזמן האישור. יש לטעון שוב את הקובץ ולבדוק את ההבדלים העדכניים.', 'warn');
+        return false;
+      }
+      if (choice === 'merge') rows = Config.mergeRosterGrades(rows);
+    }
+    const saved = Config.setRoster(rows, file.name, res.ignoredIds);
+    if (!saved.ok) { this.toast(saved.error, 'error'); return false; }
     await Config.scrubDatasets();
     /* מעבר מנתוני דמו למצבת אמיתית: מנקים את נתוני הדמו כדי שלא יוצגו כ"לא במצבת" */
     if (previous && previous.fileName === 'נתוני דמו') {
@@ -674,6 +707,7 @@ const App = {
     if (overrides) this.toast(`המצבת עודכנה. שים לב: ${overrides} דריסות שיוך ידניות ממשיכות לחול על הקובץ החדש.`, 'warn');
     res.warnings.forEach(w => this.toast(w, 'warn'));
     this.afterDataChange();
+    return true;
   },
 
   async importDataset(key, file, opts = {}) {
@@ -1123,7 +1157,7 @@ const App = {
       ? `<td class="${r.finalScore >= m.pass ? 'text-emerald-700' : 'text-rose-600'} font-bold">${r.finalScore}</td>`
       : `<td class="text-slate-300" title="${E(r.partialAvg != null ? `בתהליך – ממוצע חלקי נוכחי: ${r.partialAvg} (על ${r.doneW}% מהמשקל)` : 'טרם הושלם אף שאלון')}">–</td>`;
     const body = list.map(r => `<tr>
-      <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
+      <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
       <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td>
       <td class="whitespace-nowrap text-slate-700">${r.level ? `${E(r.level)} יח'` : ''}${r.teacher ? ` <span class="text-slate-500 text-xs">· ${E(r.teacher)}</span>` : ''}</td>
       ${qCells(r)}${accTd(r)}${finalTd(r)}</tr>`).join('');
@@ -1260,7 +1294,7 @@ const App = {
       const track = this.trackOf(t);
       return `
       <tr>
-        <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}" title="${E(`ת.ז ${t.tz}`)}">${E(t.name)}</button></td>
+        <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}${track && track !== 'רגילה' ? ` <span class="badge fresh-slate border">${E(track)}</span>` : ''}</span></td>
         <td>${pill(ev)}</td>
         ${coreCols.map(([id, label]) => subjectTd(ev.cells[id], label)).join('')}
@@ -1449,7 +1483,7 @@ const App = {
     const ex = Config.getException(tz), ev = this.getEval(tz);
     this.openModal(`
       <h3 class="text-lg font-semibold mb-1">⚡ מצב חריג – ${E(t.name)}</h3>
-      <p class="text-xs text-slate-500 mb-3">ת.ז ${t.tz} · ${E(Config.classLabel(t.classKey))}</p>
+      <p class="text-xs text-slate-500 mb-3">ת.ז ${E(t.tz)} · ${E(Config.classLabel(t.classKey))}</p>
       ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
       ${ev.manualReview && ev.manualReview.required ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">🔎 נדרשת בדיקה ידנית – סמלי שאלון זרים:<br>${BagrutAdvisor.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}
       <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${ex.isException ? 'checked' : ''}>מוחרג מחישוב אוטומטי</label>
@@ -1458,8 +1492,8 @@ const App = {
       <label class="flex flex-col gap-1 text-sm">סיבת החריג
         <input id="xmReason" class="inp" maxlength="200" value="${E(ex.reason)}" placeholder="למשל: עולה חדש – הקלות שפה / המרת שאלון מבי&quot;ס קודם"></label>
       <div class="flex gap-2 mt-4">
-        <button type="button" class="btn btn-primary" data-act="excModalSave" data-tz="${t.tz}">שמירה</button>
-        <button type="button" class="btn btn-ghost" data-act="excModalClear" data-tz="${t.tz}">הסרת חריג</button>
+        <button type="button" class="btn btn-primary" data-act="excModalSave" data-tz="${E(t.tz)}">שמירה</button>
+        <button type="button" class="btn btn-ghost" data-act="excModalClear" data-tz="${E(t.tz)}">הסרת חריג</button>
         <button type="button" class="btn btn-ghost mr-auto" data-act="closeModal">סגירה</button>
       </div>`);
   },
@@ -1566,7 +1600,7 @@ const App = {
         : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>`;
       const sadin = r.sadinGroups.map(g => `<div class="text-xs text-slate-600">בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}</div>`).join('');
       return `<tr>
-        <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="${E(`ת.ז ${r.tz}`)}">${E(r.t.name)}</button></td>
+        <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
         <td class="text-right whitespace-nowrap">${E(r.subject)}</td>
         <td class="text-right"><span class="an-k an-k-${r.category}">${E(r.kindLabel)}</span>${r.isRoutineDuplicate ? ' <span class="routine-tag">מקצוע מערכתי</span>' : ''}</td>
@@ -1925,7 +1959,7 @@ const App = {
       const negBadges = r.failing || r.missed
         ? `<span class="neg-cell">${r.failing ? `<span class="neg-badge neg-fail">${r.failing} נכשל</span>` : ''}${r.missed ? `<span class="neg-badge neg-miss">${r.missed} חסר</span>` : ''}</span>`
         : '<span class="neg-ok">✓ תקין</span>';
-      return `<tr><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`${r.t.name} · ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td>
+      return `<tr><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(r.t.name)} · ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
         <td class="sx-room" style="${wStyle('homeroom')}">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>
         <td class="sx-avg font-bold" style="${wStyle('avg')}" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
         <td class="sx-neg" style="${wStyle('negatives')}" title="${E(`${r.failing} נכשלים · ${r.missed} חסרים`)}">${negBadges}</td>${cells}</tr>`;
@@ -2017,7 +2051,7 @@ const App = {
         const last = i === all.length - 1;
         const end = last ? ' student-end' : '';
         const who = i === 0
-          ? `<td rowspan="${all.length}" class="fx-name student-end"><button type="button" class="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(`ת.ז ${r.t.tz}`)}">${E(r.t.name)}</button></td><td rowspan="${all.length}" class="fx-room student-end">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>`
+          ? `<td rowspan="${all.length}" class="fx-name student-end"><button type="button" class="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td><td rowspan="${all.length}" class="fx-room student-end">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>`
           : '';
         return `<tr>${who}
           <td class="fx-subj${end}">${E(s.name)}</td><td class="fx-teacher${end}" title="${E(teacher)}">${E(teacher || '—')}</td><td class="fx-n${end}">${n}</td><td class="fx-avg${end}"><button type="button" data-act="sadinPop" data-tip="${E(this.sadinTip(s))}" aria-label="${E(`${s.name}: הצגת פירוט הציונים`)}">${this.sadinScore(s.avg, s.missed.size > 0)}</button></td></tr>`;
@@ -2082,7 +2116,7 @@ const App = {
     const KIND = { 'no-row': 'אין שורה', empty: 'ללא ציון', zero: 'ציון 0' };
     const rows = res.missed.slice(0, 1000).map(m => {
       const t = Store.trainees.get(m.tz);
-      return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${m.tz}"><td class="font-medium whitespace-nowrap">${E(t.name)}</td><td>${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td>
+      return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${E(m.tz)}"><td class="font-medium whitespace-nowrap">${E(t.name)}</td><td>${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td>
         <td>${E(m.subject)}</td><td>${E(m.teacher)}</td><td>${E(m.eventName)} (${m.weight})</td><td>${E(m.date || '—')}</td><td><span class="badge tier-3">${KIND[m.kind]}</span></td></tr>`;
     }).join('');
     this.openModal(`
@@ -2227,7 +2261,7 @@ const App = {
     const ev = this.getEval(t.tz), ex = Config.getException(t.tz), rules = Config.rules();
     ['excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = false; });
 
-    if (sel) sel.innerHTML = list.map(x => `<option value="${x.tz}" ${x.tz === t.tz ? 'selected' : ''}>${E(Config.classLabel(x.classKey))} · ${E(x.name)}</option>`).join('');
+    if (sel) sel.innerHTML = list.map(x => `<option value="${E(x.tz)}" ${x.tz === t.tz ? 'selected' : ''}>${E(Config.classLabel(x.classKey))} · ${E(x.name)}</option>`).join('');
     const prev = $('profPrev'), next = $('profNext');
     if (prev) prev.disabled = idx === 0;
     if (next) next.disabled = idx === list.length - 1;
@@ -2679,8 +2713,8 @@ const App = {
             <td class="text-right whitespace-nowrap">${E(m.homeroom)}</td>
             <td class="text-right">${m.sources.map(s => `<span class="whitespace-nowrap">${E(s.homeroom || Util.gl(s.grade))} <span class="text-xs text-slate-400">(${srcName[s.source]})</span></span>`).join(' · ')}</td>
             <td class="text-right whitespace-nowrap">
-              <button type="button" class="btn btn-primary btn-sm" data-act="ovAdopt" data-tz="${m.tz}" ${m.adopt ? '' : 'disabled title="במשו&quot;ב אין כיתת אם לאימוץ"'}>אמץ שיוך משו"ב</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-act="ovKeep" data-tz="${m.tz}">השאר לפי מצבת</button></td></tr>`).join('')}</tbody></table></div>
+              <button type="button" class="btn btn-primary btn-sm" data-act="ovAdopt" data-tz="${E(m.tz)}" ${m.adopt ? '' : 'disabled title="במשו&quot;ב אין כיתת אם לאימוץ"'}>אמץ שיוך משו"ב</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="ovKeep" data-tz="${E(m.tz)}">השאר לפי מצבת</button></td></tr>`).join('')}</tbody></table></div>
       </div>` : '');
 
     const byTz = new Map(Config.getRosterAll().map(r => [r.tz, r]));
@@ -2696,7 +2730,7 @@ const App = {
       return `<tr class="${o.hidden ? 'opacity-60' : ''}"><td class="tz-col text-right">${E(o.tz)}</td><td class="text-right font-medium">${E(name)}</td>
         <td class="text-right whitespace-nowrap">${E(r ? this.rawLabel(r) : '— (לא במצבת)')}</td><td class="text-right whitespace-nowrap">${E(eff)}</td>
         <td class="text-right">${status}</td>
-        <td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${o.tz}">בטל דריסה</button></td></tr>`;
+        <td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${E(o.tz)}">בטל דריסה</button></td></tr>`;
     }).join('');
     setHtml('ovTable', `<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם חניך</th><th class="text-right">שיוך מקורי בקובץ</th><th class="text-right">שיוך דורס פעיל</th><th class="text-right">סטטוס / מסלול</th><th class="text-right">פעולה</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="6" class="text-center text-slate-400 py-6">אין דריסות פעילות</td></tr>'}</tbody></table>`);
@@ -2969,7 +3003,7 @@ const App = {
       }
     });
     on('btnResetConfig', 'click', () => {
-      if (!confirm('לאפס את כללי הזכאות, החריגים, הכינויים ופרופילי המיפוי? המצבת תישאר.')) return;
+      if (!confirm('האיפוס ימחק את כל כללי הזכאות, החריגים, הכינויים, פרופילי המיפוי ודריסות שיוך (rosterOverrides). המצבת תישאר. המחיקות יסונכרנו גם לענן אם הוגדר וישפיעו על כל הצוות. להמשיך?')) return;
       Config.reset({ silent: true });
       this.afterDataChange();
       this.toast('ההגדרות אופסו', 'ok');
@@ -3271,6 +3305,12 @@ const App = {
   },
 
   acts: {
+    rosterImportChoice(el) {
+      const resolve = this._rosterImportResolve;
+      this._rosterImportResolve = null;
+      this.closeModal();
+      if (resolve) resolve(el.dataset.choice);
+    },
     async cloudSave() {
       try {
         CloudSync.saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
@@ -3310,7 +3350,15 @@ const App = {
         this.toast('קישור ההצטרפות הועתק. יש לשתף רק בערוץ פרטי עם הצוות.', 'ok');
       } catch (e) { this.toast(`העתקת הקישור נכשלה: ${e.message}`, 'error'); }
     },
-    backupExport() { CloudSync.exportBackup(); },
+    async backupExport() {
+      try { await CloudSync.exportBackup(); }
+      catch (e) { this.toast(`ייצוא הגיבוי נכשל: ${e.message}`, 'error'); }
+    },
+    async cloudWipeLocal() {
+      if (!confirm('למחוק את העותק המקומי של כל נתוני הלוח, אסימון ה-API וקוד בית-הספר מדפדפן זה? נתוני הענן יישארו ללא שינוי. שינויים שלא סונכרנו יאבדו. הדף ייטען מחדש.')) return;
+      try { await CloudSync.wipeLocalSession(); }
+      catch (e) { this.toast(`מחיקת הנתונים המקומיים נכשלה: ${e.message}. הסנכרון נשאר חסום; יש לנסות למחוק שוב.`, 'error'); }
+    },
     calibAdd() { this.openCalibModal(null); },
     calibAssign(el) { const u = this._calibUnk[Number(el.dataset.i)]; if (u) this.openCalibModal(null, { code: u.code, name: u.subject }); },
     calibEdit(el) { const r = this._calibRows[Number(el.dataset.i)]; if (r) this.openCalibModal(r); },
@@ -3537,7 +3585,7 @@ const App = {
     showMissing(el) {
       const rc = Config.reconcile(el.dataset.key);
       const rows = this.sortTrainees(rc.missing.map(r => Store.trainees.get(r.tz)).filter(Boolean)).slice(0, 500).map(t =>
-        `<tr class="cursor-pointer" data-act="openProfile" data-tz="${t.tz}"><td class="tz-col">${t.tz}</td><td class="font-medium">${E(t.name)}</td><td>${E(Config.classLabel(t.classKey))}</td></tr>`).join('');
+        `<tr class="cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}"><td class="tz-col">${E(t.tz)}</td><td class="font-medium">${E(t.name)}</td><td>${E(Config.classLabel(t.classKey))}</td></tr>`).join('');
       this.openModal(`
         <div class="flex items-center justify-between mb-2"><h3 class="text-lg font-semibold">חסרים בקובץ (${rc.missing.length})</h3><button type="button" class="btn btn-ghost" data-act="closeModal">סגירה</button></div>
         <p class="text-sm text-slate-500 mb-3">חניכים פעילים במצבת שאינם מופיעים ב"${E(DATASETS[el.dataset.key].title)}".</p>
@@ -3668,7 +3716,7 @@ const App = {
     async backupImport(el) {
       const f = el.files[0];
       el.value = '';
-      if (!f || !confirm('השחזור יחליף את כל הנתונים וההגדרות הנוכחיים בתוכן קובץ הגיבוי. להמשיך?')) return;
+      if (!f || !confirm('ייבוא גיבוי או config.json יחליף נתונים והגדרות קיימים בתוכן הקובץ. ההחלפה תסונכרן גם לענן אם הוגדר ותשפיע על כל הצוות. מומלץ לייצא גיבוי קודם. להמשיך?')) return;
       await this.cloudRefresh(async () => {
         const kind = await CloudSync.importBackup(await f.text());
         this.toast(kind === 'legacy' ? 'קובץ config.json ישן נקלט: שוחזרו המצבת וההגדרות (קובצי בגרות, קבוצות וסדין אינם כלולים בו)' : 'הגיבוי נטען בהצלחה', kind === 'legacy' ? 'warn' : 'ok');

@@ -120,8 +120,15 @@ window.fetch = (url, options) => {
 
     const localRev = CloudSync.meta().rev;
     remote.rev++;
-    document.dispatchEvent(new Event('visibilitychange'));
-    await CloudSync._queue;
+    const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await CloudSync._queue;
+    } finally {
+      if (visibilityDescriptor) Object.defineProperty(document, 'visibilityState', visibilityDescriptor);
+      else delete document.visibilityState;
+    }
     assert(CloudSync.status.kind === 'conflict' && CloudSync.meta().rev === localRev, 'Visibility meta warning incorrectly acknowledged server data');
     let unload = new Event('beforeunload', { cancelable: true });
     CloudSync._setMeta({ dirty: true });
@@ -229,8 +236,18 @@ window.fetch = (url, options) => {
     const ui = document.createElement('div');
     ui.innerHTML = '<div id="cloudBody"></div><div id="syncStatus"></div><div id="cloudConflict" hidden></div>';
     document.body.appendChild(ui);
-    const app = new Function('Util', 'Config', 'CloudSync', 'document', appSource + '\nreturn App;')(
-      Util, Config, CloudSync, { readyState: 'loading', addEventListener() {}, getElementById: id => document.getElementById(id) }
+    let parsedRoster, allowConfirm = false;
+    const confirmations = [];
+    const testDocument = new Proxy(document, { get(target, key) {
+      if (key === 'readyState') return 'loading';
+      if (key === 'addEventListener') return () => {};
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const testStore = { trainees: new Map() };
+    const app = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', appSource + '\nreturn App;')(
+      Util, Config, CloudSync, testDocument, async () => parsedRoster,
+      message => { confirmations.push(message); return allowConfirm; }, testStore
     );
     app.renderCloudCard();
     assert(document.getElementById('cloudToken').type === 'password', 'Token field not masked');
@@ -245,8 +262,155 @@ window.fetch = (url, options) => {
     CloudSync.pushCloudState = async () => { uiPushes++; return {}; };
     try { await app.acts.cloudSync.call(app); } finally { CloudSync.pushCloudState = realPush; }
     assert(uiPushes === 0 && uiToasts.length === 0, 'UI pushed or reported success after kept-local');
-    ui.remove();
     passed.push('Settings token masking/join button/conflict prompt; UI stops after kept-local without false success');
+
+    const hostileId = '"><b data-id-probe>marker</b><i title="';
+    testStore.trainees.set(hostileId, { tz: hostileId, name: 'Test', classKey: 'י1' });
+    app.getEval = () => ({});
+    app.openExceptionModal(hostileId);
+    assert(!document.querySelector('#modal-root [data-id-probe]') && document.querySelector('#modal-root p').textContent.includes(hostileId), 'Modal ID became HTML');
+    assert([...document.querySelectorAll('#modal-root [data-tz]')].every(el => el.dataset.tz === hostileId), 'Modal ID escaped its attribute');
+    const realReconcile = Config.reconcile;
+    Config.reconcile = () => ({ missing: [{ tz: hostileId }] });
+    try { app.acts.showMissing.call(app, { dataset: { key: 'groupsData' } }); } finally { Config.reconcile = realReconcile; }
+    assert(!document.querySelector('#modal-root [data-id-probe]') && document.querySelector('#modal-root tbody .tz-col').textContent === hostileId && document.querySelector('#modal-root [data-tz]').dataset.tz === hostileId, 'Missing-student ID became HTML or an attribute');
+    app.closeModal();
+    passed.push('Hostile student IDs remain text in modal headers/table cells and cannot escape data-tz attributes');
+
+    app.afterDataChange = () => {};
+    const row = (id, grade, homeroom) => ({ tz: Util.normId(id), grade, homeroom, firstName: 'Test', lastName: 'Student', track: 'רגילה' });
+    const originalRoster = [row('123', 'י', 'י1'), row('222', 'יא', 'יא1'), row('333', 'יב', 'יב1')];
+    Config.setRoster(originalRoster, 'old.csv'); stopTimer();
+    parsedRoster = { rows: [row('123', 'י', 'י2'), row('444', 'יא', 'יא2')], ignoredIds: [], warnings: [], sheets: ['Sheet'], skipped: 0, duplicates: 0 };
+    const diff = Config.rosterDiff(parsedRoster.rows);
+    assert(diff.added === 1 && diff.removed === 2 && diff.changed === 1 && diff.missingGrades.join() === 'יב', 'Roster diff incorrect');
+    assert(diff.grades.every(g => g.current === 1) && diff.grades[2].incoming === 0, 'Grade counts incorrect');
+    const originalEntry = Config.getRosterEntry();
+    let importing = app.importRoster({ name: 'partial.csv' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(Config.getRosterEntry() === originalEntry && document.querySelector('#modal-root [role="alert"]'), 'Roster saved before warning');
+    assert(document.querySelector('[data-choice="merge"]') && document.querySelector('[data-choice="replace"]'), 'Missing explicit merge/replace choices');
+    app.closeModal();
+    assert(await importing === false && Config.getRosterEntry() === originalEntry, 'Cancel changed roster');
+    importing = app.importRoster({ name: 'partial.csv' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.acts.rosterImportChoice.call(app, { dataset: { choice: 'merge' } });
+    assert(await importing, 'Merge import failed');
+    let merged = Config.getRosterEntry().data;
+    assert(merged.length === 3 && merged.some(r => r.tz === Util.normId('333')) && !merged.some(r => r.tz === Util.normId('222')) && merged.find(r => r.tz === tz).homeroom === 'י2', 'Partial-grade merge lost or retained wrong students');
+    const moved = Config.mergeRosterGrades([row('333', 'י', 'י3')]);
+    assert(moved.filter(r => r.tz === Util.normId('333')).length === 1 && moved.find(r => r.tz === Util.normId('333')).grade === 'י', 'Moved student duplicated across preserved grade');
+    Config.setRoster(originalRoster, 'old.csv'); stopTimer();
+    importing = app.importRoster({ name: 'partial.csv' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    app.acts.rosterImportChoice.call(app, { dataset: { choice: 'replace' } });
+    assert(await importing && Config.getRosterEntry().data.length === 2, 'Full replacement did not remove missing grade');
+    parsedRoster = { ...parsedRoster, rows: originalRoster };
+    importing = app.importRoster({ name: 'complete.csv' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert(!document.querySelector('[data-choice="merge"]') && document.querySelector('[data-choice="replace"]').textContent === 'אשר החלפת מצבת', 'Complete import did not show normal replacement confirmation');
+    app.closeModal(); await importing;
+    importing = app.importRoster({ name: 'complete.csv' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    Config.setRoster([row('999', 'יב', 'יב2')], 'concurrent.csv'); stopTimer();
+    const concurrentRoster = Config.getRosterEntry();
+    app.acts.rosterImportChoice.call(app, { dataset: { choice: 'replace' } });
+    assert(await importing === false && Config.getRosterEntry() === concurrentRoster, 'Stale roster confirmation overwrote a concurrent update');
+    Config.setRoster(parsedRoster.rows.slice(0, 2), 'backup-fixture.csv'); stopTimer();
+    passed.push('Roster diff counts; cancel; missing-grade warning; merge/replace choices; cross-grade deduplication');
+
+    ui.insertAdjacentHTML('beforeend', '<button id="btnResetConfig"></button>');
+    app.bindEvents();
+    const beforeReset = JSON.stringify(Config.data);
+    document.getElementById('btnResetConfig').click();
+    assert(JSON.stringify(Config.data) === beforeReset && confirmations.at(-1).includes('rosterOverrides') && confirmations.at(-1).includes('לענן'), 'Reset did not warn or respect cancellation');
+    let readBackup = false;
+    await app.chgs.backupImport.call(app, { files: [{ text: () => { readBackup = true; return '{}'; } }], value: 'config.json' });
+    assert(!readBackup && confirmations.at(-1).includes('config.json') && confirmations.at(-1).includes('לענן'), 'Backup import did not confirm before reading/applying');
+    let wiped = false;
+    const realWipe = CloudSync.wipeLocalSession;
+    CloudSync.wipeLocalSession = async () => { wiped = true; };
+    try { await app.acts.cloudWipeLocal.call(app); } finally { CloudSync.wipeLocalSession = realWipe; }
+    assert(!wiped && confirmations.at(-1).includes('הענן יישארו ללא שינוי'), 'Local wipe did not warn or respect cancellation');
+    passed.push('Reset, config/backup import and shared-computer wipe warn explicitly and respect Cancel');
+
+    const nativeCreate = URL.createObjectURL, nativeClick = HTMLAnchorElement.prototype.click;
+    let backupBlob;
+    URL.createObjectURL = blob => { backupBlob = blob; return 'blob:' + location.origin + '/test-backup'; };
+    HTMLAnchorElement.prototype.click = () => {};
+    try { await CloudSync.exportBackup(); } finally { URL.createObjectURL = nativeCreate; HTMLAnchorElement.prototype.click = nativeClick; }
+    const backupText = await backupBlob.text(), envelope = JSON.parse(backupText);
+    assert(envelope.enc === 'aes2' && !backupText.includes('"rosterData"') && !backupText.includes('"studentMeta"'), 'Local backup exposes plaintext records');
+    const backupState = await CloudSync.open(envelope);
+    assert(backupState.rosterData.data.length === 2 && backupState.mappingProfiles, 'Encrypted backup missing state');
+    Config.setException(tz, { note: 'Temporary local note' }); stopTimer();
+    assert(await CloudSync.importBackup(backupText) === 'full', 'Encrypted backup not detected');
+    assert(Config.getException(tz).note === (backupState.studentMeta[tz]?.note || ''), 'Encrypted backup not applied');
+    const beforeWrongPass = JSON.stringify(Config.data);
+    CloudSync._set('pass', 'wrong-pass');
+    await rejects(() => CloudSync.importBackup(backupText), 'קוד בית-ספר');
+    assert(JSON.stringify(Config.data) === beforeWrongPass, 'Wrong-pass backup modified local data');
+    CloudSync._set('pass', 'test-school-pass');
+    assert(await CloudSync.importBackup(JSON.stringify(backupState)) === 'full', 'Plaintext full backup compatibility lost');
+    assert(await CloudSync.importBackup(JSON.stringify(Config.exportObject())) === 'legacy', 'Legacy config compatibility lost');
+    const legacyIv = crypto.getRandomValues(new Uint8Array(12));
+    const legacyBackup = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: legacyIv }, await CloudSync._key(CloudSync.passcode(), salt, 100000), new TextEncoder().encode(JSON.stringify(backupState)));
+    assert(await CloudSync.importBackup(JSON.stringify({ enc: 'aes1', salt: CloudSync._b64(salt), iv: CloudSync._b64(legacyIv), data: CloudSync._b64(legacyBackup) })) === 'full', 'Legacy encrypted backup import failed');
+    CloudSync._set('pass', '');
+    URL.createObjectURL = blob => { backupBlob = blob; return 'blob:' + location.origin + '/test-backup'; };
+    HTMLAnchorElement.prototype.click = () => {};
+    try { await CloudSync.exportBackup(); } finally { URL.createObjectURL = nativeCreate; HTMLAnchorElement.prototype.click = nativeClick; }
+    assert(JSON.parse(await backupBlob.text()).app === 'schoolDashboard', 'No-pass local backup compatibility lost');
+    CloudSync._set('pass', 'test-school-pass');
+    stopTimer();
+    passed.push('Encrypted local backup round trip; wrong-pass safety; aes1/plaintext/config compatibility');
+    ui.remove();
+
+    const wipeValues = new Map([
+      ['sd.cloud.url', 'https://cloud-sync.test/exec'], ['sd.cloud.token', 'test-token'],
+      ['sd.cloud.passcode', 'test-pass'], ['sd.cloud.meta', '{"dirty":true}'],
+      ['sd.config.v2', '{}'], ['sd.future-key', 'delete'], ['masterRoster', '{}'], ['unrelated', 'keep']
+    ]);
+    let wipeSync, reloaded = false, startedRequest, requestCount = 0, aborted = false, timerFired = false;
+    const deleted = [], writesDuringWipe = [];
+    const requestStarted = new Promise(resolve => { startedRequest = resolve; });
+    const wipeStorage = {
+      get length() { return wipeValues.size; }, key: i => [...wipeValues.keys()][i],
+      getItem: k => wipeValues.get(k) || null, removeItem: k => wipeValues.delete(k),
+      setItem: (k, v) => { if (wipeSync?._wiping) writesDuringWipe.push(k); wipeValues.set(k, v); }
+    };
+    const wipeConfig = {
+      KEYS: Config.KEYS, DATASET_KEYS: Config.DATASET_KEYS, ready: Promise.resolve(),
+      _cache: {}, defaults: () => Config.defaults(), _invalidateRoster() {},
+      _write: Config._write, _storePut: Config._storePut,
+      _storeDelete: async key => { assert(wipeSync._suppress > 0, 'Wipe not suppressed before storage access'); deleted.push(key); wipeSync.markDirty(); }
+    };
+    wipeSync = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', 'fetch', storageSource + '\nreturn CloudSync;')(
+      wipeConfig, Util, wipeStorage, { addEventListener() {}, dispatchEvent() {} }, { addEventListener() {} },
+      { hash: '', reload: () => { reloaded = true; } }, {},
+      (url, opts) => {
+        requestCount++; startedRequest();
+        return new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => { aborted = true; reject(new DOMException('Aborted', 'AbortError')); }));
+      }
+    );
+    wipeSync.buildState = () => ({ app: 'schoolDashboard' });
+    wipeSync.seal = async () => ({ enc: 'aes2', data: 'mock' });
+    const activePush = wipeSync.pushCloudState({ force: true }).catch(e => e);
+    await requestStarted;
+    const queuedPush = wipeSync.pushCloudState({ force: true }).catch(e => e);
+    wipeSync._timer = setTimeout(() => { timerFired = true; }, 20);
+    await wipeSync.wipeLocalSession();
+    await Promise.all([activePush, queuedPush]);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert(aborted && requestCount === 1 && !timerFired && !writesDuringWipe.length, 'Wipe allowed queued/late writes or uploads');
+    assert(reloaded && deleted.length === Config.DATASET_KEYS.length && wipeValues.size === 1 && wipeValues.get('unrelated') === 'keep', 'Wipe missed dashboard storage or removed unrelated data');
+    assert(!wipeConfig._write('sd.config.v2', {}).ok && !(await wipeConfig._storePut('groupsData', { data: [] })).ok, 'A late file import could repopulate storage after wipe');
+    await rejects(() => wipeSync.pushCloudState({ force: true }), 'הסנכרון חסום');
+    reloaded = false;
+    wipeConfig._storeDelete = async () => { throw new Error('Test deletion failure'); };
+    await rejects(() => wipeSync.wipeLocalSession(), 'Test deletion failure');
+    assert(!reloaded && wipeSync._wiping && wipeSync._suppress > 0, 'Failed wipe resumed syncing or reloaded as if successful');
+    passed.push('Shared-computer wipe suppresses events, cancels requests/timers, blocks queued pushes and preserves unrelated keys');
 
     await CloudSync.applyState({ ...state, rosterData: null, groupsData: null, bagrutData: null, sadinData: null });
     assert(Config.getRosterEntry() === null && Config.isRosterCleared(), 'Roster deletion failed');

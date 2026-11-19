@@ -74,6 +74,8 @@ const CloudSync = {
   _revision: 0,
   _settingsRevision: 0,
   _ready: false,
+  _wiping: false,
+  _requestController: null,
   _queue: Promise.resolve(),
 
   /* ---------- הגדרות ---------- */
@@ -114,13 +116,16 @@ const CloudSync = {
     this._schedulePush();
   },
   _schedulePush() {
-    if (this.configured() && this.hasUnpublished() && this.status.kind !== 'conflict') {
+    if (!this._suppress && !this._wiping && this.configured() && this.hasUnpublished() && this.status.kind !== 'conflict') {
       clearTimeout(this._timer);
       this._timer = setTimeout(() => this.pushCloudState().catch(e => console.error('cloud push', e)), 1000);
     }
   },
   _enqueue(fn) {
-    const operation = this._queue.then(fn);
+    const operation = this._queue.then(() => {
+      if (this._wiping) throw new Error('הסנכרון חסום בזמן מחיקת הנתונים המקומיים');
+      return fn();
+    });
     this._queue = operation.catch(e => console.error('cloud sync', e));
     return operation;
   },
@@ -175,6 +180,7 @@ const CloudSync = {
   },
 
   async applyState(s) {
+    if (this._wiping) throw new Error('לא ניתן לטעון נתונים בזמן מחיקת ההפעלה המקומית');
     s = sanitizeState(s);
     if (s.customQuestionnaires) {
       const err = Config.validateRules(s.customQuestionnaires);
@@ -245,7 +251,7 @@ const CloudSync = {
         throw e;
       } finally { this._suppress--; }
     } finally {
-      if (!committed) {
+      if (!committed && !this._wiping) {
         // The cache still holds the latest local edits, including edits made while awaiting.
         for (const key of written) {
           let current;
@@ -300,16 +306,23 @@ const CloudSync = {
 
   /* ---------- תקשורת ---------- */
   async _post(body) {
+    if (this._wiping) throw new Error('הסנכרון חסום בזמן מחיקת הנתונים המקומיים');
     const url = this.url();
     if (!url) throw new Error('לא הוגדרה כתובת סנכרון ענן');
     if (new URL(url).protocol !== 'https:') throw new Error('כתובת הענן חייבת להשתמש ב-HTTPS');
     const token = this.apiToken();
     if (!token) throw new Error('יש להזין אסימון API בהגדרות הענן');
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, token }) });
-    if (!res.ok) throw new Error(`שגיאת שרת ${res.status}`);
-    const json = await res.json();
-    if (!json.ok && !json.conflict) throw new Error(json.error || 'השרת דחה את הבקשה');
-    return json;
+    const controller = new AbortController();
+    this._requestController = controller;
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, token }), signal: controller.signal });
+      if (!res.ok) throw new Error(`שגיאת שרת ${res.status}`);
+      const json = await res.json();
+      if (!json.ok && !json.conflict) throw new Error(json.error || 'השרת דחה את הבקשה');
+      return json;
+    } finally {
+      if (this._requestController === controller) this._requestController = null;
+    }
   },
 
   pushCloudState(opts = {}) {
@@ -394,31 +407,65 @@ const CloudSync = {
   },
 
   /* ---------- גיבוי לקובץ ---------- */
-  exportBackup() {
-    const blob = new Blob([JSON.stringify({ ...this.buildState(), mappingProfiles: Config.data.mappingProfiles })], { type: 'application/json' });
+  async exportBackup() {
+    await Config.ready;
+    if (this._wiping) throw new Error('לא ניתן לייצא בזמן מחיקת ההפעלה המקומית');
+    const backupObj = { ...this.buildState(), mappingProfiles: Config.data.mappingProfiles };
+    const backup = this.passcode() ? await this.seal(backupObj) : backupObj;
+    if (this._wiping) throw new Error('הייצוא בוטל בזמן מחיקת ההפעלה המקומית');
+    const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `school-dashboard-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
-  async importBackup(text) {
+  importBackup(text) { return this._enqueue(() => this._importBackup(text)); },
+  async _importBackup(text) {
+    await Config.ready;
     let s;
     try { s = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
+    if (s && (s.enc === 'aes2' || s.enc === 'aes1')) s = await this.open(s);
+    if (this._wiping) throw new Error('השחזור בוטל בזמן מחיקת ההפעלה המקומית');
     const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'cohortProfiles', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
     const isFull = s && typeof s === 'object' && !Array.isArray(s) && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
     if (s && typeof s === 'object' && !Array.isArray(s) && !isFull && LEGACY_KEYS.some(k => k in s)) {
-      await Config.importJSON(text, { silent: true });
+      await Config.importJSON(JSON.stringify(s), { silent: true });
       this.markDirty();
       return 'legacy';
     }
     if (await this.applyState(s) === 'kept-local') throw new Error('בוצעו שינויים בזמן השחזור. הנתונים המקומיים נשמרו; יש לנסות שוב.');
     if (s.mappingProfiles && typeof s.mappingProfiles === 'object' && !Array.isArray(s.mappingProfiles)) {
       Config.data.mappingProfiles = s.mappingProfiles;
-      Config.save();
+      const saved = Config.save();
+      if (!saved.ok) throw new Error(saved.error);
     }
     this.markDirty();
     return 'full';
+  },
+
+  async wipeLocalSession() {
+    this._suppress++;
+    clearTimeout(this._timer);
+    this._wiping = true;
+    Config._sessionClosing = true;
+    this._revision++;
+    this._settingsRevision++;
+    this._requestController?.abort();
+    // Drain in-flight/queued work before deletion so late responses cannot restore data.
+    await this._queue;
+    await Config.ready;
+    for (const key of Config.DATASET_KEYS) await Config._storeDelete(key);
+    const dashboardKeys = new Set([...Object.keys(Config.KEYS), ...Object.values(Config.KEYS)]);
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('sd.') || dashboardKeys.has(key))) localStorage.removeItem(key);
+    }
+    Config._cache = {};
+    Config.data = Config.defaults();
+    Config._ignoredCache = null;
+    Config._invalidateRoster();
+    location.reload();
   },
 
   init() {
@@ -440,7 +487,7 @@ const CloudSync = {
       if (document.visibilityState === 'visible' && this.configured()) this.checkCloudMeta().catch(e => console.error('cloud meta', e));
     });
     window.addEventListener('beforeunload', e => {
-      if (this.hasUnpublished()) { e.preventDefault(); e.returnValue = ''; }
+      if (!this._wiping && this.hasUnpublished()) { e.preventDefault(); e.returnValue = ''; }
     });
   }
 };

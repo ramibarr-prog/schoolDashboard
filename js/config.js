@@ -278,6 +278,7 @@ const Config = {
   },
 
   data: null,
+  _sessionClosing: false,
   _cache: {},
   _staleDismissed: {},
 
@@ -289,6 +290,7 @@ const Config = {
     } catch (e) { return null; }
   },
   _write(key, value) {
+    if (this._sessionClosing) return { ok: false, error: 'ההפעלה המקומית נסגרת; לא ניתן לשמור נתונים.' };
     try { localStorage.setItem(key, JSON.stringify(value)); return { ok: true }; }
     catch (e) {
       const quota = e && (e.name === 'QuotaExceededError' || e.code === 22);
@@ -406,6 +408,36 @@ const Config = {
       out.push(rec);
     });
     return { rows: out, skipped, duplicates, ignoredIds: [...ignored].filter(tz => !seen.has(tz)) };
+  },
+
+  rosterDiff(rows) {
+    const incoming = this.normalizeRosterRows(rows).rows;
+    const current = this.getRosterEntry()?.data || [];
+    const oldById = new Map(current.map(r => [r.tz, r]));
+    const newById = new Map(incoming.map(r => [r.tz, r]));
+    const grades = Util.GRADE_KEYS.map(grade => ({
+      grade,
+      current: current.filter(r => r.grade === grade).length,
+      incoming: incoming.filter(r => r.grade === grade).length
+    }));
+    return {
+      incoming, grades,
+      added: incoming.filter(r => !oldById.has(r.tz)).length,
+      removed: current.filter(r => !newById.has(r.tz)).length,
+      changed: incoming.filter(r => {
+        const old = oldById.get(r.tz);
+        return old && (old.grade !== r.grade || old.homeroom !== r.homeroom);
+      }).length,
+      missingGrades: grades.filter(g => g.current && !g.incoming).map(g => g.grade)
+    };
+  },
+
+  mergeRosterGrades(rows) {
+    const incoming = this.normalizeRosterRows(rows).rows;
+    if (!incoming.length) return [];
+    const grades = new Set(incoming.map(r => r.grade)), ids = new Set(incoming.map(r => r.tz));
+    const preserved = (this.getRosterEntry()?.data || []).filter(r => !grades.has(r.grade) && !ids.has(r.tz));
+    return [...preserved, ...incoming];
   },
 
   setRoster(rows, fileName, extraIgnoredIds = []) {
@@ -742,6 +774,7 @@ const Config = {
     return this._read(this.KEYS[key]);
   },
   async _storePut(key, entry) {
+    if (this._sessionClosing) return { ok: false, error: 'ההפעלה המקומית נסגרת; לא ניתן לשמור נתונים.' };
     if (this._idb) {
       try { await this._idbRun('readwrite', s => s.put(entry, key)); this._purgeLegacyCopy(key); return { ok: true }; }
       catch (e) { return { ok: false, error: `שמירה נכשלה: ${e && e.message ? e.message : 'שגיאת אחסון'}` }; }
