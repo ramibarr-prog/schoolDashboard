@@ -2186,8 +2186,12 @@ const App = {
   },
 
   unitsBadge(ev) {
-    const short = ev.mode === 'full' && ev.totalUnits < 21 && ev.tier !== 0;
-    return `<span class="badge ${short ? 'tier-4' : 'fresh-slate'} whitespace-nowrap" title="${E(`יחידות שנצברו במקצועות שהושלמו; סך היחידות במסלול: ${ev.expectedUnits}`)}">${ev.totalUnits}${ev.mode === 'full' ? '/21' : ''} יח"ל</span>`;
+    const full = ev.mode === 'full';
+    const short = full && ev.totalUnits < 21 && ev.tier !== 0;
+    const tip = full
+      ? `צבר ${ev.totalUnits} יח"ל (מינימום לזכאות: 21 יח"ל); סך היחידות במסלול: ${ev.expectedUnits}`
+      : `יחידות שנצברו במקצועות שהושלמו; סך היחידות במסלול: ${ev.expectedUnits}`;
+    return `<span class="badge ${short ? 'tier-4' : 'fresh-slate'} whitespace-nowrap" title="${E(tip)}">${ev.totalUnits} יח"ל</span>`;
   },
 
   profileComponents(comps, variable) {

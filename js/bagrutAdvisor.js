@@ -136,7 +136,7 @@ const BagrutAdvisor = (() => {
   function focusItems(blockers, reverse) {
     const items = blockers.filter(b => !b.info && b.k !== 'reverse30' && b.k !== 'reverse-pending')
       .sort((a, b) => (b.hard ? 1 : 0) - (a.hard ? 1 : 0))
-      .map(b => ({ text: (b.miss && !/^לא ניגש/.test(b.text) ? 'חסר ' : '') + b.text, hard: !!b.hard }));
+      .map(b => ({ text: (b.miss && !/^(לא ניגש|חסם)/.test(b.text) ? 'חסר ' : '') + b.text, hard: !!b.hard }));
     reverse.filter(r => r.level !== 'info').forEach(r => items.push(r.level === 'red'
       ? { text: `${r.subject}: גם 100 ב-${r.pct}% לא מספיק – מועד ב'`, hard: true }
       : { text: `🎯 ${r.subject}: צריך ${reverseNeed(r)}`, hard: false, target: true }));

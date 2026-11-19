@@ -176,7 +176,7 @@ function defaultBagrutRules() {
     gates: {
       core: { enabled: true, label: 'שער 1 – מקצועות ליבה' },
       major: { enabled: true, label: 'שער 2 – מגמה 5 יח"ל', requiredUnits: 5 },
-      internal: { enabled: true, label: 'שער 3 – יחידות פנימיות סטטוטוריות' }
+      internal: { enabled: true, label: 'מקצועות פנימיים סטטוטוריים' }
     },
     coreSubjects: [
       { id: 'history', name: 'היסטוריה', units: 2, keywords: ['היסטוריה'], enabled: true,

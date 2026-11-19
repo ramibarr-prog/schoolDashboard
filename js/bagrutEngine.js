@@ -603,8 +603,8 @@ const BagrutEngine = (() => {
       /* המתג בסימולטור מתעלם מכל יחידות שער 3, ללא תלות בהגדרה פרטנית */
       if (ctx.ignoreInternals) { res.ignored = true; return res; }
       /* יחידה פנימית שמועדה הגיע וחסרה היא חסם קשה (גם במצב המותאם, אלא אם החניך לומד אותה השנה) */
-      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `חסם מקצועות פנימיים – ${it.name}` });
-      else B.push({ gate: 3, k: 'internal', hard: ctx.strict || !res.inGroup, miss: true, inGroup: res.inGroup, text: `מקצועות פנימיים – ציון ${it.name}${res.inGroup ? ' (בלימוד)' : ''}` });
+      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `חסם נכשל במקצועות פנימיים – ${it.name}` });
+      else B.push({ gate: 3, k: 'internal', hard: ctx.strict || !res.inGroup, miss: true, inGroup: res.inGroup, text: `${explicitFail ? 'חסם נכשל' : 'חסם חסר'} במקצועות פנימיים – ${it.name}${res.inGroup ? ' (בלימוד)' : ''}` });
       return res;
     });
   }
