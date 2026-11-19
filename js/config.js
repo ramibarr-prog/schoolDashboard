@@ -132,7 +132,7 @@ const Util = {
    סמלי השאלונים והמשקלים ניתנים לעריכה במגירת "כללי זכאות ומשקלים".
    ===================================================================== */
 /** כתובת ברירת המחדל של Web App בענן (נדרסת ע"י הגדרות ← סנכרון ענן) */
-const DEFAULT_CLOUD_URL = 'https://script.google.com/macros/s/AKfycbxlDpyyPhmfIuewoTwyrkEZ6O_m2YGr8sQG3tzibipI5ssKPvJwDnyus5pz2GM9OWUeRw/exec';
+const DEFAULT_CLOUD_URL = '';
 
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
 const RULES_VERSION = 3;
@@ -265,7 +265,7 @@ const Config = {
   DATASET_KEYS: ['groupsData', 'sadinData', 'bagrutData'],
   FRESH_DAYS: 3,
   STALE_DAYS: 10,
-  /* כתובת Web App של Google Apps Script (cloud/Code.gs). אפשר להדביק כאן, או בהגדרות ← סנכרון ענן (נשמר בדפדפן ודורס ערך זה) */
+  /* כתובת הענן מוגדרת רק בהגדרות המקומיות, ולא בקוד הציבורי */
   CLOUD_SYNC_URL: DEFAULT_CLOUD_URL,
   KEYS: {
     config: 'sd.config.v2',

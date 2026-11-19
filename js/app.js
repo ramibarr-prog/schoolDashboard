@@ -94,10 +94,13 @@ const App = {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
-    if (CloudSync.url()) {
+    window.addEventListener('sd:cloud-conflict', () => {
+      this.toast('קיימת גרסה חדשה בענן. בחרו בהגדרות הענן: משיכה, דחיפה כפויה או ייצוא גיבוי מקומי.', 'warn');
+    });
+    if (CloudSync.configured()) {
       try {
         const r = await CloudSync.pullCloudState();
-        if (r === 'kept-local') this.toast('נשמרו שינויים מקומיים הממתינים לסנכרון; הם יישלחו לענן אוטומטית.', 'info');
+        if (r === 'kept-local') this.toast('השינויים המקומיים נשמרו. יש לפתור את ההתנגשות בהגדרות הענן לפני סנכרון.', 'warn');
       } catch (e) { console.warn('cloud pull', e); this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
     }
     Store.refresh();
@@ -3039,6 +3042,8 @@ const App = {
     const el = $('syncStatus');
     if (!el) return;
     const s = CloudSync.status, url = CloudSync.url();
+    const conflict = $('cloudConflict');
+    if (conflict) conflict.hidden = s.kind !== 'conflict';
     let t;
     if (!url) t = '💾 נתונים מקומיים (ללא סנכרון ענן)';
     else if (s.text) t = s.text;
@@ -3053,18 +3058,21 @@ const App = {
     const body = $('cloudBody');
     if (!body) return;
     body.innerHTML = `
-      <p class="text-xs text-slate-500">כל שינוי נשמר לענן אוטומטית, והנתונים העדכניים נטענים בפתיחת האפליקציה בכל מחשב. יש להשתמש באותה כתובת בכל המחשבים. קוד בית-ספר אופציונלי מצפין את הנתונים ודורש אותו קוד בכל מחשב.</p>
-      <p class="text-xs text-amber-700">כל מי שמחזיק בכתובת יכול לקרוא ולכתוב בענן ללא סיסמת מרכזת. אין לשתף את הכתובת מחוץ לצוות.</p>
+      <p class="text-xs text-slate-500">הסנכרון דורש כתובת, אסימון API וקוד בית-ספר להצפנה. יש להשתמש באותם פרטים בכל מחשבי הצוות. גרסאות שרת מונעות דריסה אוטומטית של שינויים מתנגשים.</p>
+      <p class="text-xs text-amber-700">אסימון וקישור הצטרפות מעניקים גישה לנתוני בית הספר. שתפו רק בערוץ פרטי עם אנשי צוות מורשים. הפרטים נשמרים בדפדפן זה.</p>
       <div class="grid md:grid-cols-2 gap-3">
         <label class="flex flex-col gap-1">כתובת Web App של Google Apps Script
           <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(CloudSync.url())}"></label>
-        <label class="flex flex-col gap-1">קוד בית-ספר (הצפנה, אופציונלי)
+        <label class="flex flex-col gap-1">אסימון API (כמו API_TOKEN בשרת)
+          <input id="cloudToken" type="password" class="inp" dir="ltr" autocomplete="off" value="${E(CloudSync.apiToken())}"></label>
+        <label class="flex flex-col gap-1">קוד בית-ספר (חובה להצפנה בענן)
           <input id="cloudPass" type="password" class="inp" autocomplete="off" value="${E(CloudSync.passcode())}"></label>
       </div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSave">שמירת הגדרות</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">⬇️ משיכה מהענן</button>
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">☁️ סנכרן לענן כעת</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="cloudJoinLink">העתקת קישור הצטרפות לצוות</button>
       </div>`;
   },
 
@@ -3264,28 +3272,43 @@ const App = {
 
   acts: {
     async cloudSave() {
-      CloudSync.saveSettings({ url: $('cloudUrl').value, passcode: $('cloudPass').value });
-      this.renderSync();
-      this.toast('הגדרות הענן נשמרו', 'ok');
-      if (CloudSync.url()) await this.cloudRefresh(() => CloudSync.pullCloudState());
+      try {
+        CloudSync.saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+        this.renderSync();
+        this.toast('הגדרות הענן נשמרו', 'ok');
+        if (CloudSync.configured()) await this.cloudRefresh(() => CloudSync.pullCloudState());
+      } catch (e) { this.toast(`שמירת הגדרות הענן נכשלה: ${e.message}`, 'error'); }
     },
     async cloudPull() {
       if (!CloudSync.url()) return this.toast('לא הוגדרה כתובת סנכרון ענן', 'warn');
       if (CloudSync.hasUnpublished() && !confirm('יש שינויים שלא סונכרנו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
       const r = await this.cloudRefresh(() => CloudSync.pullCloudState({ force: true }));
-      if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו ויישלחו לענן אוטומטית.', 'info');
+      if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
       else if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
     },
     async cloudSync() {
-      CloudSync.saveSettings({ url: $('cloudUrl').value, passcode: $('cloudPass').value });
-      if (!CloudSync.url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
       try {
+        CloudSync.saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+        if (!CloudSync.url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
         const r = await this.cloudRefresh(() => CloudSync.pullCloudState());
-        if (!r) return;
-        await CloudSync.pushCloudState();
+        if (!r || r === 'kept-local') return;
+        const pushed = await CloudSync.pushCloudState();
+        if (pushed === 'kept-local') return;
         this.toast('הנתונים סונכרנו לענן', 'ok');
       } catch (e) { this.toast(`הסנכרון נכשל: ${e.message}`, 'error'); }
       this.renderSync();
+    },
+    async cloudForcePush() {
+      if (!confirm('דחיפה כפויה תחליף את נתוני הענן בנתונים המקומיים ותשפיע על כל הצוות. מומלץ לייצא גיבוי מקומי קודם. להמשיך?')) return;
+      const r = await this.cloudRefresh(() => CloudSync.pushCloudState({ force: true }));
+      if (r && r !== 'kept-local') this.toast('הנתונים המקומיים נשלחו לענן', 'ok');
+    },
+    async cloudJoinLink() {
+      try {
+        CloudSync.saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+        await navigator.clipboard.writeText(CloudSync.teamJoinLink());
+        this.toast('קישור ההצטרפות הועתק. יש לשתף רק בערוץ פרטי עם הצוות.', 'ok');
+      } catch (e) { this.toast(`העתקת הקישור נכשלה: ${e.message}`, 'error'); }
     },
     backupExport() { CloudSync.exportBackup(); },
     calibAdd() { this.openCalibModal(null); },

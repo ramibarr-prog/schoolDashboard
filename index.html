@@ -840,6 +840,14 @@
         <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
           <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
           <div id="cloudBody" class="space-y-3 text-sm"></div>
+          <div id="cloudConflict" class="space-y-2 text-sm text-amber-800" role="alert" hidden>
+            <p>קיימת גרסה חדשה בענן. הסנכרון האוטומטי נעצר כדי לשמור על השינויים המקומיים. בחרו כיצד להמשיך:</p>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">משיכת הנתונים החדשים מהענן</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudForcePush">דחיפה כפויה של הנתונים המקומיים</button>
+              <button type="button" class="btn btn-primary btn-sm" data-act="backupExport">ייצוא גיבוי מקומי תחילה</button>
+            </div>
+          </div>
         </div>
 
         <div class="card p-4 space-y-3 xl:col-span-2">
@@ -948,12 +956,12 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261118_19"></script>
-  <script src="js/storage.js?v=20261118_19"></script>
-  <script src="js/parser.js?v=20261118_19"></script>
-  <script src="js/bagrutEngine.js?v=20261118_19"></script>
-  <script src="js/bagrutAdvisor.js?v=20261118_19"></script>
-  <script src="js/groupAnalyzer.js?v=20261118_19"></script>
-  <script src="js/app.js?v=20261118_19"></script>
+  <script src="js/config.js?v=20261119_1"></script>
+  <script src="js/storage.js?v=20261119_1"></script>
+  <script src="js/parser.js?v=20261119_1"></script>
+  <script src="js/bagrutEngine.js?v=20261119_1"></script>
+  <script src="js/bagrutAdvisor.js?v=20261119_1"></script>
+  <script src="js/groupAnalyzer.js?v=20261119_1"></script>
+  <script src="js/app.js?v=20261119_1"></script>
 </body>
 </html>

@@ -3,181 +3,307 @@
 <meta charset="utf-8">
 <title>Cloud sync regression tests</title>
 <pre id="results">Running...</pre>
+<script>
+// Never send cloud traffic from this test page, even if saved settings exist.
+const localFetch = window.fetch.bind(window);
+window.fetch = (url, options) => {
+  const target = new URL(url, location.href);
+  if (target.origin !== location.origin) throw new Error('Outbound network blocked by tests');
+  return localFetch(target, options);
+};
+</script>
 <script src="../js/config.js"></script>
 <script src="../js/storage.js"></script>
 <script>
 (async () => {
-  const results = document.getElementById('results');
-  const nativeFetch = window.fetch;
-  const passed = [];
+  const results = document.getElementById('results'), passed = [];
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
-  const waitFor = async predicate => {
-    const deadline = Date.now() + 5000;
-    while (!predicate()) {
-      if (Date.now() > deadline) throw new Error('Timed out waiting for background sync');
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
+  const rejects = async (fn, text) => {
+    let error;
+    try { await fn(); } catch (e) { error = e; }
+    assert(error && (!text || error.message.includes(text)), 'Expected rejection: ' + text);
   };
-  let remote = null, posts = [], failPull = false, failPush = false, holdPost = null, holdPull = null;
-  window.fetch = async (url, options = {}) => {
-    if (!String(url).startsWith('https://cloud-sync.test/')) return nativeFetch(url, options);
-    if (options.method === 'POST') {
-      const body = JSON.parse(options.body);
-      posts.push(body);
-      if (holdPost) await holdPost;
-      if (failPush) return { ok: true, json: async () => ({ ok: false, error: 'Test write failure' }) };
-      remote = { ok: true, updatedAt: body.updatedAt, payload: body.payload };
-      return { ok: true, json: async () => ({ ok: true, updatedAt: body.updatedAt }) };
-    }
-    if (failPull) throw new Error('Test offline');
-    const snapshot = structuredClone(remote || { ok: true, payload: null });
-    if (holdPull) await holdPull;
-    return { ok: true, json: async () => snapshot };
-  };
+  const originalPut = Config._storePut, originalWrite = Config._write;
+  const tz = '000000123';
+  let posts = [], remote = { ok: true, rev: 0, updatedAt: 0, payload: null }, failPull = false, failPush = false, holdPull = null, holdPost = null;
+  const stopTimer = () => clearTimeout(CloudSync._timer);
   try {
     await Config.ready;
-    const storageSource = await (await nativeFetch('../js/storage.js')).text();
-    for (const [savedUrl, migrate] of [
-      ['https://script.google.com/macros/s/old-deployment/exec', true],
-      [Config.CLOUD_SYNC_URL, false],
-      ['', false],
-      ['https://cloud-sync.test/exec', false],
-      ['https://script.google.com.example.test/exec', false]
-    ]) {
-      const values = new Map([
-        ['sd.cloud.url', savedUrl],
-        ['sd.cloud.meta', JSON.stringify({ syncedAt: 999, dirty: true })]
-      ]);
-      const isolatedStorage = {
-        getItem: key => values.get(key) || null,
-        setItem: (key, value) => values.set(key, value),
-        removeItem: key => values.delete(key)
-      };
-      const sync = new Function('Config', 'localStorage', 'window', storageSource + '\nreturn CloudSync;')(
-        Config, isolatedStorage, { addEventListener() {}, dispatchEvent() {} }
-      );
-      assert(values.get('sd.cloud.url') === (migrate ? Config.CLOUD_SYNC_URL : savedUrl), 'Startup URL migration incorrect: ' + savedUrl);
-      assert(sync.url() === (migrate || !savedUrl ? Config.CLOUD_SYNC_URL : savedUrl), 'Effective URL incorrect');
-      assert(sync.meta().syncedAt === (migrate ? 0 : 999) && sync.hasUnpublished(), 'Migration lost pending edits or retained an old timestamp');
-    }
-    passed.push('Startup migrates old Google URLs, resets sync timestamps, and preserves custom URLs and pending edits');
-
-    CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', passcode: '' });
+    CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', apiToken: 'test-token', passcode: 'test-school-pass' });
+    window.fetch = async (url, options = {}) => {
+      assert(url === 'https://cloud-sync.test/exec', 'Unexpected outbound request blocked');
+      assert(options.method === 'POST' && !url.includes('token='), 'Only POST allowed');
+      const body = JSON.parse(options.body);
+      assert(body.token === 'test-token', 'Missing token');
+      posts.push(body);
+      if (body.action === 'meta') return { ok: true, json: async () => ({ ...remote, payload: undefined }) };
+      if (body.action === 'pull') {
+        if (failPull) throw new Error('Test offline');
+        const snapshot = structuredClone(remote);
+        if (holdPull) await holdPull;
+        return { ok: true, json: async () => snapshot };
+      }
+      if (holdPost) await holdPost;
+      if (failPush) return { ok: true, json: async () => ({ ok: false, error: 'Test write failure' }) };
+      if (body.baseRev !== remote.rev && !body.force) return { ok: true, json: async () => ({ ok: false, conflict: true, rev: remote.rev, updatedAt: remote.updatedAt }) };
+      remote = { ok: true, rev: remote.rev + 1, updatedAt: Date.now(), payload: body.payload };
+      return { ok: true, json: async () => ({ ok: true, rev: remote.rev, updatedAt: remote.updatedAt }) };
+    };
+    CloudSync._setMeta({ dirty: false, rev: 0, syncedAt: 0 });
     await CloudSync.pullCloudState();
-    const tz = '123456782';
-    const roster = [{ tz, firstName: 'Test', lastName: 'Student', grade: 'י', homeroom: 'י1', track: 'רגילה' }];
-    assert(Config.setRoster(roster, 'roster.csv').ok, 'Roster save failed');
+    assert(Config.setRoster([{ tz, firstName: 'Test', lastName: 'Student', grade: 'י', homeroom: 'י1', track: 'רגילה' }], 'roster.csv').ok, 'Roster save');
     for (const key of Config.DATASET_KEYS) {
-      assert((await Config.setDataset(key, [{ tz, gradeKey: 'י', score: 80 }], key + '.csv')).ok, 'Dataset save failed');
+      assert((await Config.setDataset(key, [{ tz, gradeKey: 'י', score: 80, cls: { kind: 'fail', block: true } }], key + '.csv')).ok, 'Dataset save');
     }
-    assert(Config.setRosterOverride(tz, { homeroom: 'י2' }).ok, 'Override save failed');
-    assert(Config.setSpecialEdClass('י2', true).ok, 'HNM save failed');
-    assert(Config.setException(tz, { note: 'Test note' }).ok, 'Note save failed');
-    await waitFor(() => posts.length === 1 && !CloudSync.hasUnpublished());
-    const state = JSON.parse(remote.payload.data);
-    assert(state.rosterData.data[0].tz === tz, 'Missing roster');
-    for (const key of Config.DATASET_KEYS) assert(state[key].data[0].score === 80, 'Missing ' + key);
-    assert(state.rosterOverrides[tz].homeroom === 'י2', 'Missing override');
-    assert(state.specialEdClasses['י2'] === true, 'Missing HNM class');
-    assert(state.studentMeta[tz].note === 'Test note', 'Missing note');
-    assert(!('adminToken' in posts[0]), 'Push still sends a token');
-    passed.push('Debounced full-state background upload without roles or tokens');
+    Config.setException(tz, { note: 'Local note' });
+    stopTimer();
+    await CloudSync.pushCloudState();
+    assert(!CloudSync.hasUnpublished() && CloudSync.meta().rev === 1, 'Revision not persisted');
+    assert(remote.payload.enc === 'aes2', 'Push was not aes2');
+    assert((await CloudSync.open(remote.payload)).studentMeta[tz].note === 'Local note', 'Encrypted round trip');
+    passed.push('Authenticated POST pull/push; aes2 round trip and persisted server revision');
 
-    Config.setException(tz, { note: 'Note-only change' });
-    await waitFor(() => posts.length === 2 && !CloudSync.hasUnpublished());
-    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Note-only change', 'Note-only save did not sync');
-    Config.setSpecialEdClass('י2', false);
-    await waitFor(() => posts.length === 3 && !CloudSync.hasUnpublished());
-    assert(!JSON.parse(remote.payload.data).specialEdClasses['י2'], 'HNM removal did not sync');
-    Config.removeRosterOverride(tz);
-    await waitFor(() => posts.length === 4 && !CloudSync.hasUnpublished());
-    assert(!JSON.parse(remote.payload.data).rosterOverrides[tz], 'Override removal did not sync');
-    passed.push('Independent note-only, HNM removal, and override deletion autosync');
+    CloudSync._set('pass', '');
+    await rejects(() => CloudSync.seal({}), 'קוד בית-ספר');
+    CloudSync._set('pass', 'test-school-pass');
+    await rejects(() => CloudSync.open({ enc: 'none', data: '{}' }), 'אינם מוצפנים');
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const legacy = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await CloudSync._key(CloudSync.passcode(), salt, 100000), new TextEncoder().encode('{"legacy":true}'));
+    assert((await CloudSync.open({ enc: 'aes1', salt: CloudSync._b64(salt), iv: CloudSync._b64(iv), data: CloudSync._b64(legacy) })).legacy, 'Legacy aes1 failed');
+    const independentKey = await CloudSync._key(CloudSync.passcode(), CloudSync._unb64(remote.payload.salt), 600000);
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv: CloudSync._unb64(remote.payload.iv) }, independentKey, CloudSync._unb64(remote.payload.data));
+    passed.push('Mandatory passcode; plaintext rejection; aes1 compatibility; aes2 uses 600,000 iterations');
 
-    let releasePost;
+    const state = await CloudSync.open(remote.payload);
+    remote = { ...remote, rev: 2, updatedAt: Date.now() + 1 };
+    Config.setException(tz, { note: 'Keep local' }); stopTimer();
+    CloudSync._ready = false;
+    let before = posts.filter(p => p.action === 'push').length;
+    assert(await CloudSync.pushCloudState() === 'kept-local', 'Initial pull did not preserve local');
+    assert(posts.filter(p => p.action === 'push').length === before && CloudSync.status.kind === 'conflict', 'Push followed kept-local');
+    assert(Config.getException(tz).note === 'Keep local', 'Local note lost');
+    passed.push('kept-local stops initial push and exposes conflict without overwriting');
+
+    assert(await CloudSync.pullCloudState({ force: true }) === 'applied', 'Conflict pull failed');
+    assert(Config.getException(tz).note === 'Local note' && CloudSync.meta().rev === 2, 'Pull resolution failed');
+    Config.setException(tz, { note: 'Conflict again' }); stopTimer();
+    remote.rev = 3;
+    assert(await CloudSync.pushCloudState() === 'kept-local' && CloudSync.hasUnpublished(), 'Stale baseRev was accepted');
+    await CloudSync.pushCloudState({ force: true });
+    assert(posts.at(-1).force === true && !CloudSync.hasUnpublished() && CloudSync.meta().rev === 4, 'Force resolution failed');
+    passed.push('Server conflict preserves dirty data; explicit pull and force-push resolution');
+
+    let releasePost, enteredPost;
+    const enteredUpload = new Promise(resolve => { enteredPost = resolve; });
+    const fetchBeforeHold = window.fetch;
     holdPost = new Promise(resolve => { releasePost = resolve; });
-    Config.setException(tz, { note: 'First upload' });
-    const firstPush = CloudSync.pushCloudState();
-    await waitFor(() => posts.length === 5);
-    Config.setException(tz, { note: 'Edited during upload' });
+    window.fetch = async (url, options) => {
+      if (JSON.parse(options.body).action === 'push') enteredPost();
+      return fetchBeforeHold(url, options);
+    };
+    Config.setException(tz, { note: 'First upload' }); stopTimer();
+    const uploading = CloudSync.pushCloudState();
+    await enteredUpload;
+    Config.setException(tz, { note: 'Edited during upload' }); stopTimer();
     releasePost();
-    await firstPush;
+    await uploading;
     holdPost = null;
-    assert(CloudSync.hasUnpublished(), 'Older upload cleared newer local changes');
-    await waitFor(() => posts.length === 6 && !CloudSync.hasUnpublished());
-    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Edited during upload', 'Follow-up upload missing');
-    passed.push('Changes during an upload remain pending and upload afterward');
+    assert(CloudSync.hasUnpublished(), 'Earlier upload cleared newer local edits');
+    const deadline = Date.now() + 10000;
+    while (CloudSync.hasUnpublished()) {
+      assert(Date.now() < deadline, 'Follow-up autosync timed out');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert((await CloudSync.open(remote.payload)).studentMeta[tz].note === 'Edited during upload', 'Follow-up autosync lost note');
+    window.fetch = fetchBeforeHold;
+    passed.push('Concurrent upload edits remain dirty and debounce into a follow-up encrypted upload');
+
+    const localRev = CloudSync.meta().rev;
+    remote.rev++;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await CloudSync._queue;
+    assert(CloudSync.status.kind === 'conflict' && CloudSync.meta().rev === localRev, 'Visibility meta warning incorrectly acknowledged server data');
+    let unload = new Event('beforeunload', { cancelable: true });
+    CloudSync._setMeta({ dirty: true });
+    window.dispatchEvent(unload);
+    assert(unload.defaultPrevented, 'Missing unload warning');
+    passed.push('New server revision warns without advancing local revision; dirty unload is prevented');
 
     failPush = true;
-    Config.setException(tz, { note: 'Retry me' });
-    let failed = false;
-    try { await CloudSync.pushCloudState(); } catch (e) { failed = e.message === 'Test write failure'; }
-    clearTimeout(CloudSync._timer);
-    assert(failed && CloudSync.hasUnpublished() && CloudSync.status.kind === 'error', 'Write failure was hidden or lost pending data');
+    await rejects(() => CloudSync.pushCloudState({ force: true }), 'Test write failure');
+    assert(CloudSync.hasUnpublished() && CloudSync.status.kind === 'error', 'Write error lost dirty data');
     failPush = false;
-    await CloudSync.pushCloudState();
-    assert(!CloudSync.hasUnpublished(), 'Retry did not clear pending data');
-    passed.push('Failed writes expose errors, preserve pending data, and allow retry');
-
-    const snapshot = structuredClone(remote);
-    CloudSync._suppress++;
-    Config.clearRoster();
-    await Config.clearAllData();
-    Config.data = Config.defaults();
-    Config.save();
-    CloudSync._suppress--;
-    CloudSync._setMeta({ syncedAt: 0, dirty: false });
-    const beforePull = posts.length;
-    assert(await CloudSync.pullCloudState() === 'applied', 'Fresh computer did not apply cloud state');
-    assert(Config.getRosterEntry().data[0].tz === tz && Config.getException(tz).note === 'Retry me', 'Full state was not restored');
-    for (const key of Config.DATASET_KEYS) assert(Config.getDataset(key).data.length === 1, 'Pull lost ' + key);
-    assert(posts.length === beforePull && !CloudSync.hasUnpublished(), 'Pull triggered an upload loop');
-    passed.push('Fresh-computer pull restores full state without re-uploading');
+    CloudSync._ready = false; failPull = true;
+    before = posts.filter(p => p.action === 'push').length;
+    await rejects(() => CloudSync.pushCloudState(), 'Test offline');
+    assert(posts.filter(p => p.action === 'push').length === before, 'Push followed read failure');
+    failPull = false;
+    passed.push('Failed read blocks writes; failed write exposes errors and preserves pending data');
 
     let releasePull;
     holdPull = new Promise(resolve => { releasePull = resolve; });
     const pulling = CloudSync.pullCloudState({ force: true });
     await new Promise(resolve => setTimeout(resolve, 20));
-    Config.setException(tz, { note: 'Edited during pull' });
+    Config.setException(tz, { note: 'Edited while downloading' }); stopTimer();
     releasePull();
-    assert(await pulling === 'kept-local', 'Pull overwrote a concurrent edit');
+    assert(await pulling === 'kept-local', 'Concurrent download edit overwritten');
     holdPull = null;
-    clearTimeout(CloudSync._timer);
-    assert(Config.getException(tz).note === 'Edited during pull', 'Concurrent note lost');
-    passed.push('Even a forced pull preserves edits made while downloading');
+    assert(Config.getException(tz).note === 'Edited while downloading', 'Concurrent note lost');
+    passed.push('Forced pull preserves edits made during download');
 
-    CloudSync._ready = false;
-    failPull = true;
-    failed = false;
-    const beforeOffline = posts.length;
-    try { await CloudSync.pushCloudState(); } catch (e) { failed = e.message === 'Test offline'; }
-    assert(failed && posts.length === beforeOffline, 'Upload proceeded after a failed initial pull');
-    failPull = false;
-    Config.setException(tz, { note: 'Reconnect' });
-    await waitFor(() => posts.length > beforeOffline && !CloudSync.hasUnpublished());
-    assert(JSON.parse(remote.payload.data).studentMeta[tz].note === 'Reconnect', 'New edit did not retry startup sync');
-    passed.push('Initial read failure blocks unsafe writes; the next edit retries sync');
+    const bad = structuredClone(state);
+    bad.rosterData.data[0].tz = '123';
+    bad.groupsData.data.push(null, [], 'invalid', { tz: { unexpected: true } });
+    bad.studentMeta = { '123': { note: 'Normalized', isException: 'false', reason: {} }, bad: null };
+    bad.rosterOverrides = { '123': { tz: '<script>', note: {}, hidden: 'false', homeroom: [] } };
+    const clean = sanitizeState(bad);
+    assert(clean.rosterData.data[0].tz === tz && clean.groupsData.data.length === 1, 'Rows not sanitized');
+    assert(clean.studentMeta[tz].note === 'Normalized' && !clean.studentMeta[tz].isException && clean.studentMeta[tz].reason === '', 'Metadata types invalid');
+    assert(clean.rosterOverrides[tz].tz === tz && !clean.rosterOverrides[tz].hidden && clean.rosterOverrides[tz].note === '', 'Override types invalid');
+    assert(clean.bagrutData.data[0].cls.kind === 'fail' && clean.bagrutData.data[0].cls.block, 'Blocking grade changed');
+    await rejects(() => CloudSync.applyState({ ...state, groupsData: 17 }), 'groupsData');
+    passed.push('Untrusted rows, IDs, metadata and override types sanitized; grade semantics preserved');
 
-    const cleared = { ...JSON.parse(snapshot.payload.data), rosterData: null, bagrutData: null, groupsData: null, sadinData: null };
-    remote = { ok: true, updatedAt: Date.now() + 1000, payload: { enc: 'none', data: JSON.stringify(cleared) } };
-    await CloudSync.pullCloudState({ force: true });
-    assert(Config.getRosterEntry() === null && Config.isRosterCleared(), 'Roster deletion was not applied');
-    for (const key of Config.DATASET_KEYS) assert(Config.getDataset(key) === null, 'Dataset deletion was not applied');
-    passed.push('Cloud roster and dataset deletions remove stale local files');
+    const previousData = JSON.stringify(Config.data), previousRoster = JSON.stringify(Config.getRosterEntry());
+    let previousDataset = structuredClone(Config.getDataset('groupsData'));
+    let failOnce = true;
+    Config._storePut = async function(key, entry) {
+      if (key === 'sadinData' && failOnce) { failOnce = false; return { ok: false, error: 'Test quota' }; }
+      return originalPut.call(this, key, entry);
+    };
+    const incoming = { ...state, classNicknames: { new: 'Cloud name' }, groupsData: { data: [], uploadedAt: 1, fileName: 'cloud' } };
+    await rejects(() => CloudSync.applyState(incoming), 'Test quota');
+    assert(JSON.stringify(Config.data) === previousData && JSON.stringify(Config.getRosterEntry()) === previousRoster, 'Quota failure partially committed settings/roster');
+    assert(JSON.stringify(await Config._storeGet('groupsData')) === JSON.stringify(previousDataset), 'Partial IndexedDB write not rolled back');
+    Config._storePut = originalPut;
+    passed.push('IndexedDB quota failure leaves settings/roster unchanged and restores prior datasets');
 
-    const serverSource = await (await nativeFetch('../cloud/Code.gs')).text();
-    let stored = '';
-    const file = { setContent: text => { stored = text; }, getBlob: () => ({ getDataAsString: () => stored }) };
-    const server = new Function('DriveApp', 'ContentService', 'MimeType', serverSource + '\nreturn { doPost, doGet };')(
-      { getFilesByName: () => ({ hasNext: () => !!stored, next: () => file }), createFile: () => file },
-      { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
-      { PLAIN_TEXT: 'text' }
+    let releasePut, enteredPut;
+    const entered = new Promise(resolve => { enteredPut = resolve; });
+    const hold = new Promise(resolve => { releasePut = resolve; });
+    let holdOnce = true;
+    Config._storePut = async function(key, entry) {
+      const r = await originalPut.call(this, key, entry);
+      if (holdOnce) { holdOnce = false; enteredPut(); await hold; }
+      return r;
+    };
+    const applying = CloudSync.applyState(incoming);
+    await entered;
+    Config.setException(tz, { note: 'Edited during IndexedDB' }); stopTimer();
+    assert((await Config.setDataset('groupsData', [{ tz, groupId: 'new-local-group' }], 'new-local.csv')).ok, 'Concurrent dataset save failed');
+    previousDataset = structuredClone(Config.getDataset('groupsData'));
+    stopTimer();
+    releasePut();
+    assert(await applying === 'kept-local', 'Concurrent IndexedDB edit not detected');
+    assert(Config.getException(tz).note === 'Edited during IndexedDB' && CloudSync.hasUnpublished(), 'Concurrent IndexedDB edit dropped');
+    Config._storePut = originalPut;
+    assert(JSON.stringify(await Config._storeGet('groupsData')) === JSON.stringify(previousDataset), 'Concurrent apply did not roll back');
+    passed.push('Edits during applyState awaits stay dirty and prevent the cloud commit');
+
+    let failConfigOnce = true;
+    Config._write = function(key, value) {
+      if (key === this.KEYS.config && failConfigOnce) { failConfigOnce = false; return { ok: false, error: 'Test local quota' }; }
+      return originalWrite.call(this, key, value);
+    };
+    await rejects(() => CloudSync.applyState(incoming), 'Test local quota');
+    Config._write = originalWrite;
+    assert(Config.getException(tz).note === 'Edited during IndexedDB', 'Failed config commit lost local data');
+    assert(JSON.stringify(await Config._storeGet('groupsData')) === JSON.stringify(previousDataset), 'Failed config commit left cloud datasets');
+    passed.push('Local settings commit failure rolls back datasets and in-memory settings');
+
+    const link = CloudSync.teamJoinLink();
+    const storageSource = await (await localFetch('../js/storage.js')).text();
+    const values = new Map(), testLocation = new URL(link);
+    let stripped = '';
+    const isolated = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', storageSource + '\nreturn CloudSync;')(
+      Config, Util,
+      { getItem: k => values.get(k) || null, setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k) },
+      { addEventListener() {}, dispatchEvent() {} }, { addEventListener() {} }, testLocation,
+      { replaceState: (data, title, path) => { stripped = path; } }
     );
-    const response = server.doPost({ postData: { contents: JSON.stringify({ action: 'push', updatedAt: 123, payload: snapshot.payload }) } });
-    assert(response.ok && response.updatedAt === 123, 'Password-free Apps Script push rejected');
-    assert(server.doGet({}).payload.data === snapshot.payload.data, 'Apps Script pull changed payload');
-    assert(!server.doPost({ postData: { contents: '{"action":"invalid"}' } }).ok, 'Unknown action accepted');
-    passed.push('Apps Script accepts token-free pushes and round-trips the snapshot');
+    assert(isolated.url() === CloudSync.url() && isolated.apiToken() === 'test-token' && isolated.passcode() === 'test-school-pass', 'Join link settings not restored');
+    assert(stripped === testLocation.pathname + testLocation.search, 'Join secrets left in address bar');
+    passed.push('Base64url team onboarding saves settings and immediately strips secrets from hash');
+
+    const appSource = await (await localFetch('../js/app.js')).text();
+    const ui = document.createElement('div');
+    ui.innerHTML = '<div id="cloudBody"></div><div id="syncStatus"></div><div id="cloudConflict" hidden></div>';
+    document.body.appendChild(ui);
+    const app = new Function('Util', 'Config', 'CloudSync', 'document', appSource + '\nreturn App;')(
+      Util, Config, CloudSync, { readyState: 'loading', addEventListener() {}, getElementById: id => document.getElementById(id) }
+    );
+    app.renderCloudCard();
+    assert(document.getElementById('cloudToken').type === 'password', 'Token field not masked');
+    assert(document.querySelector('[data-act="cloudJoinLink"]'), 'Missing join button');
+    CloudSync._conflict({ rev: 99 });
+    app.renderSync();
+    assert(!document.getElementById('cloudConflict').hidden, 'Conflict prompt hidden');
+    let uiPushes = 0, uiToasts = [];
+    app.cloudRefresh = async () => 'kept-local';
+    app.toast = message => uiToasts.push(message);
+    const realPush = CloudSync.pushCloudState;
+    CloudSync.pushCloudState = async () => { uiPushes++; return {}; };
+    try { await app.acts.cloudSync.call(app); } finally { CloudSync.pushCloudState = realPush; }
+    assert(uiPushes === 0 && uiToasts.length === 0, 'UI pushed or reported success after kept-local');
+    ui.remove();
+    passed.push('Settings token masking/join button/conflict prompt; UI stops after kept-local without false success');
+
+    await CloudSync.applyState({ ...state, rosterData: null, groupsData: null, bagrutData: null, sadinData: null });
+    assert(Config.getRosterEntry() === null && Config.isRosterCleared(), 'Roster deletion failed');
+    for (const key of Config.DATASET_KEYS) assert(Config.getDataset(key) === null && !(await Config._storeGet(key)), 'Dataset deletion failed');
+    passed.push('Cloud deletions persist for roster and all datasets');
+
+    const serverSource = await (await localFetch('../cloud/Code.gs')).text();
+    const props = new Map([['API_TOKEN', 'server-token']]), files = new Map(), backups = [];
+    let waited = 0, released = 0, nextId = 0;
+    const iterator = items => { let i = 0; return { hasNext: () => i < items.length, next: () => items[i++] }; };
+    const folder = { getFiles: () => iterator(backups) };
+    const file = (name, initial = '') => {
+      let stored = initial;
+      const f = {
+        getId: () => 'file-' + (++nextId), getName: () => name, getParents: () => iterator([folder]),
+        getBlob: () => ({ getDataAsString: () => stored }), setContent: text => { stored = text; },
+        makeCopy: (name, parent) => { assert(parent === folder, 'Wrong backup folder'); const copy = file(name, stored); backups.push(copy); return copy; },
+        setTrashed: value => { f.trashed = value; }
+      };
+      return f;
+    };
+    const server = new Function('DriveApp', 'ContentService', 'MimeType', 'PropertiesService', 'LockService', serverSource + '\nreturn { doPost, doGet };')(
+      {
+        getFileById: id => { if (!files.has(id)) throw new Error('File inaccessible'); return files.get(id); },
+        createFile: (name, content) => { const f = file(name, content); const id = f.getId(); f.getId = () => id; files.set(id, f); return f; },
+        getRootFolder: () => folder
+      },
+      { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
+      { PLAIN_TEXT: 'text' },
+      { getScriptProperties: () => ({ getProperty: k => props.get(k) || null, setProperty: (k, v) => props.set(k, v), setProperties: obj => Object.entries(obj).forEach(([k, v]) => props.set(k, v)) }) },
+      { getScriptLock: () => ({ waitLock: ms => { assert(ms === 20000, 'Wrong lock timeout'); waited++; }, releaseLock: () => { released++; } }) }
+    );
+    const post = body => server.doPost({ postData: { contents: JSON.stringify(body) } });
+    assert(server.doGet({}).error === 'Use POST with token', 'GET exposes data');
+    for (const action of ['meta', 'pull', 'push']) assert(post({ action }).error === 'Unauthorized', action + ' allowed missing token');
+    props.delete('API_TOKEN');
+    assert(post({ action: 'meta' }).error === 'Server token not configured', 'Missing server token accepted');
+    props.set('API_TOKEN', 'server-token');
+    const payload = { enc: 'aes2', salt: 'test', iv: 'test', data: 'test' };
+    let response = post({ action: 'push', token: 'server-token', baseRev: 0, updatedAt: 1, payload });
+    assert(response.ok && response.rev === 1 && response.updatedAt > 1 && files.size === 1 && props.get('FILE_ID'), 'Initial server push incorrect');
+    const today = new Date().toISOString().slice(0, 10);
+    backups.push(file('school-dashboard-backup-2000-01-01.json'), file('unrelated.json'));
+    assert(post({ action: 'push', token: 'server-token', baseRev: 0, payload }).conflict, 'Stale revision accepted');
+    response = post({ action: 'push', token: 'server-token', baseRev: 1, payload });
+    assert(response.rev === 2 && backups.length === 3 && backups[0].trashed && !backups[1].trashed, 'Daily backup or pruning failed');
+    assert(backups[2].getName() === 'school-dashboard-backup-' + today + '.json' && JSON.parse(backups[2].getBlob().getDataAsString()).rev === 1, 'Backup was not pre-overwrite content');
+    assert(props.get('LAST_BACKUP_DAY') === today, 'Backup day not persisted');
+    post({ action: 'push', token: 'server-token', baseRev: 0, force: true, payload });
+    assert(backups.length === 3 && files.size === 1, 'Multiple daily backups or snapshot files');
+    assert(post({ action: 'meta', token: 'server-token' }).rev === 3, 'Meta revision wrong');
+    assert(post({ action: 'pull', token: 'server-token' }).payload.data === payload.data, 'Pull changed payload');
+    props.set('FILE_ID', 'inaccessible');
+    assert(!post({ action: 'pull', token: 'server-token' }).ok && files.size === 1, 'Inaccessible configured file silently replaced');
+    assert(waited === released, 'Lock not released on every path');
+    passed.push('Apps Script: auth, POST-only reads, locks, fixed file, server clock, conflicts, daily backups and pruning');
+
     results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
     document.title = 'PASS - Cloud sync regression tests';
   } catch (e) {
@@ -185,8 +311,14 @@
     document.title = 'FAIL - Cloud sync regression tests';
     console.error(e);
   } finally {
-    clearTimeout(CloudSync._timer);
-    window.fetch = nativeFetch;
+    stopTimer();
+    Config._storePut = originalPut;
+    Config._write = originalWrite;
+    // Keep outbound traffic blocked after the tests finish.
+    window.fetch = (url, options) => {
+      if (new URL(url, location.href).origin !== location.origin) throw new Error('Outbound network blocked by tests');
+      return localFetch(url, options);
+    };
   }
 })();
 </script>
