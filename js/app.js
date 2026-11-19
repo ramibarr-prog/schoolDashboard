@@ -253,6 +253,7 @@ const App = {
     toggle('[data-sadin-only]', name === 'sadin');
     toggle('[data-bagrut-only]', name === 'bagrut');
     toggle('[data-profile-only]', name === 'profile');
+    toggle('[data-profile-exclude]', name !== 'profile');
     [['groupActions', 'groups'], ['sadinActions', 'sadin'], ['bagrutActions', 'bagrut'], ['profileSwitcher', 'profile']].forEach(([id, tab]) => {
       const el = $(id);
       if (el) el.classList.toggle('flex', name === tab);
@@ -385,7 +386,8 @@ const App = {
     if (this.state.selectedSearchTz || !Util.norm(raw) || !Store.hasData()) return this.hideSuggestions();
     const first = Util.norm(raw).toLocaleLowerCase().split(' ')[0];
     const rank = t => { const n = Util.norm(t.name).toLocaleLowerCase(); return n.startsWith(first) ? 0 : n.split(' ').some(w => w.startsWith(first)) ? 1 : 2; };
-    const students = this.filtered(false).filter(t => this.matchTrainee(t, raw)).sort((a, b) => rank(a) - rank(b));
+    const candidates = this.state.tab === 'profile' ? Store.traineeList() : this.filtered(false);
+    const students = candidates.filter(t => this.matchTrainee(t, raw)).sort((a, b) => rank(a) - rank(b));
     let groups = [];
     if (this.state.tab === 'groups' && Store.loaded.groups) groups = this.matchGroups(raw).slice(0, 5);
     const SHOWN = 8, shown = students.slice(0, SHOWN);
@@ -2279,8 +2281,9 @@ const App = {
     return [...new Set(items)];
   },
 
-  /** רשימת הניווט בכרטיס: הסדר שנראה בטבלת המקור (navOrigin.orderedTzList), ובהיעדרו החניכים שבסינון הנוכחי */
+  /** ב-360 הבחירה פתוחה לכל המצבת; מחוץ למסך נשמר סדר הניווט של טבלת המקור. */
   profileList() {
+    if (this.state.tab === 'profile') return this.sortTrainees(Store.traineeList());
     const o = this.state.navOrigin;
     const ordered = o && o.orderedTzList ? o.orderedTzList.map(tz => Store.trainees.get(tz)).filter(Boolean) : [];
     return ordered.length ? ordered : this.filtered(false);
@@ -2301,7 +2304,7 @@ const App = {
       if (sel) sel.innerHTML = '';
       setText('profName', Store.hasData() ? 'אין חניכים בסינון הנוכחי' : 'טרם נטענה מצבת חניכים');
       ['profMeta', 'profBadges', 'profBody', 'profKpis'].forEach(id => setHtml(id, ''));
-      ['profPrev', 'profNext', 'excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = true; });
+      ['excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = true; });
       this.renderProfileNav(0, 0);
       return;
     }
@@ -2313,9 +2316,6 @@ const App = {
     ['excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = false; });
 
     if (sel) sel.innerHTML = list.map(x => `<option value="${E(x.tz)}" ${x.tz === t.tz ? 'selected' : ''}>${E(Config.classLabel(x.classKey))} · ${E(x.name)}</option>`).join('');
-    const prev = $('profPrev'), next = $('profNext');
-    if (prev) prev.disabled = idx === 0;
-    if (next) next.disabled = idx === list.length - 1;
     this.renderProfileNav(idx + 1, list.length);
     setText('profName', t.name);
     setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
@@ -2570,6 +2570,7 @@ const App = {
     this.scrollToTop();
   },
 
+  /** מעבר יחסי בין חניכים ברשימת 360 (ללא כפתורים במסך; נשמר לבדיקות ולקריאות פנימיות) */
   profileStep(d) {
     const list = this.profileList();
     const i = list.findIndex(t => t.tz === this.state.profileTz) + d;
@@ -2582,7 +2583,7 @@ const App = {
       back.classList.toggle('hidden', !o);
       if (o) back.textContent = `→ חזרה ל${o.label}`;
     }
-    setText('profPos', total ? `חניך ${pos} מתוך ${total} בסינון הנוכחי` : '');
+    setText('profPos', total ? `חניך ${pos} מתוך ${total}` : '');
   },
 
   /** כפתור/Esc: דרך ההיסטוריה, כדי שמחסנית הדפדפן תישאר עקבית; popstate מבצע את החזרה בפועל */
@@ -3008,8 +3009,6 @@ const App = {
     });
 
     /* כרטיס חניך */
-    on('profPrev', 'click', () => this.profileStep(-1));
-    on('profNext', 'click', () => this.profileStep(1));
     on('profSelect', 'change', e => this.setProfile(e.target.value));
     on('excTrack', 'change', e => this.saveProfileField({ trackOverride: e.target.value }));
     on('excNote', 'change', e => this.saveProfileField({ note: e.target.value.trim() }));

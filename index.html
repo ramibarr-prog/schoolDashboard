@@ -560,13 +560,13 @@
   <!-- סרגל סינון גלובלי -->
   <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-40 shrink-0">
     <div class="px-6 py-2 flex flex-wrap items-center gap-2 text-xs">
-      <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
+      <label data-profile-exclude class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
           <option value="all">הכל</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option>
         </select></label>
-      <label class="flex items-center gap-1"><span class="text-slate-600">כיתת אם</span>
+      <label data-profile-exclude class="flex items-center gap-1"><span class="text-slate-600">כיתת אם</span>
         <select id="fHomeroom" class="inp"><option value="all">כל הכיתות</option></select></label>
-      <label class="flex items-center gap-1"><span class="text-slate-600">מסלול</span>
+      <label data-profile-exclude class="flex items-center gap-1"><span class="text-slate-600">מסלול</span>
         <select id="fTrack" class="inp">
           <option value="all">הכל</option><option value="רגילה">רגילה</option><option value="אתגר">אתגר</option><option value="מב&quot;ר">מב"ר</option><option value="חנ&quot;מ">חנ"מ</option>
         </select></label>
@@ -597,7 +597,7 @@
         </div>
         <div id="searchSuggestPopup" class="hidden" role="listbox" aria-label="הצעות חיפוש"></div>
       </div>
-      <button id="fClear" type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
+      <button id="fClear" data-profile-exclude type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
       <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1">
         <details class="relative" id="bagrutSimulation">
           <summary class="btn btn-ghost btn-sm">⚙️ סימולציית מה-אם</summary>
@@ -631,7 +631,7 @@
         <button type="button" class="btn btn-primary btn-sm" data-upload="sadinData" title="טען קובץ ציונים שוטפים (סדין)" aria-label="טען קובץ ציונים שוטפים">📂 טעינת קובץ</button>
         <input type="file" class="hidden" id="file-sadinData" data-file-input="sadinData" accept=".xlsx,.xls,.csv,.txt" multiple aria-label="קובץ ציונים שוטפים">
       </div>
-      <div id="ribbonStatus" class="flex flex-wrap items-center justify-start gap-2 mr-auto min-w-0 max-w-full">
+      <div id="ribbonStatus" data-profile-exclude class="flex flex-wrap items-center justify-start gap-2 mr-auto min-w-0 max-w-full">
         <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
         <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
         <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
@@ -684,11 +684,7 @@
     <section id="panel-profile" class="panel space-y-3" role="tabpanel" aria-labelledby="tab-profile" hidden>
       <div id="profNav" class="flex flex-wrap items-center gap-3">
         <button type="button" id="profBack" class="nav-back hidden" data-act="profBack" title="חזרה למסך הקודם (Esc)"></button>
-        <div id="profStepper" class="flex items-center gap-2" role="group" aria-label="מעבר בין חניכים">
-          <button type="button" id="profPrev" class="btn btn-ghost btn-sm" aria-label="החניך הקודם">‹ החניך הקודם</button>
-          <span id="profPos" class="text-xs font-semibold text-slate-600" role="status" aria-live="polite"></span>
-          <button type="button" id="profNext" class="btn btn-ghost btn-sm" aria-label="החניך הבא">החניך הבא ›</button>
-        </div>
+        <span id="profPos" class="sr-only" role="status" aria-live="polite"></span>
       </div>
       <div class="card px-5 py-4">
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -964,6 +960,6 @@
   <script src="js/bagrutEngine.js?v=20261119_7"></script>
   <script src="js/bagrutAdvisor.js?v=20261119_4"></script>
   <script src="js/groupAnalyzer.js?v=20261119_4"></script>
-  <script src="js/app.js?v=20261119_8"></script>
+  <script src="js/app.js?v=20261119_9"></script>
 </body>
 </html>
