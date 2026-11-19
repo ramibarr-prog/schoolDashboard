@@ -244,7 +244,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         const textual = solo({ '22283': 'לא נבחן', '22261': 'טקסט חופשי', '34221': 'פטור', '34225': 'פטור' });
         const ev = evalFull(textual);
         check(subj(ev, 'history').final === null && subj(ev, 'history').status !== 'fail', 'Unattended/free-text history must stay missing, never a numeric failure');
-        check(subj(ev, 'civics').status === 'pass', 'Exempt text ("פטור") must be handled as passed');
+        check(subj(ev, 'civics').status === 'exempt' && ev.manualReview.required && ev.tier !== 1, 'Exempt text ("פטור") in a core subject must require a coordinator decision, not grant automatic eligibility');
         noNaN(ev, 'ev');
         noNaN([BagrutAdvisor.summarize([ev]), BagrutAdvisor.summarizePace([ev])], 'advisor');
 

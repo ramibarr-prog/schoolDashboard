@@ -414,7 +414,8 @@ const Parser = (() => {
 
   /* ---------- פענוח ערכים ---------- */
   const FAIL_RE = /לא עמד|לא עבר|לא ניגש|לא הוגש|חסם|פסילה|(^|\s)ח\.?\s?ד(\s|$)/;
-  const PASS_RE = /בוצע|עמד בדרישות|עבודה עיונית|(^|[^א-ת])(עבר|עברה|השלים|השלימה|פטור)(?![א-ת])/;
+  const PASS_RE = /בוצע|עמד בדרישות|עבודה עיונית|(^|[^א-ת])(עבר|עברה|השלים|השלימה)(?![א-ת])/;
+  const EXEMPT_RE = /(^|[^א-ת])פטור(?![א-ת])/;
 
   /** סיווג ערך ציון: מספר / עבר / לא עבר-חסר / ריק. "חסם" מסומן ב-block כדי להציגו כחסם בגרות */
   function classify(v) {
@@ -423,6 +424,7 @@ const Parser = (() => {
     if (n !== null) return { kind: 'num', num: n };
     const s = String(v).trim();
     if (FAIL_RE.test(s)) return /חסם/.test(s) ? { kind: 'fail', block: true } : { kind: 'fail' };
+    if (EXEMPT_RE.test(s)) return { kind: 'pass', exempt: true };
     if (PASS_RE.test(s)) return { kind: 'pass' };
     return { kind: 'none' };
   }

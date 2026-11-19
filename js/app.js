@@ -805,9 +805,9 @@ const App = {
       return { source: 'pace', items };
     }
     if (m.benchSheet.length) return { source: 'sadin', items: GroupAnalyzer.blockingSubjects(m.benchSheet, 5) };
-    const failing = ['fail', 'lost', 'missing', 'noshow'];
+    const failing = ['fail', 'lost', 'missing', 'noshow', 'exempt'];
     const items = BAGRUT_CORE.map(([id, name]) => {
-      const cells = m.bench.rows.map(r => r.ev.cells[id]).filter(c => c && c.state !== 'noenroll');
+      const cells = m.bench.rows.map(r => this.subjectDisplayCell(r.ev, id)).filter(c => c && c.state !== 'noenroll');
       const bad = cells.filter(c => failing.includes(c.state)).length;
       return { name, enrolled: cells.length, bad, pct: cells.length ? Math.round((bad / cells.length) * 100) : 0 };
     }).filter(x => x.bad > 0).sort((a, b) => b.bad - a.bad || b.pct - a.pct).slice(0, 5);
@@ -1031,10 +1031,31 @@ const App = {
     return true;
   },
 
-  /** תג "נדרשת בדיקה ידנית" (סמלי שאלון זרים) עם פירוט בריחוף; מחרוזת ריקה כשאין סימון */
+  manualReviewLines(ev) {
+    return [...((ev.manualReview && ev.manualReview.reasons) || []), ...BagrutAdvisor.manualReviewLines(ev)];
+  },
+
+  /** תג בדיקת רכזת (פטורים / סמלי שאלון זרים) עם פירוט בריחוף */
   manualReviewBadge(ev, cls = 'badge tier-3') {
-    const lines = BagrutAdvisor.manualReviewLines(ev);
+    const lines = this.manualReviewLines(ev);
     return lines.length ? `<span class="${cls} whitespace-nowrap" title="${E(lines.join(' | '))}">🔎 נדרשת בדיקה ידנית</span>` : '';
+  },
+
+  subjectDisplayCell(ev, id) {
+    const cell = ev.cells[id], s = ev.subjects.find(s => s.id === id);
+    if (!cell || !s) return cell;
+    if (s.exempt) return { ...cell, text: 'פטור', sub: 'נדרשת החלטת רכזת', state: 'exempt', cls: 'text-amber-700 font-semibold',
+      tip: `${s.name}: פטור — נדרשת החלטת רכזת | ${s.comps.map(c => BagrutAdvisor.compTip(ev.tz, c)).join(' | ')}` };
+    if (s.incomplete) return { ...cell, text: s.earnedScore != null ? `${s.earnedScore} (חסר ${s.missingPct}%)` : `חסר ${s.missingPct}%`, state: 'missing', cls: 'score-alert',
+      tip: `${cell.tip} | ${s.earnedScore != null ? `ציון נצבר: ${s.earnedScore} · ` : ''}חסר ${s.missingPct}% — המקצוע טרם הושלם` };
+    return cell;
+  },
+
+  majorDisplayCell(ev) {
+    const exempt = ev.major.cands.find(c => c.exempt);
+    if (exempt && !ev.major.chosen) return { ...ev.majorCell, name: exempt.name, text: 'פטור', sub: 'נדרשת החלטת רכזת', state: 'exempt', cls: 'text-amber-700 font-semibold',
+      tip: `פטור במגמה (${exempt.name}) — נדרשת החלטת רכזת` };
+    return ev.majorCell;
   },
 
   /** תגי "מחשבון הפוך" לציון ה-30% החסר: מידע / 🎯 ענבר / אדום */
@@ -1272,8 +1293,8 @@ const App = {
       const value = major ? `${c.text}${c.text === 'לומד' ? ' ' : ' • '}${c.name}` :
         c.state === 'comp' ? `${c.text} ${c.sub.startsWith('פיצוי') ? 'פיצוי' : 'קיזוז'}` : c.text;
       const numeric = Number(c.text);
-      const failed = ['fail', 'lost', 'missing', 'noshow'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
-      const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
+      const failed = ['fail', 'lost', 'missing', 'noshow', 'none'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
+      const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' || c.state === 'exempt' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
         c.state === 'noenroll' || c.text === 'לומד' || c.text === '—' || c.text === 'בתהליך' ? 'text-slate-400' : 'text-slate-800 font-normal';
       return `<td class="mx-cell whitespace-nowrap" ${tip(c.tip)} tabindex="0" role="button" aria-label="${E(`${label}: ${value}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}">${E(value)}</span></td>`;
     };
@@ -1284,7 +1305,7 @@ const App = {
       const missing = cells.some(c => c.state === 'miss');
       const text = allDone ? '✓ תקין' : ev.internals.some(i => i.explicitFail) ? 'לא עבר' : missing ? 'חסר' : 'בתהליך';
       const cls = allDone ? 'text-emerald-800' : missing ? 'text-rose-800 font-bold' : 'text-slate-600';
-      const detail = ['יחידות פנימיות (שער 3)', ...cells.map(c => c.tip)].join(' | ');
+      const detail = ['מקצועות פנימיים', ...cells.map(c => c.tip)].join(' | ');
       return `<td class="whitespace-nowrap"><span class="${cls}" ${tip(detail)} tabindex="0" role="button" aria-label="${E(detail)}">${text}</span></td>`;
     };
     const focusTd = ev => {
@@ -1302,11 +1323,12 @@ const App = {
     const pill = ev => {
       let text = ev.tierText;
       if (ev.adaptive && ev.tier === 3 && !ev.manual) text += ` (חסם ${ev.blockers.filter(b => !b.info).length})`;
-      const status = !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
+      const status = ev.manualReview.required ? `<span class="badge tier-3 whitespace-nowrap" title="${E(`חישוב אוטומטי: ${text} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
+        !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
       const mr = this.manualReviewBadge(ev);
-      return `<div>${status}</div>
+      return `<div>${status}</div><div>${this.unitsBadge(ev)}</div>
         ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : ev.isPotentialException ? `<div><span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span></div>` : ''}${mr ? `<div>${mr}</div>` : ''}`;
     };
 
@@ -1318,8 +1340,8 @@ const App = {
         <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}${track && track !== 'רגילה' ? ` <span class="badge fresh-slate border">${E(track)}</span>` : ''}</span></td>
         <td>${pill(ev)}</td>
-        ${coreCols.map(([id, label]) => subjectTd(ev.cells[id], label)).join('')}
-        ${subjectTd(ev.majorCell && Object.assign({}, ev.majorCell, { units: '' }), 'מגמה 5 יח"ל')}
+        ${coreCols.map(([id, label]) => subjectTd(this.subjectDisplayCell(ev, id), label)).join('')}
+        ${subjectTd(this.majorDisplayCell(ev), 'מגמה 5 יח"ל')}
         ${internalsTd(ev)}
         ${focusTd(ev)}
       </tr>`;
@@ -1400,7 +1422,7 @@ const App = {
 
     const gates = r.gates || {};
     setHtml('rulesGates', ['core', 'major', 'internal'].map(g => `
-      <label class="flex items-center gap-2"><input type="checkbox" class="w-4 h-4" data-chg="gateToggle" data-gate="${g}" ${gates[g] && gates[g].enabled === false ? '' : 'checked'}>${E((gates[g] && gates[g].label) || g)}</label>`).join('') +
+      <label class="flex items-center gap-2"><input type="checkbox" class="w-4 h-4" data-chg="gateToggle" data-gate="${g}" ${gates[g] && gates[g].enabled === false ? '' : 'checked'}>${E(g === 'internal' ? 'מקצועות פנימיים' : (gates[g] && gates[g].label) || g)}</label>`).join('') +
       `<label class="flex items-center gap-2 text-xs">יח"ל מינימום במגמה<input type="number" min="1" max="5" class="inp w-16" data-chg="gateUnits" value="${(gates.major && gates.major.requiredUnits) || 5}"></label>`);
 
     const attrs = (kind, id, level, i) => `data-kind="${kind}" data-id="${E(id)}" data-level="${E(level)}" data-i="${i}"`;
@@ -1458,7 +1480,7 @@ const App = {
           <select class="inp" data-chg="internalGrade" data-id="${E(it.id)}">${['י', 'יא', 'יב'].map(g => `<option value="${g}" ${it.expectedGrade === g ? 'selected' : ''}>${Util.gl(g)}</option>`).join('')}</select></label>
         <button type="button" class="btn btn-danger btn-sm mr-auto" data-act="ruleRemove" data-kind="internal" data-id="${E(it.id)}">הסרה</button></div>`).join(''));
 
-    const RULE_TABS = [['core', 'שער 1 – מקצועות ליבה'], ['major', 'שער 2 – מגמות'], ['internal', 'שער 3 – יחידות פנימיות'], ['params', 'חוק קיזוז ופרמטרים']];
+    const RULE_TABS = [['core', 'שער 1 – מקצועות ליבה'], ['major', 'שער 2 – מגמות'], ['internal', 'מקצועות פנימיים'], ['params', 'חוק קיזוז ופרמטרים']];
     const tab = RULE_TABS.some(x => x[0] === this.state.rulesTab) ? this.state.rulesTab : 'core';
     setHtml('rulesTabs', RULE_TABS.map(([id, label]) => `<button type="button" role="tab" class="chip" data-act="rulesTab" data-sub="${id}" aria-selected="${tab === id}" aria-pressed="${tab === id}">${label}</button>`).join(''));
     document.querySelectorAll('[data-rules-pane]').forEach(p => { p.hidden = p.dataset.rulesPane !== tab; });
@@ -1506,7 +1528,7 @@ const App = {
       <h3 class="text-lg font-semibold mb-1">⚡ מצב חריג – ${E(t.name)}</h3>
       <p class="text-xs text-slate-500 mb-3">ת.ז ${E(t.tz)} · ${E(Config.classLabel(t.classKey))}</p>
       ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
-      ${ev.manualReview && ev.manualReview.required ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">🔎 נדרשת בדיקה ידנית – סמלי שאלון זרים:<br>${BagrutAdvisor.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}
+      ${ev.manualReview && ev.manualReview.required ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">🔎 נדרשת החלטת רכזת:<br>${this.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}
       <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${ex.isException ? 'checked' : ''}>מוחרג מחישוב אוטומטי</label>
       <label class="flex flex-col gap-1 text-sm mb-3">סטטוס מוכרע
         <select id="xmStatus" class="inp">${Config.OVERRIDE_STATUSES.map(s => `<option value="${s.value}" ${(ex.overrideStatus || 'atrisk') === s.value ? 'selected' : ''}>${E(s.label)}</option>`).join('')}</select></label>
@@ -2163,15 +2185,9 @@ const App = {
     return Number(s.units);
   },
 
-  profileUnits(tz, ev, rules) {
-    let total = ev.subjects.reduce((sum, s) => sum + (this.profileSubjectUnits(tz, s, rules.coreSubjects.find(x => x.id === s.id)) || 0), 0);
-    const groups = Store.groupsOf(tz);
-    ev.major.cands.filter(c => !c.coreId).forEach(c => {
-      const def = rules.majors.find(m => m.id === c.id);
-      const group = def && groups.find(g => !g.reinforcement && Util.matchKeywords(g.subject, def.keywords) && Number(g.units));
-      if (group) total += Number(group.units);
-    });
-    return total;
+  unitsBadge(ev) {
+    const short = ev.mode === 'full' && ev.totalUnits < 21 && ev.tier !== 0;
+    return `<span class="badge ${short ? 'tier-4' : 'fresh-slate'} whitespace-nowrap" title="${E(`יחידות שנצברו במקצועות שהושלמו; סך היחידות במסלול: ${ev.expectedUnits}`)}">${ev.totalUnits}${ev.mode === 'full' ? '/21' : ''} יח"ל</span>`;
   },
 
   profileComponents(comps, variable) {
@@ -2180,7 +2196,7 @@ const App = {
       const match = q && (q.name || '').match(/שאלון\s+([א-ת])(?:$|[\s"'׳״–-])/);
       const label = variable && comps.length > 1 ? `שאלון ${match ? `${match[1]}׳` : i + 1}: ` : '';
       const future = c.future && c.state === 'missing' && !c.failed && !c.blocked;
-      const value = c.state === 'num' ? Util.fmt(c.reportedNum ?? c.num, 1) : c.state === 'pass' ? 'עבר' : c.failed ? 'לא עבר' : future ? `עתידי ל${Util.gl(Util.GRADE_KEYS.find(g => Util.ord(g) === c.targetRank))}` : '—';
+      const value = c.state === 'num' ? Util.fmt(c.reportedNum ?? c.num, 1) : c.state === 'exempt' ? 'פטור — נדרשת החלטת רכזת' : c.state === 'pass' ? 'עבר' : c.failed ? 'לא עבר' : future ? `עתידי ל${Util.gl(Util.GRADE_KEYS.find(g => Util.ord(g) === c.targetRank))}` : '—';
       return `${label}${value} (שאלון ${c.code}${c.weight ? ` · ${c.weight}%` : ''})`;
     }).join(' | ');
     const nums = comps.filter(c => c.state === 'num');
@@ -2188,14 +2204,17 @@ const App = {
     const score = weight ? nums.reduce((sum, c) => sum + (c.reportedNum ?? c.num) * c.weight, 0) / weight :
       nums.length ? nums.reduce((sum, c) => sum + (c.reportedNum ?? c.num), 0) / nums.length : null;
     const allFuture = comps.length > 0 && comps.every(c => c.future && c.state === 'missing' && !c.failed && !c.blocked);
-    const value = score != null ? Util.fmt(score, 0) : comps.some(c => c.failed) ? 'לא עבר' : comps.some(c => c.state === 'pass') ? 'עבר' : allFuture ? '–' : '—';
-    const cls = score != null && score < Config.rules().passGrade || value === 'לא עבר' ? 'score-alert' : allFuture && score == null ? 'future-cell' : value === '—' ? 'text-slate-400' : 'text-slate-800 font-normal';
+    const exempt = comps.some(c => c.state === 'exempt');
+    const value = exempt ? 'פטור' : score != null ? Util.fmt(score, 0) : comps.some(c => c.failed) ? 'לא עבר' : comps.some(c => c.state === 'pass') ? 'עבר' : allFuture ? '–' : '—';
+    const cls = exempt ? 'text-amber-700 font-semibold' : score != null && score < Config.rules().passGrade || value === 'לא עבר' ? 'score-alert' : allFuture && score == null ? 'future-cell' : value === '—' ? 'text-slate-400' : 'text-slate-800 font-normal';
     return `<span class="whitespace-nowrap ${cls}" title="${E(detail)}">${E(value)}</span>`;
   },
 
   profileSubjectStatus(s) {
     const badge = (cls, text) => `<span class="badge ${cls} whitespace-nowrap">${E(text)}</span>`;
     const plain = (cls, text) => `<span class="${cls} whitespace-nowrap">${E(text)}</span>`;
+    if (s.exempt) return badge('tier-3', 'פטור — נדרשת החלטת רכזת');
+    if (s.incomplete) return badge('tier-4', `חסר ${s.missingPct}% — המקצוע טרם הושלם`);
     if (s.comps.some(c => c.failed)) return badge('tier-4', 'לא עבר');
     if (s.noShow && s.unresolved.some(c => !c.internal)) return badge('tier-4', 'לא ניגש');
     if (s.enrolled === false) return plain('text-slate-500', 'לא משובץ');
@@ -2289,9 +2308,9 @@ const App = {
     this.renderProfileNav(idx + 1, list.length);
     setText('profName', t.name);
     setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
-    const units = this.profileUnits(t.tz, ev, rules);
-    setHtml('profBadges', `${this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
-      <span class="badge fresh-slate" title="סכום יחידות מזוהות לפי שיבוצים או שאלונים; אינו סך זכאות רשמי">${units || '—'} יח"ל מזוהות</span>
+    setHtml('profBadges', `${ev.manualReview.required ? `<span class="badge tier-3 prof-status" title="${E(`חישוב אוטומטי: ${ev.tierText}`)}">נדרשת החלטת רכזת</span>` :
+      this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
+      ${this.unitsBadge(ev)}
       <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${this.manualReviewBadge(ev)}`);
     const cur = this.profileCurrentModel(t, ev, rules);
     this.renderProfileKpis(t, cur);
@@ -2309,7 +2328,7 @@ const App = {
       const suffix = partial && s.reportedScore != null ? ` (${s.reportedPct}%)` : s.forecast ? ' (תחזית)' : s.source === 'current' ? ' (שוטף)' : s.boosted ? ' (סימולציה)' : '';
       return `<tr><td><strong>${E(s.name)}</strong>${subjectUnits ? ` <span class="text-slate-500">· ${E(subjectUnits)} יח׳</span>` : ''}</td>
         <td>${groupText(groups)}</td><td>${this.currentCell(cur.core.get(s.id))}</td><td>${this.profileComponents(external, s.variableUnits)}</td><td>${this.profileComponents(internal, false)}</td>
-        <td>${value != null ? scoreText(value, `${Util.fmt(value, 1)}${suffix}`, !!s.compApplied) : s.allPass ? 'עבר' : '—'}</td><td>${this.profileSubjectStatus(s)}</td></tr>`;
+        <td>${s.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : s.incomplete ? `<span class="score-alert">${E(this.subjectDisplayCell(ev, s.id).text)}</span>` : value != null ? scoreText(value, `${Util.fmt(value, 1)}${suffix}`, !!s.compApplied) : s.allPass ? 'עבר' : '—'}</td><td>${this.profileSubjectStatus(s)}</td></tr>`;
     }).join('');
     const majors = ev.major.cands.filter(c => !c.coreId);
     const majorRows = majors.map(c => {
@@ -2317,16 +2336,17 @@ const App = {
       const groups = def ? groupsFor(def.keywords) : [];
       const units = groups.find(g => g.units);
       const codes = def ? def.codes.filter(code => Store.bagrutBest(t.tz, [code])) : [];
-      const status = c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && !c.missing.length && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
+      const status = c.exempt ? '<span class="badge tier-3">פטור — נדרשת החלטת רכזת</span>' : c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && !c.missing.length && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
       const value = c.adj != null ? c.adj : c.bagrut;
       const detail = c.adj != null ? (c.forecast ? 'תחזית' : c.source === 'current' ? 'שוטף' : '') : c.bagrut != null ? 'חלקי' : c.missing.length ? 'חלקי' : '';
       return `<tr><td><strong>${E(c.name)}</strong>${units ? ` <span class="text-slate-500">· ${E(units.units)} יח׳</span>` : ''}</td><td>${groupText(groups)}</td><td>${this.currentCell(cur.majors.get(c.id))}</td>
-        <td title="${E(codes.length ? `שאלונים: ${codes.join(', ')}` : '')}">${c.bagrut != null ? scoreText(c.bagrut) : c.bagrutPass ? 'עבר' : '—'}</td><td class="text-slate-400">—</td><td>${value != null ? scoreText(value, detail) : c.bagrutPass ? `<span title="${E(detail)}">עבר</span>` : '—'}</td><td>${status}</td></tr>`;
+        <td title="${E(codes.length ? `שאלונים: ${codes.join(', ')}` : '')}">${c.bagrut != null ? scoreText(c.bagrut) : c.exempt ? 'פטור' : c.bagrutPass ? 'עבר' : '—'}</td><td class="text-slate-400">—</td><td>${c.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : value != null ? scoreText(value, detail) : c.bagrutPass ? `<span title="${E(detail)}">עבר</span>` : '—'}</td><td>${status}</td></tr>`;
     });
     /* מקצועות נוספים מהסדין / מקבוצות הלימוד: מוצגים כאן כדי שכל מקצוע שנספר ב-KPI נראה גם בטבלה */
     const extraRows = cur.extras.map(x => `<tr><td><strong>${E(x.name)}</strong> <span class="text-[11px] text-slate-500">מקצוע נוסף</span></td><td>${groupText(x.groups)}</td><td>${this.currentCell(x)}</td>
         <td class="text-slate-400">—</td><td class="text-slate-400">—</td><td class="text-slate-400">—</td><td><span class="text-slate-500">${x.groups.length ? 'לומד' : 'ללא שיבוץ'}</span></td></tr>`);
-    const g2 = [...majorRows, ...extraRows].join('') || `<tr><td colspan="7" class="text-slate-500">${ev.major.chosen && ev.major.chosen.coreId ? 'מקצוע מורחב נכלל במקצועות הליבה' : 'לא נמצאה מגמת בחירה'}</td></tr>`;
+    const missingMajor = ev.blockers.some(b => b.k === 'major-none') ? '<tr><td colspan="7" class="score-alert">ללא מגמה — חסר מקצוע מורחב 5 יח"ל</td></tr>' : '';
+    const g2 = missingMajor + [...majorRows, ...extraRows].join('') || `<tr><td colspan="7" class="text-slate-500">${ev.major.chosen && ev.major.chosen.coreId ? 'מקצוע מורחב נכלל במקצועות הליבה' : 'לא נמצאה מגמת בחירה'}</td></tr>`;
     const g3 = ev.internals.map(i => {
       const label = i.id === 'pe' ? 'חינוך גופני' : i.name;
       const cls = i.explicitFail ? 'badge tier-4' : i.done || i.exempt ? 'text-emerald-700 font-semibold' : 'text-slate-500';
@@ -2342,7 +2362,10 @@ const App = {
     const eventsRows = events.map(x => `<tr><td>${E(x.date || '—')}</td><td>${E(x.subj)}</td><td>${E(x.eventName)}</td><td>${x.weight}</td>
       <td class="${x.score == null || x.score === 0 ? 'text-amber-600' : x.score < rules.passGrade ? 'text-red-600 font-semibold' : ''}">${x.score == null ? 'חסר' : x.score}</td></tr>`).join('');
     const attRows = Store.attemptsOf(t.tz).sort((a, b) => natural(a.code, b.code) || natural(a.moed, b.moed)).map(a => {
-      const cls = a.cls.kind === 'num' ? (a.cls.num >= rules.passGrade ? ['text-emerald-700 font-semibold', '✓ עבר'] : ['badge tier-4', 'נכשל']) : a.cls.kind === 'pass' ? ['text-emerald-700 font-semibold', '✓ עבר'] : a.cls.kind === 'fail' ? ['badge tier-4', 'לא עבר'] : ['text-slate-500', '—'];
+      const exempt = a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt;
+      const internal = rules.internals.some(i => i.codes.includes(a.code));
+      const cls = exempt ? (internal ? ['text-emerald-700 font-semibold', '✓ פטור'] : ['badge tier-3', 'פטור — נדרשת החלטת רכזת']) :
+        a.cls.kind === 'num' ? (a.cls.num >= rules.passGrade ? ['text-emerald-700 font-semibold', '✓ עבר'] : ['badge tier-4', 'נכשל']) : a.cls.kind === 'pass' ? ['text-emerald-700 font-semibold', '✓ עבר'] : a.cls.kind === 'fail' ? ['badge tier-4', 'לא עבר'] : ['text-slate-500', '—'];
       return `<tr><td>${a.code}</td><td class="text-xs">${E((rules.questionnaires[a.code] || {}).name || '')}</td><td>${E(a.subject)}</td>
         <td>${E(a.submission || '—')}</td><td>${E(a.exam || '—')}</td><td class="font-medium">${E(a.final || '—')}</td><td>${E(a.moed || '—')}</td><td><span class="${cls[0]}">${cls[1]}</span></td></tr>`;
     }).join('');
@@ -2375,7 +2398,7 @@ const App = {
         </div>
         <div class="lg:col-span-4 space-y-3">
           <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${paceLine}${focusHtml}${this.advisoryHtml(ev)}</div></div>
-          <div class="card p-3"><h3 class="font-bold mb-2">שער 3 – יחידות פנימיות</h3><ul class="space-y-1.5 text-xs">${g3}</ul></div>
+          <div class="card p-3"><h3 class="font-bold mb-2">מקצועות פנימיים</h3><ul class="space-y-1.5 text-xs">${g3}</ul></div>
         </div>
       </div>
       <details id="profile-more" class="card p-3" ${detailsOpen ? 'open' : ''}>

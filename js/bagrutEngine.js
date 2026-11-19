@@ -201,12 +201,22 @@ const BagrutEngine = (() => {
     return list.length > 1 && w > 0 && w <= 30 && w < Math.max(...weights);
   }
 
+  /* Store שומר "עבר" בלי דגל פטור; גם קבצים שנשמרו לפני הוספת הדגל מזוהים לפי הטקסט המקורי. */
+  function bestResult(tz, codes) {
+    const best = Store.bagrutBest(tz, codes);
+    if (!best || best.kind !== 'pass') return best;
+    const set = new Set(codes.map(Util.normQuestionnaireCode));
+    const passes = Store.attemptsOf(tz).filter(a => set.has(Util.normQuestionnaireCode(a.code)) && a.cls.kind === 'pass');
+    const exempt = passes.length > 0 && passes.every(a => a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt);
+    return { ...best, exempt };
+  }
+
   /**
    * ציון הרכיב הגבוה ביותר מבין כל הניסיונות ושאלונים חלופיים (Store.bagrutBest).
    * ציון בחינה ללא ציון הגשה (מגן): בתחזית משוטף משלימים את המגן מהציון השוטף (50%/50%).
    */
   function resolveComp(tz, comp, ctx, siblings, cur, scope) {
-    const b = Store.bagrutBest(tz, comp.codes);
+    const b = bestResult(tz, comp.codes);
     const code = codeOfComp(comp, b);
     const ord = compOrd(comp, b);
     const internal = isInternalComp(comp, siblings || [comp]);
@@ -227,18 +237,18 @@ const BagrutEngine = (() => {
       }
       return { ...base, state: 'num', num: b.num };
     }
-    if (b && b.kind === 'pass') return { ...base, state: 'pass' };
+    if (b && b.kind === 'pass') return { ...base, state: b.exempt ? 'exempt' : 'pass' };
     return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block) };
   }
 
   /**
-   * "מחשבון הפוך": כשיש ציון בחינה חיצוני אך ציון ה-30% (או 20%) טרם הועלה, מחשב את הציון המינימלי
-   * הנדרש ברכיב הפנימי כדי שציון המקצוע יעמוד בסף (ציון עובר פחות חצי, כלומר 54.5):
+   * "מחשבון הפוך": כשיש רכיב מספרי ורכיב חסר, מחשב את הציון המינימלי
+   * הנדרש ברכיב החסר כדי שציון המקצוע יעמוד בסף (ציון עובר פחות חצי, כלומר 54.5):
    *   required = ceil((54.5 - externalScore × W_ext) / W_int)
    */
   function reverseCalc(res, ctx) {
     const missing = res.unresolved.concat(res.pending);
-    if (!missing.length || !missing.every(u => u.internal && !u.failed)) return null;
+    if (!missing.length || !missing.every(u => !u.failed && !u.blocked)) return null;
     const resolved = res.comps.filter(c => c.state === 'num');
     if (!resolved.length || resolved.length + missing.length !== res.comps.length) return null;
     const pass = ctx.rules.passGrade;
@@ -315,7 +325,7 @@ const BagrutEngine = (() => {
       critical: !!subj.critical || (rules.compensationExcludedSubjects || []).includes(subj.name),
       comps: [], current: cur, currentWarn: ci.warn, final: null, adj: null, source: 'none', allPass: false,
       boosted: false, forecast: false, unresolved: [], pending: [], filled: [], enrolled: null, status: 'nodata',
-      partial: null, group: null, learning: false, noShow: false
+      partial: null, incomplete: false, earnedScore: null, missingPct: 0, exempt: false, group: null, learning: false, noShow: false
     };
     const grp = Store.groupsOf(tz).find(g => !g.reinforcement && Util.matchKeywords(g.subject, subj.keywords));
     if (grp) res.group = { groupId: grp.groupId, subject: grp.subject, teacher: grp.teacher };
@@ -326,6 +336,7 @@ const BagrutEngine = (() => {
       res.comps.push(r);
       if (r.state === 'num') { sum += r.num * r.weight; w += r.weight; }
       else if (r.state === 'pass') nPass++;
+      else if (r.state === 'exempt') res.exempt = true;
       else if (r.due) {
         /* כישלון או חסם שדווחו בפועל אינם מתמלאים בציון שוטף */
         if (ctx.useCurrent && cur != null && !r.failed && !r.blocked) { sum += cur * r.weight; w += r.weight; res.filled.push(r); }
@@ -338,6 +349,12 @@ const BagrutEngine = (() => {
     const reportedWeight = reported.reduce((a, c) => a + c.weight, 0);
     res.reportedScore = reportedWeight ? reported.reduce((a, c) => a + (c.reportedNum ?? c.num) * c.weight, 0) / reportedWeight : null;
     res.reportedPct = totalW ? Math.round(reportedWeight / totalW * 100) : 0;
+    const missingDue = res.unresolved.concat(res.pending.filter(c => c.targetRank <= ctx.rank));
+    res.incomplete = ctx.mode === 'full' && (reported.length > 0 || nPass > 0) && missingDue.length > 0 && !res.exempt;
+    if (res.incomplete && totalW > 0) {
+      res.earnedScore = reported.length ? Math.round(sum / totalW) : null;
+      res.missingPct = Math.round(missingDue.reduce((a, c) => a + c.weight, 0) / totalW * 100);
+    }
     const hasPending = !res.unresolved.length && res.pending.length > 0;
     if (res.unresolved.length) res.final = null;
     else if (w > 0) {
@@ -355,7 +372,9 @@ const BagrutEngine = (() => {
     /* ציון סופי מעוגל: 44.5–54.5 קיזוז, 4.5–44.5 ציון נמוך (פיצוי נקודות), ומ-54.5 עובר */
     const rv = v == null ? null : Math.round(v);
     const pc = Config.pointsCompensation();
-    if (res.unresolved.length) res.status = 'missing';
+    if (res.exempt) res.status = 'exempt';
+    else if (res.unresolved.length) res.status = 'missing';
+    else if (res.incomplete) res.status = 'await';
     else if (res.partial && res.final != null && res.source === 'bagrut') {
       /* חלק מהרכיבים טרם דווח: שופטים לפי מה שהושלם. ציון חלקי מ-54.5 מספיק; אחרת "ממתין", או נכשל כשגם 100 ברכיב החסר לא יציל */
       const maxPossible = totalW ? (sum + 100 * res.pending.reduce((a, c) => a + c.weight, 0)) / totalW : 100;
@@ -388,6 +407,11 @@ const BagrutEngine = (() => {
     subjects.forEach(s => addCompensationTip(s, ctx, compUsed));
 
     subjects.forEach((s, i) => {
+      if (s.exempt) B.push({ gate: 1, k: 'exempt-review', hard: true, text: `פטור במקצוע חובה (${s.name}) — דורש החלטת רכזת` });
+      if (s.incomplete && !s.unresolved.length) {
+        B.push({ gate: 1, k: 'partial-missing', hard: true, miss: true, inner: s.pending.every(c => c.internal),
+          text: `${s.missingPct}% ב${s.name}${s.earnedScore != null ? ` (${s.earnedScore} נצברו)` : ''}` });
+      }
       if (!full && ctx.hasGroups && groupsLoadedFor(active[i].keywords, ctx.gradeKey)) {
         s.enrolled = Store.groupsOf(tz).some(g => !g.reinforcement && Util.matchKeywords(g.subject, active[i].keywords));
         if (!s.enrolled) { B.push({ gate: 1, k: 'enroll', hard: true, text: `חסר שיבוץ לקבוצת ${s.name}` }); return; }
@@ -467,7 +491,7 @@ const BagrutEngine = (() => {
          משקל כל חלק נקבע ב-m.weights (קוד ראשון ← משקל) ובברירת מחדל שווה */
       const parts = (m.codeMode === 'any' ? [m.codes] : m.codes.map(code => [code])).map(codes => {
         const w = Number(m.weights && m.weights[codes[0]]);
-        const found = codes.map(code => Store.bagrutBest(tz, [code]));
+        const found = codes.map(code => bestResult(tz, [code]));
         const nums = found.filter(b => b && b.kind === 'num').map(b => b.num);
         const hasPartAttempt = found.some(b => b && b.kind !== 'none');
         const timing = resolveTiming({
@@ -476,17 +500,23 @@ const BagrutEngine = (() => {
         });
         return {
           codes, w: w > 0 ? w : 1, nums, num: nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null,
-          pass: found.some(b => b && b.kind === 'pass'), fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), due: timing.due
+          pass: found.some(b => b && b.kind === 'pass' && !b.exempt),
+          exempt: !nums.length && found.some(b => b && b.exempt) && !found.some(b => b && b.kind === 'pass' && !b.exempt),
+          fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), due: timing.due
         };
       });
       const nums = parts.filter(p => p.num != null);
       const passes = parts.filter(p => p.num == null && p.pass);
+      const exempt = parts.some(p => p.exempt);
       const blocked = parts.find(p => p.block && p.num == null && !p.pass);
-      const missing = parts.filter(p => p.num == null && !p.pass && p.due);
-      if (!enrolled && !nums.length && !passes.length) return;
+      const missing = parts.filter(p => p.num == null && !p.pass && !p.exempt && p.due);
+      if (!enrolled && !nums.length && !passes.length && !exempt) return;
       const sumW = list => list.reduce((a, p) => a + p.w, 0);
       const cur = enrolled ? currentInfo(tz, m.keywords).value : null;
-      const c = { id: m.id, name: m.name, enrolled, bagrut: null, bagrutPass: passes.length > 0, failed: parts.some(p => p.fail && p.num == null && !p.pass), current: cur, grade: null, source: 'none', status: 'nodata', forecast: false, missing: missing.map(p => p.codes.join('/')), blocked: blocked ? blocked.codes[0] : '' };
+      const group = Store.groupsOf(tz).find(g => !g.reinforcement && Util.matchKeywords(g.subject, m.keywords) && Number(g.units));
+      const c = { id: m.id, unitSubjectId: m.coreId || m.id, name: m.name,
+        units: Number(m.units) || (group && Number(group.units)) || requiredUnits, complete: parts.every(p => p.num != null || p.pass), exempt,
+        enrolled, bagrut: null, bagrutPass: passes.length > 0, failed: parts.some(p => p.fail && p.num == null && !p.pass), current: cur, grade: null, source: 'none', status: 'nodata', forecast: false, missing: missing.map(p => p.codes.join('/')), blocked: blocked ? blocked.codes[0] : '' };
       if (nums.length) {
         const numSum = nums.reduce((a, p) => a + p.num * p.w, 0);
         c.bagrut = numSum / sumW(nums);
@@ -503,6 +533,10 @@ const BagrutEngine = (() => {
         c.adj = v;
         c.status = Math.round(v) >= rules.passGrade ? 'pass' : 'fail';
       }
+      if (exempt) {
+        c.status = 'exempt';
+        B.push({ gate: 2, k: 'exempt-review', hard: true, text: `פטור במגמה (${m.name}) — דורש החלטת רכזת` });
+      }
       /* רשום למגמה ועדיין אין ציון שנדרש כעת: "לומד" (לא חסם) */
       if ((!full || ctx.adaptive) && c.status === 'nodata' && enrolled) c.status = 'pending';
       cands.push(c);
@@ -514,7 +548,7 @@ const BagrutEngine = (() => {
       if (!def || s.id === 'english' || def.majorEligible !== true) return;
       if (!(Number(s.units) >= requiredUnits) || !['pass', 'comp', 'severe', 'fail'].includes(s.status)) return;
       cands.push({
-        id: `core-${s.id}`, coreId: s.id, name: `${s.name} ${s.units} יח"ל`, enrolled: true, bagrut: s.final, current: s.current,
+        id: `core-${s.id}`, coreId: s.id, name: `${s.name} ${s.units} יח"ל`, units: Number(s.units), enrolled: true, bagrut: s.final, current: s.current,
         grade: s.adj, adj: s.adj, source: s.source, status: s.status === 'pass' ? 'pass' : 'fail', forecast: s.forecast, missing: [], blocked: ''
       });
     });
@@ -529,6 +563,7 @@ const BagrutEngine = (() => {
       const soft = failing.source === 'current' && ctx.adaptive;
       B.push({ gate: 2, k: 'major-fail', hard: !soft, watch: soft, grade: failing.adj, text: `מגמה ${failing.name} ${failing.source === 'current' ? 'שוטף ' : ''}(${rnd(failing.adj)})` });
     }
+    else if (cands.some(c => c.exempt)) { /* הפטור כבר מסומן להכרעת רכזת */ }
     else if (cands.length) {
       const first = cands.find(c => c.missing.length) || cands[0];
       B.push({ gate: 2, k: 'major-missing', hard: full && (ctx.strict || !first.enrolled), miss: true, text: first.missing.length ? `שאלון ${first.missing.join('/')} במגמה ${first.name}` : `ציון מגמה (${first.name})` });
@@ -552,7 +587,7 @@ const BagrutEngine = (() => {
     const full = ctx.mode === 'full';
     const scienceMajors = scienceMajorCount(rules, majorCands);
     return rules.internals.filter(it => it.enabled !== false).map(it => {
-      const b = Store.bagrutBest(tz, it.codes);
+      const b = bestResult(tz, it.codes);
       const ord = Util.ord(it.expectedGrade) || 12;
       const expDue = full ? ord <= ctx.ord : ord < ctx.ord;
       /* צפי מותאם: יחידה פנימית שהשכבה טרם קיבלה בה ציונים (מתחת לסף הדיווח) אינה חוסר – "בתהליך השנה" */
@@ -561,22 +596,22 @@ const BagrutEngine = (() => {
       const social = it.scale === '1-4' || it.id === 'social';
       const done = !!b && (b.kind === 'pass' || (b.kind === 'num' && ((social && b.num >= 2 && b.num <= 4) || b.num >= rules.passGrade)));
       const explicitFail = !!b && (b.kind === 'fail' || (social && b.kind === 'num' && (b.num === 1 || b.num === 0)));
-      const res = { id: it.id, name: it.name, required, pending: !required && !done, done, explicitFail, value: b ? (b.kind === 'num' ? b.num : b.kind) : null, ignored: false, exempt: false,
+      const res = { id: it.id, name: it.name, required, pending: !required && !done, done, explicitFail, value: b ? (b.kind === 'num' ? b.num : b.kind) : null, ignored: false, exempt: !!(b && b.exempt),
         inGroup: !!(it.groupKeywords && it.groupKeywords.length && Store.groupsOf(tz).some(g => Util.matchKeywords(g.subject, it.groupKeywords))) };
       if (!required || done) return res;
       if ((it.exemptWithScienceMajors ?? it.id === 'science') && scienceMajors >= 2) { res.exempt = true; return res; }
       /* המתג בסימולטור מתעלם מכל יחידות שער 3, ללא תלות בהגדרה פרטנית */
       if (ctx.ignoreInternals) { res.ignored = true; return res; }
       /* יחידה פנימית שמועדה הגיע וחסרה היא חסם קשה (גם במצב המותאם, אלא אם החניך לומד אותה השנה) */
-      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `חסם בגרות – ${it.name}` });
-      else B.push({ gate: 3, k: 'internal', hard: ctx.strict || !res.inGroup, miss: true, inGroup: res.inGroup, text: `ציון ${it.name}${res.inGroup ? ' (בלימוד)' : ''}` });
+      if (b && b.block) B.push({ gate: 3, k: 'bagrut-block', hard: true, text: `חסם מקצועות פנימיים – ${it.name}` });
+      else B.push({ gate: 3, k: 'internal', hard: ctx.strict || !res.inGroup, miss: true, inGroup: res.inGroup, text: `מקצועות פנימיים – ציון ${it.name}${res.inGroup ? ' (בלימוד)' : ''}` });
       return res;
     });
   }
 
   /**
    * חוזר מנכ"ל – פיצוי נקודות: חניך עם מקצוע אחד בלבד בציון 5–44 (לא עברית) זכאי אם יש לו שני מקצועות עוברים
-   * של 3+ יח"ל שסכום ציוניהם עומד בסקאלה לפי סכום היחידות שלהם (טבלה ב-Config.pointsCompensation().table).
+   * של 3 יח"ל ומעלה שסכום ציוניהם עומד בסקאלה לפי סכום היחידות שלהם (טבלה ב-Config.pointsCompensation().table).
    * רץ אחרי שער 2, כי המגמה שנבחרה נכללת ברשימת המקצועות המשתתפים. מסיר את חסם "ציון נמוך" כשהפיצוי מתקיים.
    */
   function applyPointsCompensation(B, subjects, major, ctx, notes) {
@@ -607,7 +642,7 @@ const BagrutEngine = (() => {
       notes.push(`פיצוי נקודות חוזר מנכ"ל: ${s.name} ${rnd(s.adj)} מפוצה ב-${best.a.name} ${best.a.grade} + ${best.b.name} ${best.b.grade} = ${best.sum} (נדרש ${best.req})`);
       ctx.compensation = { type: 'points', subject: s.name, grade: s.adj, sum: best.sum, required: best.req };
     } else {
-      blocker.text += best ? ` – סכום הנקודות ${best.sum} נמוך מהנדרש ${best.req}` : ' – אין שני מקצועות של 3+ יח"ל שעברו לפיצוי נקודות';
+      blocker.text += best ? ` – סכום הנקודות ${best.sum} נמוך מהנדרש ${best.req}` : ' – אין שני מקצועות של 3 יח"ל ומעלה שעברו לפיצוי נקודות';
     }
   }
 
@@ -623,11 +658,11 @@ const BagrutEngine = (() => {
     const items = [];
     if (gateOn(1)) {
       subjects.forEach(s => s.comps.forEach(c => {
-        const has = c.state === 'num' || c.state === 'pass' || !!c.failed || !!c.blocked;
+        const has = c.state === 'num' || c.state === 'pass' || c.state === 'exempt' || !!c.failed || !!c.blocked;
         const score = c.state === 'num' ? (c.reportedNum ?? c.num) : null;
         items.push({
           subject: s.name, code: c.code || c.codes[0], has, score,
-          failed: !!c.failed || !!c.blocked || (c.state === 'num' && score < pass),
+          review: c.state === 'exempt', failed: !!c.failed || !!c.blocked || (c.state === 'num' && score < pass),
           due: !!c.due, future: !!c.future, active: !!c.due, missing: !!c.due && !has
         });
       }));
@@ -637,21 +672,24 @@ const BagrutEngine = (() => {
     const active = items.filter(it => it.active);
     const failed = items.filter(it => it.failed);
     const missing = items.filter(it => it.missing);
+    const review = items.filter(it => it.review);
     const label = it => `${it.subject} (שאלון ${it.code})`;
     return {
       isSenior: rank >= 12, rank,
       dueCount: active.length,
-      passedDueCount: active.filter(it => it.has && !it.failed).length,
+      passedDueCount: active.filter(it => it.has && !it.failed && !it.review).length,
       failedActualCount: failed.length,
+      reviewCount: review.length,
       missingDueList: missing.map(it => ({ subject: it.subject, code: it.code, label: label(it) })),
       futureCount: items.filter(it => it.future).length,
       failedList: failed.map(it => ({ subject: it.subject, code: it.code, label: label(it), score: it.score })),
       focus: [
+        ...review.map(it => ({ text: `פטור ב${it.subject} (שאלון ${it.code}) — דורש החלטת רכזת`, hard: true })),
         ...failed.map(it => ({ text: `נכשל ב${it.subject} (שאלון ${it.code}${it.score != null ? ` · ${Math.round(it.score)}` : ''})`, hard: true })),
         ...missing.map(it => ({ text: `חסר שאלון ${it.code} ב${it.subject}`, hard: false }))
       ],
       /* חוסמים לפי מקצוע: כשלים בפועל ושאלונים חסרים שמועדם הגיע – שאלונים עתידיים אינם נספרים */
-      blockedSubjects: [...new Set([...failed, ...missing].map(it => it.subject))],
+      blockedSubjects: [...new Set([...failed, ...missing, ...review].map(it => it.subject))],
       subjects: [...new Set(items.map(it => it.subject))]
     };
   }
@@ -660,7 +698,7 @@ const BagrutEngine = (() => {
     if (noBagrut) return 'no_data';
     if (pi.isSenior) return SENIOR_STATUS[tier] || 'no_data';
     if (pi.dueCount === 0 && pi.failedActualCount === 0) return 'not_started';
-    const blocks = pi.failedActualCount + pi.missingDueList.length;
+    const blocks = pi.failedActualCount + pi.missingDueList.length + pi.reviewCount;
     if (blocks === 0) return 'on_track';
     return blocks === 1 ? 'pace_warning' : 'pace_lag';
   }
@@ -753,8 +791,8 @@ const BagrutEngine = (() => {
   /**
    * סמלי שאלון זרים: ניסיונות בגרות שדווחו לחניך ואינם מוגדרים בפרופיל השכבה שלו ברמת היח"ל שלו.
    * סיבות: immigrant (שאלון עולים / מותאם), other-level (סמל של רמת יח"ל אחרת באותו מקצוע),
-   * other-cohort (סמל שמוגדר רק בפרופיל של מחזור אחר), unlisted-code (סמל לא מוכר תחת שם מקצוע ליבה).
-   * סמל שאינו משויך לאף מקצוע (למשל חינוך תעבורתי) אינו נחשב זר. פונקציה טהורה: קוראת בלבד, אינה משנה את הצפי.
+   * other-cohort (סמל שמוגדר רק בפרופיל של מחזור אחר), unlisted-code (סמל שאינו מוכר בכללים או בקטלוג).
+   * פונקציה טהורה: קוראת בלבד, אינה משנה את הצפי.
    */
   function detectForeignCodes(tz, ctx) {
     const attempts = Store.attemptsOf(tz);
@@ -796,7 +834,7 @@ const BagrutEngine = (() => {
       if (immigrant.has(code)) hit = { reason: 'immigrant', subjectId: bySubject ? bySubject.id : '', subject: bySubject ? bySubject.name : '' };
       else if (otherLevel.has(code)) { const e = otherLevel.get(code); hit = { reason: 'other-level', subjectId: e.s.id, subject: e.s.name, level: e.levels.join('/') }; }
       else if (otherCohort.has(code)) { const e = otherCohort.get(code); hit = { reason: 'other-cohort', subjectId: e.subjectId, subject: e.subject, cohort: e.cohort }; }
-      else if (bySubject) hit = { reason: 'unlisted-code', subjectId: bySubject.id, subject: bySubject.name };
+      else if (!(rules.questionnaires || {})[code]) hit = { reason: 'unlisted-code', subjectId: bySubject ? bySubject.id : '', subject: bySubject ? bySubject.name : a.subject || '' };
       if (!hit) return;
       const kind = (a.cls && a.cls.kind) || 'none', num = kind === 'num' ? a.cls.num : null;
       const prev = found.get(code);
@@ -844,8 +882,8 @@ const BagrutEngine = (() => {
       if (!comps.length) return false;
       let numSum = 0, numW = 0, nPass = 0;
       for (const c of comps) {
-        const b = Store.bagrutBest(tz, c.codes), weight = Number(c.weight);
-        if (!b || b.kind === 'none' || b.block || b.kind === 'fail') return false;
+        const b = bestResult(tz, c.codes), weight = Number(c.weight);
+        if (!b || b.kind === 'none' || b.block || b.kind === 'fail' || b.exempt) return false;
         if (b.kind === 'num') {
           if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(b.num)) return false;
           numSum += b.num * weight; numW += weight;
@@ -867,6 +905,29 @@ const BagrutEngine = (() => {
     return Config.withRulesForGrade(t.gradeKey, () => evaluateWithRules(tz, t, userOpts));
   }
 
+  /** המקצוע ברמה שנבחרה הושלם ועבר בפועל: כל רכיביו דווחו בבגרות, ללא פטור, תחזית או קיזוז */
+  const passedClean = s => !!s && s.status === 'pass' && s.source === 'bagrut' && !s.forecast && !s.compApplied &&
+    s.comps.length > 0 && s.comps.every(c => c.state === 'num' || c.state === 'pass');
+
+  function countUnits(subjects, major) {
+    const earned = new Map(), expected = new Map();
+    subjects.forEach(s => {
+      const units = Number(s.units) || 0;
+      expected.set(s.id, units);
+      if ((s.status === 'pass' || s.compApplied) && !s.exempt && !s.forecast && s.source === 'bagrut' &&
+          s.comps.length && s.comps.every(c => c.state === 'num' || c.state === 'pass')) earned.set(s.id, units);
+    });
+    major.cands.forEach(c => {
+      const id = c.coreId || c.unitSubjectId || c.id, units = Number(c.units) || 0;
+      expected.set(id, Math.max(expected.get(id) || 0, units));
+      if (c.status === 'pass' && c.complete && !c.exempt && !c.forecast && c.source === 'bagrut') {
+        earned.set(id, Math.max(earned.get(id) || 0, units));
+      }
+    });
+    const sum = map => [...map.values()].reduce((a, b) => a + b, 0);
+    return { totalUnits: sum(earned), expectedUnits: sum(expected) };
+  }
+
   function evaluateWithRules(tz, t, userOpts) {
     const opts = normalizeOpts(userOpts);
     const ctx = buildCtx(t, opts);
@@ -876,10 +937,14 @@ const BagrutEngine = (() => {
     const major = gate2(tz, ctx, B, subjects);
     applyPointsCompensation(B, subjects, major, ctx, notes);
     const internals = gate3(tz, ctx, B, major.cands);
+    const units = countUnits(subjects, major);
+    if (ctx.mode === 'full' && units.totalUnits < 21) {
+      B.push({ gate: 1, k: 'units', hard: true, text: `חסרות יח"ל לזכאות: ${units.totalUnits} מתוך 21` });
+    }
 
     /* שער שכובה בכללים אינו מייצר חסמים */
     const gateOn = g => !(rules.gates && rules.gates[GATE_KEY[g]] && rules.gates[GATE_KEY[g]].enabled === false);
-    const blockers = B.filter(b => gateOn(b.gate));
+    const blockers = B.filter(b => b.k === 'units' || b.k === 'exempt-review' || gateOn(b.gate));
 
     const usedForecast = ctx.mode === 'full' && (subjects.some(s => s.forecast) || (major.chosen && major.chosen.forecast));
     const real = blockers.filter(b => !b.info);
@@ -893,12 +958,22 @@ const BagrutEngine = (() => {
     const ov = OVERRIDE[overrideKey(ex.overrideStatus)];
     /* אין קובץ בגרויות ואין תחזית משוטף: מצב ניטרלי במקום סימון כולם כנכשלים */
     const noBagrut = !manual && !Store.loaded.bagrut && !opts.useCurrent;
-    const tier = manual ? ov.tier : noBagrut ? 0 : autoTier;
+
+    /* גם חניך שעבר את השערים נדרש לבדיקה אם דווחו לו פטורים או סמלים שאינם ממופים למסלול.
+       סמל ברמת יח"ל אחרת הוא לידיעה בלבד כשהמקצוע ברמה שנבחרה הושלם ועבר (החלפת רמה נקייה). */
+    const foreignCodes = !manual && !noBagrut ? detectForeignCodes(tz, ctx).map(f =>
+      (f.reason === 'other-level' && passedClean(subjects.find(s => s.id === f.subjectId)) ? { ...f, informational: true } : f)) : [];
+    const reviewCodes = foreignCodes.filter(f => !f.informational);
+    const reviewReasons = !manual && !noBagrut ? B.filter(b => b.k === 'exempt-review').map(b => b.text) : [];
+    const reviewRequired = reviewCodes.length > 0 || reviewReasons.length > 0;
+    /* ממתין להחלטת רכזת: אינו נספר כזכאי (דרגות 1–2) לפני הכרעה ידנית */
+    const reviewHold = reviewRequired && autoTier <= 2;
+    const tier = manual ? ov.tier : noBagrut ? 0 : reviewHold ? 3 : autoTier;
 
 
     /* מחשבון הפוך: פעולות נדרשות ב-30% החסר. "ניתן להציל" = אין חסם קשה מלבד ה-30% החסר, ושום מקצוע אינו אבוד גם עם 100 */
     const reverse = gateOn(1) ? subjects.filter(s => s.reverse).map(s => s.reverse) : [];
-    const savable = !manual && tier >= 3 && reverse.length > 0 && reverse.every(r => r.level !== 'red') &&
+    const savable = !manual && !reviewHold && tier >= 3 && reverse.length > 0 && reverse.every(r => r.level !== 'red') &&
       blockers.filter(b => b.hard).every(b => b.inner);
 
     const gateStatus = g => {
@@ -911,33 +986,33 @@ const BagrutEngine = (() => {
     /* שכבות י' / י"א נשפטות לפי קצב הצבירה לשכבה ולא לפי זכאות מלאה; י"ב – לפי הצפי המלא */
     const paceInfo = computePace(tz, ctx, subjects, gateOn);
     /* ללא נתוני בגרות כל השאלונים "חסרים", ולכן אין מה לשפוט */
-    if (noBagrut) Object.assign(paceInfo, { dueCount: 0, passedDueCount: 0, failedActualCount: 0, missingDueList: [], failedList: [], focus: [], blockedSubjects: [] });
+    if (noBagrut) Object.assign(paceInfo, { dueCount: 0, passedDueCount: 0, failedActualCount: 0, reviewCount: 0, missingDueList: [], failedList: [], focus: [], blockedSubjects: [] });
     const paceStatus = paceStatusOf(paceInfo, tier, noBagrut);
     paceInfo.paceStatus = paceStatus;
 
-    /* סמלי שאלון זרים: רק לחניך שאינו זכאי מלא (י"ב לפי הצפי, י'/י"א לפי קצב הצבירה) ולא הוכרע ידנית;
-       מידע לבדיקה ידנית בלבד, אינו משנה את הצפי */
-    const notEligible = paceInfo.isSenior ? tier >= 2 && tier <= 4 : paceStatus === 'pace_warning' || paceStatus === 'pace_lag';
-    const foreignCodes = !manual && !noBagrut && notEligible ? detectForeignCodes(tz, ctx) : [];
+    potential.reasons.push(...reviewReasons, ...reviewCodes.map(f => `שאלון ${f.code} אינו ממופה למסלול — דורש החלטת רכזת`));
+    potential.isPotentialException = potential.reasons.length > 0;
+    potential.reason = potential.reasons.join(' · ');
     const juniorPace = !paceInfo.isSenior && !manual && !noBagrut;
-    const atRisk = juniorPace ? paceInfo.failedActualCount > 0 || paceInfo.missingDueList.length > 0 : tier === 4;
+    const atRisk = juniorPace ? paceInfo.failedActualCount > 0 || paceInfo.missingDueList.length > 0 || paceInfo.reviewCount > 0 : tier === 4;
+    const tierTexts = ctx.adaptive ? TIER_TEXT.adaptive : TIER_TEXT[ctx.mode];
 
     const ev = {
-      tz, mode: ctx.mode, adaptive: ctx.adaptive, tier, autoTier, manual, exception: ex,
+      tz, mode: ctx.mode, adaptive: ctx.adaptive, tier, autoTier, manual, exception: ex, ...units,
       rank: ctx.rank, paceInfo, paceStatus, paceText: paceText(paceStatus, t.gradeKey), atRisk,
       cohortId: Config.getCohortIdForGrade(t.gradeKey), cohortName: Config.getCohortNameForGrade(t.gradeKey),
       advisoryHints: noBagrut ? [] : advisoryHints(tz, ctx, subjects),
       overrideStatus: manual ? overrideKey(ex.overrideStatus) : '', exceptionReason: manual ? ex.reason : '',
       isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons,
-      manualReview: { required: foreignCodes.length > 0, foreignCodes },
-      tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : (ctx.adaptive ? TIER_TEXT.adaptive : TIER_TEXT[ctx.mode])[tier],
+      manualReview: { required: reviewRequired, foreignCodes, reasons: reviewReasons },
+      tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : reviewHold ? `${tierTexts[autoTier]} — ממתין להחלטת רכזת` : tierTexts[tier],
       gates: { 1: gateStatus(1), 2: gateStatus(2), 3: gateStatus(3) },
       subjects, major, internals, blockers, notes, usedForecast, reverse, savable, compensation: real.length ? null : (ctx.compensation || null),
       reverseText: reverse.map(r => `${r.subject}: ${r.text}`).join(' | '),
       singleBlocker: juniorPace ? paceStatus === 'pace_warning' : !manual && !noBagrut && real.length === 1,
       diagnostic: manual
         ? `⚡ ${ov.label}${ex.reason ? ` – ${ex.reason}` : ''} | חישוב אוטומטי: ${autoDiag}`
-        : noBagrut ? NO_BAGRUT_TEXT : autoDiag
+        : noBagrut ? NO_BAGRUT_TEXT : reviewHold ? `🔎 ממתין להחלטת רכזת | חישוב אוטומטי: ${autoDiag}` : autoDiag
     };
     decorators.forEach(fn => Object.assign(ev, fn(ev, { tz, ctx, juniorPace })));
     return ev;

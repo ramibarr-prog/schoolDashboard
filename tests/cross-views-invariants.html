@@ -663,15 +663,18 @@ window.fetch = (input, options) => {
           app.state.profileTz = tz;
           app.renderTrainee360Panel();
           const profile360 = $id('profBody'), badges = $id('profBadges').textContent;
-          const statusText = app.tierBased(ev) ? ev.tierText : ev.paceText;
+          const statusText = ev.manualReview && ev.manualReview.required ? 'נדרשת החלטת רכזת' : app.tierBased(ev) ? ev.tierText : ev.paceText;
           check(tr.textContent.includes(statusText) && badges.includes(statusText), `${label}: status "${statusText}" must appear in the table and in the 360 card`);
 
           const rows360 = [...profile360.querySelectorAll('#profile-academic tbody tr')].filter(r => !r.classList.contains('room-divider')).map(r => [...r.children].map(c => c.textContent.trim()));
           ev.subjects.forEach((s, i) => {
             const cell = cellOf(table, tz, s.name), cell360 = rows360[i];
             if (!cell || !cell360) { check(false, `${label}/${s.name}: cell missing (table ${!!cell}, 360 ${!!cell360})`); return; }
-            const number = /^\d+/.exec(cell.textContent.trim());
-            if (number) check(cell360[5] === number[0], `${label}/${s.name}: the table shows ${number[0]} but the 360 card shows "${cell360[5]}"`);
+            const shown = cell.textContent.trim(), number = /^\d+/.exec(shown), missing = /חסר \d+%/.exec(shown);
+            if (missing) {
+              const number360 = /^\d+/.exec(cell360[5]);
+              check((number ? number[0] : null) === (number360 ? number360[0] : null) && cell360[5].includes(missing[0]), `${label}/${s.name}: partial subject: the table shows "${shown}" but the 360 card shows "${cell360[5]}"`);
+            } else if (number) check(cell360[5] === number[0], `${label}/${s.name}: the table shows ${number[0]} but the 360 card shows "${cell360[5]}"`);
             s.comps.forEach(c => check((cell.dataset.tip || '').includes(`שאלון ${c.code}`) && profile360.innerHTML.includes(`שאלון ${c.code}`), `${label}/${s.name}: questionnaire ${c.code} must be detailed in both views`));
           });
 
