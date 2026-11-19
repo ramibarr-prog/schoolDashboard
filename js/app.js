@@ -1917,7 +1917,14 @@ const App = {
       setHtml('sadin-table', '<div class="p-8 text-center text-slate-500">לא נטען קובץ ציונים שוטפים. אפשר לטעון אותו בכפתור שבראש הפאנל.</div>');
       return;
     }
-    const all = GroupAnalyzer.sadinSheet(this.filtered(), st);
+    const roster = this.filtered();
+    const all = GroupAnalyzer.sadinSheet(roster, st);
+    if (st.view === 'sheet' && (st.subject !== 'all' || st.teacher !== 'all')) {
+      const included = new Set(all.map(r => r.t.tz));
+      GroupAnalyzer.sadinSheet(roster.filter(t => !included.has(t.tz))).forEach(r => {
+        all.push({ ...r, subjects: new Map(), failing: 0, missed: 0 });
+      });
+    }
     const graded = all.filter(r => r.overall != null);
     const mean = graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null;
     const filters = [
@@ -1957,15 +1964,15 @@ const App = {
   renderSadinSheet(rows, eventsMode) {
     const coreOrder = GroupAnalyzer.coreSubjects().map(s => s.name);
     const rank = s => { const i = coreOrder.indexOf(s); return i < 0 ? coreOrder.length : i; };
-    /* עמודת מקצוע מוצגת רק אם לפחות חניך אחד בסינון רשום בה, בעל ציון או אירוע שהוחמץ; מקצועות ליבה קודם, אחריהם בחירה */
-    const relevant = s => s.entries.length || s.events.length || s.missed.size;
-    const names = [...new Set(rows.flatMap(r => [...r.subjects.values()].filter(relevant).map(s => s.name)))]
+    /* עמודות קבועות: כל מקצועות הסדין של השכבה (ללא תלות בחיפוש, בכיתה או בסינון השורות) */
+    const all = GroupAnalyzer.sadinSheet(this.filtered(false, true), this.state.sadin);
+    const names = [...new Set(all.flatMap(r => [...r.subjects.keys()]))]
       .sort((a, b) => rank(a) - rank(b) || natural(a, b));
     const columns = [];
     names.forEach(name => {
       if (eventsMode) {
         const events = new Map();
-        rows.forEach(r => {
+        all.forEach(r => {
           const s = r.subjects.get(name);
           if (!s) return;
           s.events.forEach(e => events.set(e.key, e));
