@@ -121,7 +121,10 @@ const CloudSync = {
   _schedulePush() {
     if (!this._suppress && !this._wiping && this.configured() && this.hasUnpublished() && this.status.kind !== 'conflict') {
       clearTimeout(this._timer);
-      this._timer = setTimeout(() => this.pushCloudState().catch(e => console.error('cloud push', e)), 1000);
+      this._timer = setTimeout(() => this.pushCloudState().catch(e => {
+        console.error('cloud push', e);
+        window.dispatchEvent(new CustomEvent('sd:cloud-auto-error', { detail: { error: e && e.message } }));
+      }), 1000);
     }
   },
   _enqueue(fn) {
@@ -307,6 +310,16 @@ const CloudSync = {
     throw new Error('פורמט הצפנה לא מוכר או שאינו נתמך מסיבות אבטחה');
   },
 
+  /** שגיאת רשת / ביטול בקשה → הודעה ברורה בעברית; שגיאות אחרות (כבר בעברית או לא קשורות לרשת) עוברות כמות שהן */
+  _networkError(e) {
+    const text = String((e && e.message) || '');
+    if (e && e.name === 'AbortError') return new Error('החיבור לענן פג (זמן תגובה ארוך מדי). הנתונים נשמרו מקומית.');
+    if (navigator.onLine === false || (e && e.name === 'TypeError') || /Failed to fetch|Load failed|NetworkError|Network request failed/i.test(text)) {
+      return new Error('אין חיבור לרשת או ששרת הענן אינו זמין. הנתונים נשמרו מקומית ויסונכרנו עם החזרה לרשת.');
+    }
+    return e;
+  },
+
   /* ---------- תקשורת ---------- */
   async _post(body) {
     if (this._wiping) throw new Error('הסנכרון חסום בזמן מחיקת הנתונים המקומיים');
@@ -318,7 +331,10 @@ const CloudSync = {
     const controller = new AbortController();
     this._requestController = controller;
     try {
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, token }), signal: controller.signal });
+      let res;
+      try {
+        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, token }), signal: controller.signal });
+      } catch (e) { throw this._networkError(e); }
       if (!res.ok) throw new Error(`שגיאת שרת ${res.status}`);
       const json = await res.json();
       if (!json.ok && !json.conflict) throw new Error(json.error || 'השרת דחה את הבקשה');

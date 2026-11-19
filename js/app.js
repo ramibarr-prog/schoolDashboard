@@ -94,6 +94,12 @@ const App = {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
+    window.addEventListener('sd:cloud-auto-error', e => {
+      const message = `נשמר מקומית בלבד — ${(e.detail && e.detail.error) || 'הסנכרון לענן נכשל'}`, now = Date.now();
+      if (this._autoErrorToast && this._autoErrorToast.message === message && now - this._autoErrorToast.at < 60000) return;
+      this._autoErrorToast = { message, at: now };
+      this.toast(message, 'warn');
+    });
     window.addEventListener('sd:cloud-conflict', () => {
       this.toast('נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:', 'warn');
     });
