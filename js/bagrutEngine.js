@@ -26,6 +26,11 @@ const BagrutEngine = (() => {
   /* שאלוני עולים / התאמות שמסמנים חשד למצב חריג, בנוסף לרשימה שבכללים */
   const IMMIGRANT_CODES = ['5384', '585580', '581580'];
 
+  /* שאלונים מוכרים שאינם חלק מדרישות הזכאות לבגרות (חינוך תעבורתי): אינם סמל זר ואינם דורשים החלטת רכזת */
+  const NON_BAGRUT_CODES = new Set(['700181']);
+  const NON_BAGRUT_SUBJECT = /חינוך תעבורתי|תעבורה|זה["״]ב/;
+  const isNonBagrut = a => NON_BAGRUT_CODES.has(Util.normQuestionnaireCode(a.code)) || NON_BAGRUT_SUBJECT.test(String(a.subject || ''));
+
   /* הכרעה ידנית: צפי וכותרת לכל סטטוס (מקור יחיד: Config.OVERRIDE_STATUSES) */
   const OVERRIDE = Object.fromEntries(Config.OVERRIDE_STATUSES.map(s => [s.value, { tier: s.tier, label: s.short }]));
   const OVERRIDE_BY_LABEL = Object.fromEntries(Object.entries(OVERRIDE).map(([k, v]) => [v.label, k]));
@@ -349,7 +354,9 @@ const BagrutEngine = (() => {
     const reportedWeight = reported.reduce((a, c) => a + c.weight, 0);
     res.reportedScore = reportedWeight ? reported.reduce((a, c) => a + (c.reportedNum ?? c.num) * c.weight, 0) / reportedWeight : null;
     res.reportedPct = totalW ? Math.round(reportedWeight / totalW * 100) : 0;
-    const missingDue = res.unresolved.concat(res.pending.filter(c => c.targetRank <= ctx.rank));
+    /* מצב תעודה סופית: כל רכיב שהגיע מועדו נדרש. צפי מותאם: רק רכיב שהשכבה כבר נבחנה בו והחניך החמיץ;
+       רכיב שטרם דווח לשכבה אינו חוסר, והמקצוע נשפט לפי החלק שכבר דווח (partial) */
+    const missingDue = ctx.strict ? res.unresolved.concat(res.pending.filter(c => c.targetRank <= ctx.rank)) : res.unresolved;
     res.incomplete = ctx.mode === 'full' && (reported.length > 0 || nPass > 0) && missingDue.length > 0 && !res.exempt;
     if (res.incomplete && totalW > 0) {
       res.earnedScore = reported.length ? Math.round(sum / totalW) : null;
@@ -746,6 +753,7 @@ const BagrutEngine = (() => {
 
   /** סמלי שאלון עולים / התאמות: הרשימה הקבועה + הרשימה שבכללי הפרופיל (מקור יחיד לזיהוי חשד לחריג ולסמלים זרים) */
   const immigrantCodeSet = rules => new Set([...IMMIGRANT_CODES, ...(((rules && rules.exceptionDetection) || {}).immigrantCodes || [])].map(String));
+  const immigrantReason = code => `שאלון עולים / מותאם (${code})`;
 
   /**
    * חשד למצב חריג: שאלוני עולים (5384 / 585580 / 581580 ועוד מהכללים), רמות יח"ל מעורבות
@@ -762,7 +770,7 @@ const BagrutEngine = (() => {
 
     const codes = immigrantCodeSet(rules);
     const hit = Store.attemptsOf(tz).find(a => codes.has(String(a.code)));
-    if (hit) reasons.push(`שאלון עולים / מותאם (${hit.code})`);
+    if (hit) reasons.push(immigrantReason(hit.code));
 
     if (det.flagMixedLevels !== false) {
       rules.coreSubjects.filter(s => s.enabled !== false && s.variableUnits).forEach(s => {
@@ -792,6 +800,7 @@ const BagrutEngine = (() => {
    * סמלי שאלון זרים: ניסיונות בגרות שדווחו לחניך ואינם מוגדרים בפרופיל השכבה שלו ברמת היח"ל שלו.
    * סיבות: immigrant (שאלון עולים / מותאם), other-level (סמל של רמת יח"ל אחרת באותו מקצוע),
    * other-cohort (סמל שמוגדר רק בפרופיל של מחזור אחר), unlisted-code (סמל שאינו מוכר בכללים או בקטלוג).
+   * שאלונים שאינם חלק מדרישות הזכאות (חינוך תעבורתי, 700181) אינם נחשבים זרים.
    * פונקציה טהורה: קוראת בלבד, אינה משנה את הצפי.
    */
   function detectForeignCodes(tz, ctx) {
@@ -828,7 +837,7 @@ const BagrutEngine = (() => {
     const found = new Map();
     attempts.forEach(a => {
       const code = String(a.code);
-      if (expected.has(code)) return;
+      if (expected.has(code) || isNonBagrut(a)) return;
       const bySubject = core.find(s => Util.matchKeywords(a.subject, s.keywords));
       let hit = null;
       if (immigrant.has(code)) hit = { reason: 'immigrant', subjectId: bySubject ? bySubject.id : '', subject: bySubject ? bySubject.name : '' };
@@ -938,7 +947,8 @@ const BagrutEngine = (() => {
     applyPointsCompensation(B, subjects, major, ctx, notes);
     const internals = gate3(tz, ctx, B, major.cands);
     const units = countUnits(subjects, major);
-    if (ctx.mode === 'full' && units.totalUnits < 21) {
+    /* מינימום 21 יח"ל נבדק רק במצב תעודה סופית: בצפי המותאם יחידות שטרם נבחנו אינן חסם */
+    if (ctx.strict && units.totalUnits < 21) {
       B.push({ gate: 1, k: 'units', hard: true, text: `חסרות יח"ל לזכאות: ${units.totalUnits} מתוך 21` });
     }
 
@@ -990,6 +1000,8 @@ const BagrutEngine = (() => {
     const paceStatus = paceStatusOf(paceInfo, tier, noBagrut);
     paceInfo.paceStatus = paceStatus;
 
+    /* סיבות חשד שאינן כבר מפורטות בבדיקת הרכזת (שאלון עולים שזוהה גם כסמל זר מפורט שם): התצוגה מציגה "חשד לחריג" לצד "נדרשת החלטת רכזת" רק בגינן */
+    const suspectExtra = potential.reasons.filter(r => !reviewCodes.some(f => f.reason === 'immigrant' && r === immigrantReason(f.code)));
     potential.reasons.push(...reviewReasons, ...reviewCodes.map(f => `שאלון ${f.code} אינו ממופה למסלול — דורש החלטת רכזת`));
     potential.isPotentialException = potential.reasons.length > 0;
     potential.reason = potential.reasons.join(' · ');
@@ -1003,7 +1015,7 @@ const BagrutEngine = (() => {
       cohortId: Config.getCohortIdForGrade(t.gradeKey), cohortName: Config.getCohortNameForGrade(t.gradeKey),
       advisoryHints: noBagrut ? [] : advisoryHints(tz, ctx, subjects),
       overrideStatus: manual ? overrideKey(ex.overrideStatus) : '', exceptionReason: manual ? ex.reason : '',
-      isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons,
+      isPotentialException: potential.isPotentialException, potentialExceptionReason: potential.reason, suspect: potential.reasons, suspectExtra,
       manualReview: { required: reviewRequired, foreignCodes, reasons: reviewReasons },
       tierText: manual ? ov.label : noBagrut ? NO_BAGRUT_TEXT : reviewHold ? `${tierTexts[autoTier]} — ממתין להחלטת רכזת` : tierTexts[tier],
       gates: { 1: gateStatus(1), 2: gateStatus(2), 3: gateStatus(3) },

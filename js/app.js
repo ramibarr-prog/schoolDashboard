@@ -1324,14 +1324,17 @@ const App = {
     };
     const pill = ev => {
       let text = ev.tierText;
-      if (ev.adaptive && ev.tier === 3 && !ev.manual) text += ` (חסם ${ev.blockers.filter(b => !b.info).length})`;
-      const status = ev.manualReview.required ? `<span class="badge tier-3 whitespace-nowrap" title="${E(`חישוב אוטומטי: ${text} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
+      const held = ev.manualReview.required, real = ev.blockers.filter(b => !b.info).length;
+      if (ev.adaptive && ev.tier === 3 && !ev.manual && real > 0) text += ` (חסם ${real})`;
+      const status = held ? `<span class="badge tier-3 whitespace-nowrap" title="${E(`חישוב אוטומטי: ${text} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
         !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
-      const mr = this.manualReviewBadge(ev);
+      /* תגית "נדרשת החלטת רכזת" כבר מפרטת את סיבות הבדיקה: מתחתיה מוצג "חשד לחריג" רק בגין סיבות נוספות, וללא תג בדיקה ידנית כפול */
+      const suspect = held ? ev.suspectExtra : ev.suspect;
+      const mr = held ? '' : this.manualReviewBadge(ev);
       return `<div>${status}</div><div>${this.unitsBadge(ev)}</div>
-        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : ev.isPotentialException ? `<div><span class="badge tier-3" title="${E(ev.potentialExceptionReason)}">חשד לחריג</span></div>` : ''}${mr ? `<div>${mr}</div>` : ''}`;
+        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : suspect.length ? `<div><span class="badge tier-3" title="${E(suspect.join(' · '))}">חשד לחריג</span></div>` : ''}${mr ? `<div>${mr}</div>` : ''}`;
     };
 
     const cols = 6 + coreCols.length;
@@ -2195,11 +2198,12 @@ const App = {
   },
 
   unitsBadge(ev) {
-    const full = ev.mode === 'full';
-    const short = full && ev.totalUnits < 21 && ev.tier !== 0;
-    const tip = full
+    /* מינימום 21 יח"ל נשפט רק במצב תעודה סופית; בצפי המותאם ובשכבות י' / י"א התגית ניטרלית */
+    const strict = ev.mode === 'full' && !ev.adaptive;
+    const short = strict && ev.totalUnits < 21 && ev.tier !== 0;
+    const tip = strict
       ? `צבר ${ev.totalUnits} יח"ל (מינימום לזכאות: 21 יח"ל); סך היחידות במסלול: ${ev.expectedUnits}`
-      : `יחידות שנצברו במקצועות שהושלמו; סך היחידות במסלול: ${ev.expectedUnits}`;
+      : `יחידות שנצברו עד כה במקצועות שהושלמו; סך היחידות במסלול: ${ev.expectedUnits}`;
     return `<span class="badge ${short ? 'tier-4' : 'fresh-slate'} whitespace-nowrap" title="${E(tip)}">${ev.totalUnits} יח"ל</span>`;
   },
 
@@ -2319,10 +2323,10 @@ const App = {
     this.renderProfileNav(idx + 1, list.length);
     setText('profName', t.name);
     setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
-    setHtml('profBadges', `${ev.manualReview.required ? `<span class="badge tier-3 prof-status" title="${E(`חישוב אוטומטי: ${ev.tierText}`)}">נדרשת החלטת רכזת</span>` :
+    setHtml('profBadges', `${ev.manualReview.required ? `<span class="badge tier-3 prof-status" title="${E(`חישוב אוטומטי: ${ev.tierText} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
       this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
       ${this.unitsBadge(ev)}
-      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${this.manualReviewBadge(ev)}`);
+      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${ev.manualReview.required ? '' : this.manualReviewBadge(ev)}`);
     const cur = this.profileCurrentModel(t, ev, rules);
     this.renderProfileKpis(t, cur);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));
