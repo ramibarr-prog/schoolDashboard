@@ -609,6 +609,137 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         resetConfig();
       });
     });
+
+    /* ====================================================================
+       קבוצה E — צפי מותאם לשלב בשנה (fullMode: false) מול מצב תעודה סופית (fullMode: true)
+       נעילת ההתנהגות הנוכחית לפני פיצול bagrutEngine לשכבת עובדות ומנועי מדיניות
+       ==================================================================== */
+    await group('Group E — adaptive mid-year forecast vs final-certificate mode (fullMode false/true)', async () => {
+      resetConfig();
+
+      await part('E.1 12th grade mid-year: partial subjects (only the 30%/50% part reported, rest pending for the cohort) and under 21 units', async () => {
+        /* היסטוריה: רק רכיב ה-30% דווח; מתמטיקה 4 יח"ל: רק רכיב 50% אחד דווח. חניך יחיד => השכבה מתחת לסף הדיווח ברכיבים החסרים */
+        const tz = solo({ '22261': null, '35472': null });
+        const adaptive = BagrutEngine.evaluate(tz);
+        check(adaptive.adaptive === true && adaptive.tier === 1 && adaptive.tierText === BagrutEngine.TIER_TEXT.adaptive[1],
+          `Adaptive must be tier 1 "צפוי לזכאות" (got tier ${adaptive.tier}, "${adaptive.tierText}")`);
+        same(kinds(adaptive), [], 'Adaptive: no real blockers at all (no partial-missing, no noshow, no units blocker)');
+        ['history', 'math'].forEach(id => {
+          const s = subj(adaptive, id);
+          check(s.incomplete === false && s.status === 'pass' && !!s.partial, `${id}: adaptive must judge by the reported part only (incomplete ${s.incomplete}, status ${s.status})`);
+          check(s.unresolved.length === 0 && s.pending.length === 1 && s.pending[0].pendingCohort === true && s.pending[0].due === false,
+            `${id}: the missing component must stay pending for the cohort (below the 35% reporting threshold), never unresolved`);
+        });
+        check(adaptive.totalUnits < 21, `Scenario precondition: earned units must be below 21 (got ${adaptive.totalUnits})`);
+
+        const full = evalFull(tz);
+        check(full.tier === 4, `Final-certificate mode on the same data must block (tier 4), got ${full.tier}`);
+        /* המנוע מקודד "חלק חסר" במצב סופי כ-incomplete על המקצוע + חסם questionnaire קשה לכל רכיב חסר + חסם units;
+           סוג החסם partial-missing עצמו שמור לרכיב pending שמועדו הגיע ואינו נורה לחניך י"ב במצב strict */
+        same([...kinds(full)].sort(), ['questionnaire', 'questionnaire', 'units'], 'Final mode blocker kinds must be exactly two missing-questionnaire blockers plus the units blocker');
+        check(full.blockers.some(b => b.k === 'units' && b.hard && b.text.includes('21')),
+          `Final mode must raise the under-21-units blocker (got ${JSON.stringify(kinds(full))})`);
+        ['history', 'math'].forEach(id => {
+          const s = subj(full, id);
+          check(s.incomplete === true && s.status === 'missing' && s.missingPct > 0,
+            `${id}: final mode must mark the subject as partially missing (incomplete ${s.incomplete}, status ${s.status}, missingPct ${s.missingPct})`);
+        });
+        const partialHard = full.blockers.filter(b => b.hard && b.miss && b.k !== 'units');
+        check(partialHard.length === 2 && partialHard.some(b => b.text.includes('היסטוריה')) && partialHard.some(b => b.text.includes('מתמטיקה')),
+          `Final mode must raise a hard missing-part blocker per partial subject (got ${JSON.stringify(full.blockers.map(b => b.k + ':' + b.text))})`);
+      });
+
+      await part('E.2 12th grade: a questionnaire the cohort already sat (unresolved, over the 35% threshold) is a real adaptive blocker', async () => {
+        world({
+          roster: [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב1'), stu(3, 'יב', 'יב1')],
+          bagrut: bagrutRows([...profile(T(1)), ...profile(T(2)), ...profile(T(3), { '22261': null })])
+        });
+        const ev = BagrutEngine.evaluate(T(3));
+        const hist = subj(ev, 'history');
+        check(hist.unresolved.length === 1 && hist.unresolved[0].due === true && hist.unresolved[0].pendingCohort === false,
+          'The missed questionnaire must be unresolved (cohort over the threshold), not pending');
+        check(hist.status === 'missing', `history must be missing, got ${hist.status}`);
+        const real = ev.blockers.filter(b => !b.info);
+        check(real.length === 1 && real[0].k === 'noshow' && real[0].hard === true && real[0].text.includes('היסטוריה'),
+          `An unresolved component must raise one hard no-show blocker on the subject (got ${JSON.stringify(real.map(b => b.k + ':' + b.text))})`);
+        check(ev.tier !== 1 && ev.tier === 3, `An unresolved component must forbid tier 1 (got tier ${ev.tier})`);
+        check(BagrutEngine.evaluate(T(1)).tier === 1, 'A classmate with the full profile must stay tier 1 in the same world');
+      });
+
+      await part('E.3 12th grade: a failing sadin (current) average in a subject not yet examined is a soft watch, never a hard blocker', async () => {
+        const g = 'ספרות יב1 רות בדיקה [8003]';
+        /* אנגלית/מתמטיקה/מגמה ציון עובר נמוך (56) כדי שפיצוי הנקודות לא "יבלע" את התראת הנכשל השוטף */
+        world({
+          roster: [stu(1, 'יב', 'יב1')],
+          bagrut: bagrutRows(profile(T(1), { '8283': null, '8281': null, '16382': 56, '16471': 56, '35471': 56, '35472': 56, '36361': 56 })),
+          sadin: sadinRows([{ tz: T(1), ev: 'מבחן (50)', sc: 40, grp: g, dt: '01/11/2026' }, { tz: T(1), ev: 'בוחן (50)', sc: 40, grp: g, dt: '10/11/2026' }])
+        });
+        /* ללא תחזית משוטף: מקצוע שהשכבה טרם נבחנה בו הוא "בתהליך" בלבד, גם כשהסדין נכשל */
+        const quiet = BagrutEngine.evaluate(T(1));
+        check(subj(quiet, 'literature').status === 'pending' && kinds(quiet).length === 0,
+          `Without the current-grades forecast a failing sadin average must not block at all (status ${subj(quiet, 'literature').status}, blockers ${JSON.stringify(kinds(quiet))})`);
+        const ev = BagrutEngine.evaluate(T(1), { useCurrent: true });
+        const lit = subj(ev, 'literature');
+        check(lit.source === 'current' && lit.final === 40, `literature must be forecast from the sadin average (source ${lit.source}, final ${lit.final})`);
+        const w = ev.blockers.find(b => b.watch);
+        check(!!w && w.k === 'severe' && w.hard === false && /נכשל שוטף/.test(w.text) && w.text.includes('ספרות'),
+          `A current-only failure must be a soft watch note (got ${JSON.stringify(ev.blockers.map(b => `${b.k}:hard=${b.hard}:watch=${!!b.watch}`))})`);
+        check(ev.blockers.every(b => !b.hard), 'A current-only failure must not create any hard eligibility blocker');
+        check(ev.tier < 4 && ev.atRisk === false, `A current-only failure must not drop the student to tier 4 / at-risk (tier ${ev.tier}, atRisk ${ev.atRisk})`);
+      });
+
+      await part('E.4 11th grade pace: on_track / single due blocker / two or more due blockers', async () => {
+        world({
+          roster: [41, 42, 43, 44].map(n => stu(n, 'יא', 'יא1')),
+          bagrut: bagrutRows([
+            ...partial(41, ELEVENTH),
+            ...partial(42, { ...ELEVENTH, '22283': 40 }),
+            ...partial(43, Object.fromEntries(Object.entries({ ...ELEVENTH, '8283': 40 }).filter(([code]) => code !== '1263'))),
+            ...partial(44, ELEVENTH)
+          ])
+        });
+        const onTrack = BagrutEngine.evaluate(T(41));
+        check(onTrack.paceStatus === 'on_track' && onTrack.atRisk === false, `All due questionnaires passed => on_track (got ${onTrack.paceStatus}, atRisk ${onTrack.atRisk})`);
+        same(kinds(onTrack), [], 'An on-track 11th grader must not be blocked on future 12th-grade questionnaires or on the under-21-units rule');
+        const warning = BagrutEngine.evaluate(T(42));
+        check(warning.paceStatus === 'pace_warning' && warning.paceInfo.failedActualCount === 1 && warning.paceInfo.missingDueList.length === 0,
+          `One failed due questionnaire => pace_warning (got ${warning.paceStatus}, failed ${warning.paceInfo.failedActualCount})`);
+        const lag = BagrutEngine.evaluate(T(43));
+        check(lag.paceStatus === 'pace_lag' && lag.paceInfo.failedActualCount + lag.paceInfo.missingDueList.length === 2,
+          `Two due blockers (one fail + one missing) => pace_lag (got ${lag.paceStatus}, failed ${lag.paceInfo.failedActualCount}, missing ${lag.paceInfo.missingDueList.length})`);
+      });
+
+      await part('E.5 10th grade before any due questionnaire: not_started with zero eligibility blockers', async () => {
+        world({ roster: [stu(51, 'י', 'י1'), stu(52, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(52))) });
+        const ev = BagrutEngine.evaluate(T(51));
+        check(ev.paceStatus === 'not_started' && ev.atRisk === false, `A 10th grader with no due questionnaires must be not_started (got ${ev.paceStatus}, atRisk ${ev.atRisk})`);
+        same(kinds(ev), [], 'A 10th grader before first exams must have zero eligibility blockers');
+        check(ev.paceInfo.dueCount === 0 && ev.paceInfo.failedActualCount === 0 && ev.paceInfo.missingDueList.length === 0,
+          `No questionnaire may be counted as due (due ${ev.paceInfo.dueCount}, failed ${ev.paceInfo.failedActualCount})`);
+      });
+
+      await part('E.6 traffic-education questionnaire (700181) vs a real unlisted foreign code (99999)', async () => {
+        const senior = solo({ '700181': { final: 80, subject: 'חינוך תעבורתי' } });
+        [BagrutEngine.evaluate(senior), evalFull(senior)].forEach(ev => {
+          const label = ev.adaptive ? 'adaptive' : 'full';
+          check(ev.manualReview.required === false && ev.manualReview.foreignCodes.length === 0,
+            `700181 must not trigger coordinator review in 12th grade (${label}): required ${ev.manualReview.required}, foreign ${JSON.stringify(ev.manualReview.foreignCodes)}`);
+          check(ev.tier === 1, `700181 must not change the forecast in 12th grade (${label}): tier ${ev.tier}`);
+        });
+        world({ roster: [stu(61, 'יא', 'יא1')], bagrut: bagrutRows([...partial(61, ELEVENTH), { tz: T(61), code: '700181', final: 80, subject: 'חינוך תעבורתי' }]) });
+        const junior = BagrutEngine.evaluate(T(61));
+        check(junior.manualReview.required === false && junior.manualReview.foreignCodes.length === 0,
+          `700181 must not trigger coordinator review in 11th grade: required ${junior.manualReview.required}, foreign ${JSON.stringify(junior.manualReview.foreignCodes)}`);
+
+        const foreign = solo({ '99999': { final: 60, subject: 'מקצוע ניסוי' } });
+        const full = evalFull(foreign);
+        check(full.autoTier === 1, `Scenario precondition: every mapped subject passes (autoTier ${full.autoTier})`);
+        check(full.manualReview.required === true && full.manualReview.foreignCodes.length === 1 &&
+          full.manualReview.foreignCodes[0].code === '99999' && full.manualReview.foreignCodes[0].reason === 'unlisted-code',
+          `An unmapped questionnaire must require a coordinator decision even when everything else passes (got ${JSON.stringify(full.manualReview)})`);
+        check(BagrutEngine.evaluate(foreign).manualReview.required === true, 'The adaptive forecast must flag the unmapped questionnaire as well');
+      });
+    });
   } catch (e) {
     outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });
   } finally {
