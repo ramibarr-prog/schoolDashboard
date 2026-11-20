@@ -141,7 +141,7 @@ const Util = {
 const DEFAULT_CLOUD_URL = '';
 
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
-const RULES_VERSION = 4;
+const RULES_VERSION = 5;
 
 /* מחזורי לימוד ברירת מחדל ושיוך שכבות אליהם (מפתח השכבה: 12 / 11 / 10) */
 const COHORT_SEED = [
@@ -172,7 +172,8 @@ function defaultBagrutRules() {
     pointsCompensation: { enabled: true, minScore: 5, minUnits: 3, table: { 6: 150, 7: 148, 8: 146, 9: 144, 10: 140 } },
     borderlineMin: 50,
     borderlineBonus: 5,
-    magenWeight: 50,
+    /* חוברת משרד החינוך: מגן 30% כברירת מחדל מחזורית; מתמטיקה ופיזיקה מגדירות 50% פר רכיב / שאלון */
+    magenWeight: 30,
     gates: {
       core: { enabled: true, label: 'שער 1 – מקצועות ליבה' },
       major: { enabled: true, label: 'שער 2 – מגמה 5 יח"ל', requiredUnits: 5 },
@@ -202,9 +203,9 @@ function defaultBagrutRules() {
       { id: 'math', name: 'מתמטיקה', variableUnits: true, majorEligible: false, defaultLevel: '4', keywords: ['מתמטיקה', 'חשבון'], enabled: true,
         components: [],
         levels: {
-          '3': on([{ codes: ['35173', '35183', '35172'], weight: 25, expectedGrade: 'יב', internal: true }, { codes: ['35371', '35381'], weight: 35, expectedGrade: 'יא' }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב' }]),
-          '4': on([{ codes: ['35471', '35481'], weight: 65, expectedGrade: 'יא' }, { codes: ['35472', '35482'], weight: 35, expectedGrade: 'יב' }]),
-          '5': on([{ codes: ['35571', '35581'], weight: 60, expectedGrade: 'יא' }, { codes: ['35572', '35582'], weight: 40, expectedGrade: 'יב' }])
+          '3': on([{ codes: ['35173', '35183', '35172'], weight: 25, expectedGrade: 'יב', internal: true }, { codes: ['35371', '35381'], weight: 35, expectedGrade: 'יא', magenWeight: 50 }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב', magenWeight: 50 }]),
+          '4': on([{ codes: ['35471', '35481'], weight: 65, expectedGrade: 'יא', magenWeight: 50 }, { codes: ['35472', '35482'], weight: 35, expectedGrade: 'יב', magenWeight: 50 }]),
+          '5': on([{ codes: ['35571', '35581'], weight: 60, expectedGrade: 'יא', magenWeight: 50 }, { codes: ['35572', '35582'], weight: 40, expectedGrade: 'יב', magenWeight: 50 }])
         } }
     ],
     /* מגמות: codeMode 'any' = מספיק שאלון אחד מהרשימה (חלופות); majorNames = שמות המגמה בעמודת "מגמה" של קובץ קבוצות הלימוד */
@@ -233,7 +234,7 @@ function defaultBagrutRules() {
     ]),
     questionnaires: (() => {
       const cat = {};
-      const qs = (codes, name, expectedGrade) => codes.forEach(c => { cat[c] = q(name, expectedGrade); });
+      const qs = (codes, name, expectedGrade, magenWeight) => codes.forEach(c => { cat[c] = { ...q(name, expectedGrade), ...(magenWeight != null ? { magenWeight } : {}) }; });
       qs(['22283', '29283'], 'היסטוריה – ציון בית-ספרי', 'יב'); qs(['22261', '22264'], 'היסטוריה – בחינה', 'יב');
       qs(['34263', '34283', '34273', '34221', '34224'], 'אזרחות – הערכה חלופית בית-ספרית (30%)', 'יב');
       qs(['34271', '34274', '34281', '34284', '34225'], 'אזרחות – בחינה חיצונית (70%)', 'יב');
@@ -249,10 +250,11 @@ function defaultBagrutRules() {
       qs(['16486', '16487', '16485'], 'אנגלית 4 יח"ל – בחינה חיצונית בעל פה (20%)', 'יב');
       qs(['16583', '16584'], 'אנגלית 5 יח"ל – תלקיט פנימי (26%)', 'יב');
       qs(['16586', '16587', '16585'], 'אנגלית 5 יח"ל – בחינה חיצונית בעל פה (20%)', 'יב');
-      qs(['35173', '35183', '35172'], 'מתמטיקה 3 יח"ל – הערכה חלופית בית-ספרית (25%)', 'יב'); qs(['35371', '35381'], 'מתמטיקה 3 יח"ל – שאלון א', 'יא');
-      qs(['35372', '35380', '35382'], 'מתמטיקה 3 יח"ל – שאלון ב', 'יב');
-      qs(['35471', '35481'], 'מתמטיקה 4 יח"ל – שאלון א', 'יא'); qs(['35472', '35482'], 'מתמטיקה 4 יח"ל – שאלון ב', 'יב');
-      qs(['35571', '35581'], 'מתמטיקה 5 יח"ל – שאלון א', 'יא'); qs(['35572', '35582'], 'מתמטיקה 5 יח"ל – שאלון ב', 'יב');
+      qs(['35173', '35183', '35172'], 'מתמטיקה 3 יח"ל – הערכה חלופית בית-ספרית (25%)', 'יב'); qs(['35371', '35381'], 'מתמטיקה 3 יח"ל – שאלון א', 'יא', 50);
+      qs(['35372', '35380', '35382'], 'מתמטיקה 3 יח"ל – שאלון ב', 'יב', 50);
+      qs(['35471', '35481'], 'מתמטיקה 4 יח"ל – שאלון א', 'יא', 50); qs(['35472', '35482'], 'מתמטיקה 4 יח"ל – שאלון ב', 'יב', 50);
+      qs(['35571', '35581'], 'מתמטיקה 5 יח"ל – שאלון א', 'יא', 50); qs(['35572', '35582'], 'מתמטיקה 5 יח"ל – שאלון ב', 'יב', 50);
+      qs(['36361', '36381'], 'פיזיקה 5 יח"ל – בחינה חיצונית', 'יב', 50);
       return cat;
     })(),
     exceptionDetection: {
@@ -1165,10 +1167,48 @@ const Config = {
     return { ...d, ...p, table: { ...d.table, ...(p.table || {}) } };
   },
 
-  /** משקל ציון המגן (ההגשה) באחוזים בחישוב ציון שאלון מהגשה ובחינה; ברירת מחדל 50, והבחינה מקבלת את השאר */
-  magenWeight() {
-    const w = Number(this.rules().magenWeight);
-    return isFinite(w) && w >= 0 && w <= 100 ? w : 50;
+  /**
+   * משקל ציון המגן (ההגשה) באחוזים בחישוב ציון שאלון מהגשה ובחינה; הבחינה מקבלת את השאר.
+   * עם סמל: דריסה ברכיב ליבה פעיל המכיל אותו, אחריה דריסה בקטלוג; אחרת ברירת המחדל של המחזור (30).
+   */
+  magenWeight(code, rules) {
+    const r = rules || this.rules();
+    const valid = v => v !== undefined && v !== null && v !== '' && isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100;
+    if (code != null && code !== '') {
+      const norm = Util.normQuestionnaireCode(code);
+      const comp = (r.coreSubjects || []).filter(s => s && s.enabled !== false)
+        .flatMap(s => s.variableUnits ? Object.values(s.levels || {}).flat() : (s.components || []))
+        .find(c => c && c.enabled !== false && valid(c.magenWeight) && (c.codes || []).some(x => Util.normQuestionnaireCode(x) === norm));
+      if (comp) return Number(comp.magenWeight);
+      const q = (r.questionnaires || {})[norm];
+      if (q && valid(q.magenWeight)) return Number(q.magenWeight);
+    }
+    return valid(r.magenWeight) ? Number(r.magenWeight) : 30;
+  },
+
+  /** ערך ריק מסיר את הדריסה (undefined); אחרת מספר 0..100 */
+  _normMagen(v) {
+    if (v === undefined || v === null || String(v).trim() === '') return undefined;
+    const n = Number(v);
+    if (!isFinite(n) || n < 0 || n > 100) throw new Error('משקל המגן חייב להיות בין 0 ל-100');
+    return n;
+  },
+
+  /** דריסת מגן משותפת לרכיבי הליבה ולרשומות הקטלוג של אותם סמלים, במחזור הנערך בלבד */
+  _syncMagenWeight(r, codes, value) {
+    const affected = new Set((codes || []).map(Util.normQuestionnaireCode));
+    const items = r.coreSubjects.flatMap(s => s.variableUnits ? Object.values(s.levels || {}).flat() : (s.components || []));
+    const apply = obj => { if (value === undefined) delete obj.magenWeight; else obj.magenWeight = value; };
+    let size;
+    do {
+      size = affected.size;
+      items.forEach(item => {
+        if (!(item.codes || []).some(code => affected.has(Util.normQuestionnaireCode(code)))) return;
+        apply(item);
+        item.codes.forEach(code => affected.add(Util.normQuestionnaireCode(code)));
+      });
+    } while (affected.size !== size);
+    affected.forEach(code => { if (r.questionnaires && r.questionnaires[code]) apply(r.questionnaires[code]); });
   },
 
   /** בודק מבנה ותקינות. מחזיר מחרוזת שגיאה או '' */
@@ -1180,14 +1220,20 @@ const Config = {
     if (!num(r.compensationMin, 0, 100) || !num(r.compensationMax, 0, 100) || r.compensationMin > r.compensationMax) return 'טווח הקיזוז לא תקין';
     if (!num(r.maxCompensations, 0, 20)) return 'מכסת קיזוזים לא תקינה';
     if (r.magenWeight !== undefined && !num(Number(r.magenWeight), 0, 100)) return 'משקל ציון המגן חייב להיות בין 0 ל-100';
+    const optMagen = v => v === undefined || v === null || v === '' || num(Number(v), 0, 100);
     const badList = list => (list || []).some(c => !c || !Array.isArray(c.codes) || !num(Number(c.weight), 0, 100));
+    const badMagen = list => (list || []).some(c => c && !optMagen(c.magenWeight));
     for (const s of r.coreSubjects) {
       if (!s || !s.id || !s.name) return 'מקצוע ליבה ללא שם או מזהה';
       if (s.variableUnits) {
         if (!s.levels || typeof s.levels !== 'object') return `למקצוע ${s.name} חסרות רמות יח"ל`;
         if (Object.values(s.levels).some(badList)) return `משקל או סמל שאלון לא תקין במקצוע ${s.name}`;
+        if (Object.values(s.levels).some(badMagen)) return `משקל מגן לא תקין במקצוע ${s.name} (0–100 או ריק)`;
       } else if (!Array.isArray(s.components) || badList(s.components)) return `משקל או סמל שאלון לא תקין במקצוע ${s.name}`;
+      else if (badMagen(s.components)) return `משקל מגן לא תקין במקצוע ${s.name} (0–100 או ריק)`;
     }
+    const badQ = Object.entries(r.questionnaires || {}).find(([, q]) => q && !optMagen(q.magenWeight));
+    if (badQ) return `משקל מגן לא תקין בשאלון ${badQ[0]} (0–100 או ריק)`;
     if (r.internals.some(i => !i || !i.id || !i.name || !Array.isArray(i.codes))) return 'יחידה פנימית לא תקינה';
     if (r.majors.some(m => !m || !m.id || !m.name || !Array.isArray(m.codes))) return 'מגמה לא תקינה (נדרשים שם וסמלי שאלון)';
     return '';
@@ -1273,9 +1319,13 @@ const Config = {
       r.exceptionDetection.immigrantCodes = normalizeCodes(r.exceptionDetection.immigrantCodes);
     }
     this._backfillExpectedGrades(r);
-    /* קטלוג חדש אינו מחליף רכיבים, משקלים או מטא-דאטה שכבר נשמרו במחזור. */
+    /* קטלוג חדש אינו מחליף רכיבים, משקלים או מטא-דאטה שכבר נשמרו במחזור; סמל חסר נוסף בלי דריסת מגן,
+       כדי שמחזור שמור ימשיך לחשב לפי משקל המגן שכבר הוגדר בו */
     Object.entries(defaultBagrutRules().questionnaires).forEach(([code, entry]) => {
-      if (!r.questionnaires[code]) r.questionnaires[code] = Util.clone(entry);
+      if (r.questionnaires[code]) return;
+      const added = Util.clone(entry);
+      delete added.magenWeight;
+      r.questionnaires[code] = added;
     });
     const add = (code, name, expectedGrade) => {
       if (!code || code === 'פנימי') return;
@@ -1403,11 +1453,17 @@ const Config = {
       const codes = (comp.codes || []).map(c => String(c).trim()).filter(Boolean);
       if (!codes.length) throw new Error('נדרש סמל שאלון');
       const item = { enabled: true, ...(list[index] || {}), ...comp, codes, weight: Number(comp.weight) };
+      const hasMagen = 'magenWeight' in comp;
+      if (hasMagen) {
+        const mw = this._normMagen(comp.magenWeight);
+        if (mw === undefined) delete item.magenWeight; else item.magenWeight = mw;
+      }
       /* שכבת יעד מפורשת לרכיב נשמרת מנורמלת (י / יא / יב); ערך לא תקין או ריק מסיר אותה */
       const grade = Util.normGrade(item.expectedGrade);
       if (grade) item.expectedGrade = grade; else delete item.expectedGrade;
       if (index == null || index < 0 || index >= list.length) list.push(item); else list[index] = item;
       if (grade) this._syncExpectedGrade(r, codes, grade);
+      if (hasMagen) this._syncMagenWeight(r, codes, item.magenWeight);
     });
   },
 
@@ -1471,8 +1527,11 @@ const Config = {
     const verifies = !!(patch && 'expectedGrade' in patch && Util.normGrade(patch.expectedGrade));
     return this.updateRules(r => {
       if (patch && 'expectedGrade' in patch && !verifies) throw new Error('שכבה לא תקינה');
+      const hasMagen = !!patch && 'magenWeight' in patch;
+      const magen = hasMagen ? this._normMagen(patch.magenWeight) : undefined;
       r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, ...(verifies ? { verifiedGrade: true, unverifiedGrade: false } : {}) };
       if (verifies) this._syncExpectedGrade(r, [code], patch.expectedGrade);
+      if (hasMagen) this._syncMagenWeight(r, [code], magen);
     });
   },
   removeQuestionnaire(code) {

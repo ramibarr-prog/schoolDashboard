@@ -506,15 +506,16 @@ const Parser = (() => {
   /**
    * ציון שאלון ממועד אחד – היררכיית האמת:
    *  א. ציון סופי בשאלון, אם קיים;
-   *  ב. אחרת, כשיש גם הגשה (מגן) וגם בחינה: Math.round(הגשה × W + בחינה × (1-W)), כש-W הוא משקל המגן ב-Config.magenWeight() (ברירת מחדל 50%), derived = true;
+   *  ב. אחרת, כשיש גם הגשה (מגן) וגם בחינה: Math.round(הגשה × W + בחינה × (1-W)), כש-W הוא משקל המגן של השאלון
+   *     במחזור (Config.magenWeight(code, rules): דריסה ברכיב / בקטלוג, אחרת ברירת המחדל של המחזור – 30%), derived = true;
    *  ג. אחרת ציון בודד (בחינה או הגשה) – מסומן partial, כדי שהמנוע יוכל להשלים מגן חסר מציון שוטף.
    */
-  function resolveAttempt(fin, exam, sub) {
+  function resolveAttempt(fin, exam, sub, code, rules) {
     const f = classify(fin);
     if (f.kind !== 'none') return { cls: f, shown: String(fin).trim(), derived: false, partial: '' };
     const e = Util.parseScore(exam), s = Util.parseScore(sub);
     if (e !== null && s !== null) {
-      const w = Config.magenWeight() / 100;
+      const w = Config.magenWeight(code, rules) / 100;
       const num = Math.round(s * w + e * (1 - w));
       return { cls: { kind: 'num', num }, shown: String(num), derived: true, partial: '' };
     }
@@ -570,7 +571,7 @@ const Parser = (() => {
         const code = Util.normQuestionnaireCode(String(get(r, 'questionnaireCode')).replace(/\D/g, ''));
         if (!tz || !code) { skipped++; return; }
         const submission = get(r, 'submissionGrade'), exam = get(r, 'examGrade'), fin = get(r, 'finalGrade');
-        const res = resolveAttempt(fin, exam, submission);
+        const res = resolveAttempt(fin, exam, submission, code);
         const g = Util.parseClass(get(r, 'grade'), '');
         out.push({
           tz, name: String(get(r, 'name') ?? '').trim(), gradeKey: g.gradeKey,
@@ -717,7 +718,7 @@ const Parser = (() => {
         attempts.get(key)[c.type] = v;
       });
       attempts.forEach(a => {
-        const res = resolveAttempt(a.final, a.exam, a.submission);
+        const res = resolveAttempt(a.final, a.exam, a.submission, a.c.code);
         rows.push({
           tz: s.tz, name: s.name, gradeKey: s.cls.gradeKey, classKey: s.cls.classKey,
           subject: a.c.subject, code: a.c.code, questionnaireCode: a.c.code,

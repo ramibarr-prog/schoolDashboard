@@ -195,7 +195,7 @@ const BagrutFacts = (() => {
 
   /**
    * ציון הרכיב הגבוה ביותר מבין כל הניסיונות ושאלונים חלופיים (Store.bagrutBest).
-   * ציון בחינה ללא ציון הגשה (מגן): בתחזית משוטף משלימים את המגן מהציון השוטף (50%/50%).
+   * ציון בחינה ללא ציון הגשה (מגן): בתחזית משוטף משלימים את המגן מהציון השוטף, לפי משקל המגן של השאלון במחזור.
    */
   function resolveComp(tz, comp, ctx, siblings, cur, scope) {
     const b = bestResult(tz, comp.codes);
@@ -214,7 +214,7 @@ const BagrutFacts = (() => {
       const examOnly = ctx.useCurrent && cur != null && Store.attemptsOf(tz).find(a =>
         a.code === b.code && a.partial === 'exam' && a.cls.kind === 'num' && a.cls.num === b.num);
       if (examOnly) {
-        const mw = Config.magenWeight() / 100;
+        const mw = Config.magenWeight(b.code || (comp.codes && comp.codes[0]), ctx.rules) / 100;
         return { ...base, state: 'num', num: Math.round(cur * mw + b.num * (1 - mw)), reportedNum: b.num, magenForecast: true };
       }
       return { ...base, state: 'num', num: b.num };

@@ -136,10 +136,14 @@ const Store = {
     /* 3. בגרות */
     const bagrut = new Map();
     this.raw.bagrut.forEach(r0 => {
-      /* ציון נגזר (הגשה + בחינה) מחושב מחדש לפי משקל המגן הנוכחי, כך ששינוי ההגדרה חל גם על נתונים שנשמרו */
-      const r = r0.derived ? { ...r0, cls: Parser.resolveAttempt(r0.final, r0.exam, r0.submission).cls } : r0;
-      const t = T.get(r.tz);
-      if (!t) { if (!ignored.has(r.tz)) unknown.bagrut.add(r.tz); return; }
+      const t = T.get(r0.tz);
+      if (!t) { if (!ignored.has(r0.tz)) unknown.bagrut.add(r0.tz); return; }
+      /* ציון נגזר (הגשה + בחינה) מחושב מחדש לפי משקל המגן של השאלון במחזור של שכבת החניך, כך ששינוי ההגדרה חל גם על נתונים שנשמרו */
+      let r = r0;
+      if (r0.derived) {
+        const res = Parser.resolveAttempt(r0.final, r0.exam, r0.submission, r0.code, Config.rulesForGrade(t.gradeKey));
+        r = { ...r0, cls: res.cls, shown: res.shown, scoreRaw: res.shown };
+      }
       t.inBagrut = true;
       if (!bagrut.has(r.tz)) bagrut.set(r.tz, new Map());
       const byCode = bagrut.get(r.tz);

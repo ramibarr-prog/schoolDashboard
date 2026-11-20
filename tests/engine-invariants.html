@@ -904,6 +904,60 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
           'A legacy profile with neither grade nor catalog must safely receive the default metadata');
         resetConfig();
       });
+
+      await part('F.4 per-questionnaire magen weight: math 50% vs cycle default 30% in parsing, cohort regrade and magenForecast; overrides stay cohort-local', async () => {
+        resetConfig();
+        same([Config.magenWeight(), Config.magenWeight('35471'), Config.magenWeight('035471'), Config.magenWeight('22261'), Config.magenWeight('36361')], [30, 50, 50, 30, 50],
+          'Cycle default 30%; math and physics externals 50%');
+        same([Parser.resolveAttempt('', 40, 80, '35471').cls.num, Parser.resolveAttempt('', 40, 80, '22261').cls.num], [60, 52],
+          'Parser: submission 80 + exam 40 => 60 in math, 52 in history');
+        const pass = Config.rules().passGrade, compMin = Config.rules().compensationMin;
+        const shown = tz => code => { const a = Store.attemptsOf(tz).find(x => x.code === code); return a && a.cls.kind === 'num' ? a.cls.num : null; };
+
+        solo({ '35471': { sub: 80, exam: 40 }, '22261': { sub: 80, exam: 40 } });
+        const solo12 = shown(T(1));
+        check(solo12('35471') === 60 && solo12('35471') >= pass, `Math 35471 derived score must be 60 and pass (got ${solo12('35471')})`);
+        check(solo12('22261') === 52 && solo12('22261') < pass && solo12('22261') >= compMin, `History 22261 derived score must be 52 (compensation range, failing) (got ${solo12('22261')})`);
+
+        const sadinOf = (subject, n) => ({ tz: T(1), ev: 'מבחן (100)', sc: 80, grp: `${subject} יב1 בדיקה [${n}]`, dt: '01/11/2026' });
+        world({
+          roster: [stu(1, 'יב', 'יב1')],
+          bagrut: bagrutRows(profile(T(1), { '35471': { exam: 40 }, '22261': { exam: 40 } })),
+          sadin: sadinRows([sadinOf('מתמטיקה 4 יח"ל', 8101), sadinOf('היסטוריה', 8102)])
+        });
+        const fc = BagrutEngine.evaluate(T(1), { useCurrent: true });
+        const fcComp = (id, code) => subj(fc, id).comps.find(c => c.codes.includes(code)) || {};
+        same([fcComp('math', '35471').magenForecast, fcComp('math', '35471').num, fcComp('history', '22261').magenForecast, fcComp('history', '22261').num], [true, 60, true, 52],
+          'magenForecast: exam 40 + current 80 => 60 in math, 52 in history');
+
+        /* override in the 12th-grade cohort only (the cohort being edited) */
+        check(Config.setQuestionnaire('22261', { magenWeight: 50 }).ok, 'A valid catalog magen override must be accepted');
+        let r12 = Config.rulesForGrade('יב'), r11 = Config.rulesForGrade('יא');
+        const hist = r => r.coreSubjects.find(s => s.id === 'history').components[1];
+        same([Config.magenWeight('22261', r12), Config.magenWeight('22264', r12), hist(r12).magenWeight, Config.magenWeight('22261', r11), 'magenWeight' in hist(r11)],
+          [50, 50, 50, 30, false], 'A catalog override syncs to its component and alternatives in the same cohort only');
+        world({ roster: [stu(1, 'יב', 'יב1'), stu(2, 'יא', 'יא1')], bagrut: bagrutRows([{ tz: T(1), code: '22261', sub: 80, exam: 40 }, { tz: T(2), code: '22261', sub: 80, exam: 40 }]) });
+        same([shown(T(1))('22261'), shown(T(2))('22261')], [60, 52], 'Derived scores are regraded with each trainee cohort rules');
+        check(Config.setQuestionnaire('22261', { magenWeight: '' }).ok, 'Clearing a catalog override must be accepted');
+        r12 = Config.rulesForGrade('יב');
+        same([Config.magenWeight('22261', r12), 'magenWeight' in hist(r12), 'magenWeight' in r12.questionnaires['22261']], [30, false, false],
+          'Clearing the override restores inheritance of the cohort default');
+        Store.refresh();
+        same(shown(T(1))('22261'), 52, 'A refresh regrades the stored derived score after the override is cleared');
+
+        const math4 = () => Config.rulesForGrade('יב').coreSubjects.find(s => s.id === 'math').levels['4'];
+        check(Config.upsertComponent('core', 'math', '4', 0, { ...math4()[0], magenWeight: 40 }).ok, 'A valid component magen override must be accepted');
+        r12 = Config.rulesForGrade('יב'); r11 = Config.rulesForGrade('יא');
+        same([Config.magenWeight('35481', r12), r12.questionnaires['35471'].magenWeight, Config.magenWeight('35471', r11), r11.questionnaires['35471'].magenWeight], [40, 40, 50, 50],
+          'A component override syncs to its catalog codes in the edited cohort only');
+        check(Config.upsertComponent('core', 'math', '4', 0, { ...math4()[0], magenWeight: 120 }).ok === false &&
+          Config.setQuestionnaire('35471', { magenWeight: -1 }).ok === false, 'Out-of-range magen weights must be rejected');
+        check(Config.upsertComponent('core', 'math', '4', 0, { ...math4()[0], magenWeight: null }).ok, 'Clearing a component override must be accepted');
+        r12 = Config.rulesForGrade('יב');
+        same([Config.magenWeight('35471', r12), 'magenWeight' in math4()[0], 'magenWeight' in r12.questionnaires['35481']], [30, false, false],
+          'A cleared component override inherits the cohort default');
+        resetConfig();
+      });
     });
   } catch (e) {
     outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });

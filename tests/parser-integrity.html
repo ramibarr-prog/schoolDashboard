@@ -146,6 +146,17 @@ window.fetch = (input, options) => {
     assert(Config.removeQuestionnaire('000999').ok && !Config.rules().questionnaires['999'], 'Catalog removal did not normalize its key');
     passed.push('Flat/wide codes, all-zero codes, rules, catalog edits and actual engine matching share canonical questionnaire codes');
 
+    const magenWide = await Parser.parseExcelFile(workbook([
+      ['Wide', [
+        ['ת.ז', 'שם', 'שכבה', 'כיתה', 'מתמטיקה (035471)\nקיץ (2026)\nציון שנתי', 'מתמטיקה (035471)\nקיץ (2026)\nציון בחינה', 'היסטוריה (022261)\nקיץ (2026)\nציון שנתי', 'היסטוריה (022261)\nקיץ (2026)\nציון בחינה'],
+        ['123', 'Test', 'יב', 'יב1', 80, 40, 80, 40]
+      ]]
+    ]), 'bagrut');
+    const byCode = Object.fromEntries(magenWide.rows.map(r => [r.code, r]));
+    assert(byCode['35471'] && byCode['35471'].derived && byCode['35471'].cls.num === 60 && byCode['35471'].shown === '60' &&
+      byCode['22261'] && byCode['22261'].derived && byCode['22261'].cls.num === 52, 'Wide bagrut must weight the magen per questionnaire (math 50%, cycle default 30%)');
+    passed.push('Wide bagrut derives submission+exam scores with each questionnaire magen weight');
+
     const math = Config.rules().coreSubjects.find(s => s.id === 'math');
     Store.groupsOf = () => [{ subject: 'מתמטיקה', units: '5', reinforcement: true }, { subject: 'מתמטיקה', units: '3', reinforcement: false }];
     assert(BagrutEngine.detectLevel(tz, math) === '3', 'Reinforcement group overrode the real level');

@@ -1435,10 +1435,14 @@ const App = {
     const compRow = (s, level, c, i) => {
       const q = r.questionnaires[c.codes[0]];
       const grade = c.expectedGrade || (q ? q.expectedGrade : 'יב');
+      const comps = (s.variableUnits ? (s.levels || {})[level] : s.components) || [c];
+      const magen = BagrutFacts.isInternalComp(c, comps) ? ''
+        : `<label class="flex items-center gap-1 whitespace-nowrap">מגן<input type="number" min="0" max="100" class="inp w-14" placeholder="${r.magenWeight ?? 30}" value="${c.magenWeight ?? ''}" title="משקל ציון הגשה/מגן לשאלון (ריק = ברירת מחדל של המחזור)" data-chg="compMagen" ${attrs('core', s.id, level, i)}>%</label>`;
       return `<div class="q-row ${c.enabled === false ? 'opacity-50' : ''}">
         <input type="checkbox" class="w-4 h-4" aria-label="פעיל" data-chg="compEnabled" ${attrs('core', s.id, level, i)} ${c.enabled === false ? '' : 'checked'}>
         <input type="text" class="inp q-codes" dir="ltr" aria-label="סמלי שאלון" value="${E(c.codes.join(', '))}" data-chg="compCodes" ${attrs('core', s.id, level, i)}>
         <label class="flex items-center gap-1 whitespace-nowrap">משקל<input type="number" min="0" max="100" class="inp q-weight" value="${c.weight}" data-chg="compWeight" ${attrs('core', s.id, level, i)}>%</label>
+        ${magen}
         <select class="inp q-grade" aria-label="נדרש עד שכבה" title="נדרש עד שכבה" data-chg="compGrade" ${attrs('core', s.id, level, i)}>${GRADE_OPTS.map(g => `<option value="${g}" ${grade === g ? 'selected' : ''}>${Util.gl(g)}</option>`).join('')}</select>
         <input type="text" class="inp q-name" aria-label="שם השאלון" placeholder="שם השאלון" title="שם השאלון בקטלוג" value="${E(q ? q.name : '')}" data-chg="qName" data-code="${E(c.codes[0])}">
         <button type="button" class="btn btn-danger btn-sm" aria-label="הסרת שאלון" data-act="compRemove" ${attrs('core', s.id, level, i)}>✕</button></div>`;
@@ -3005,7 +3009,12 @@ const App = {
       Store.refresh();
       return res;
     });
-    on('rulesReset', 'click', () => { if (confirm(`לשחזר את כללי הזכאות והמשקלים של ${this.cohortName(Config.getActiveCohortId())} לברירת המחדל?`)) this.applyRule(Config.resetRules()); });
+    on('rulesReset', 'click', () => {
+      if (!confirm(`לשחזר את כללי הזכאות והמשקלים של ${this.cohortName(Config.getActiveCohortId())} לברירת המחדל?`)) return;
+      const res = Config.resetRules();
+      Store.refresh();
+      this.applyRule(res);
+    });
 
     /* קבוצות */
     /* מקצוע ומורה מתואמים: בחירת מקצוע מאפסת מורה שאינו מלמד אותו; בחירת מורה מציגה את כל קבוצותיו בכל המקצועות */
@@ -3643,7 +3652,7 @@ const App = {
       ], v => {
         if (!confirm(`כל חוקי הבגרות והשאלונים של ${this.cohortName(to)} יוחלפו בעותק של ${this.cohortName(v.from)}. להמשיך?`)) return { ok: false, error: 'ההעתקה בוטלה' };
         const res = Config.copyCohortRules(v.from, to);
-        if (res.ok !== false) this.toast(`החוקים הועתקו מ-${this.cohortName(v.from)}`, 'ok');
+        if (res.ok !== false) { Store.refresh(); this.toast(`החוקים הועתקו מ-${this.cohortName(v.from)}`, 'ok'); }
         return res;
       }, 'העתקה');
     },
@@ -3821,6 +3830,14 @@ const App = {
     compCodes(el) { this.patchComp(el, { codes: el.value.split(',').map(x => x.trim()).filter(Boolean) }); },
     compWeight(el) { this.patchComp(el, { weight: Number(el.value) }); },
     compGrade(el) { this.patchComp(el, { expectedGrade: el.value }); this.renderRulesDrawer(); },
+    /* ריק = מחיקת הדריסה וירושת ברירת המחדל של המחזור; ציונים נגזרים מחושבים מחדש מיד */
+    compMagen(el) {
+      const v = el.value.trim(), n = Number(v);
+      if (v !== '' && !(isFinite(n) && n >= 0 && n <= 100)) { this.toast('משקל המגן חייב להיות בין 0 ל-100', 'error'); this.renderRulesDrawer(); return; }
+      this.patchComp(el, { magenWeight: v === '' ? null : n });
+      Store.refresh();
+      this.renderRulesDrawer();
+    },
     ruleToggle(el) { this.applyRule(Config.toggleClause(el.dataset.kind, el.dataset.id)); },
     clauseCodes(el) { this.applyRule(Config.setClauseCodes(el.dataset.kind, el.dataset.id, el.value)); },
     clauseKeywords(el) { this.applyRule(Config.patchClause(el.dataset.kind, el.dataset.id, { keywords: el.value.split(',').map(x => x.trim()).filter(Boolean) })); },
