@@ -411,9 +411,9 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         near(strict.reverse.externalScore, 60, 'External score');
         const hit = subj(evalFull(solo({ '22283': 42, '22261': 60 })), 'history'), miss = subj(evalFull(solo({ '22283': 41, '22261': 60 })), 'history');
         check(hit.status === 'pass' && miss.status !== 'pass', '42 must pass and 41 must not (60 x 70% + internal x 30%)');
-        const adaptive = subj(BagrutEngine.evaluate(solo({ '22283': null, '22261': 40 })), 'history');
-        check(adaptive.status === 'await' && adaptive.partial && adaptive.partial.donePct === 70 && adaptive.reverse && adaptive.reverse.required30 === 89, 'A partial subject must await the missing part (needs 89)');
-        near(adaptive.final, 40, 'Partial score is only the reported part');
+        const adaptive = subj(BagrutEngine.evaluate(solo({ '22283': 40, '22261': null })), 'history');
+        check(adaptive.status === 'await' && adaptive.partial && adaptive.partial.donePct === 30 && adaptive.reverse && adaptive.reverse.required30 === 61, 'A partial subject must await the current-grade missing part (needs 61)');
+        near(adaptive.final, 40, 'Partial score is only the reported previous-grade part');
       });
 
       await part('QA-2.14 INV-7 determinism under shuffled input (10 shuffles)', async () => {
@@ -619,6 +619,61 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
     await group('Group E — adaptive mid-year forecast vs final-certificate mode (fullMode false/true)', async () => {
       resetConfig();
 
+      await part('E.0 option B: previous-grade questionnaires are always due, while an unreported current-grade questionnaire stays pending', async () => {
+        const previous = BagrutFacts.resolveTiming({ ord: 11, rank: 12, strict: false, cohTaken: false, hasAttempt: false });
+        check(previous.due && previous.missing && !previous.pendingCohort,
+          'A previous-grade questionnaire must be due and missing at 0% cohort reporting');
+        check(BagrutFacts.timingClass(previous) === 'past_grade', 'An untaken previous-grade questionnaire is classified as past_grade');
+        const current = BagrutFacts.resolveTiming({ ord: 12, rank: 12, strict: false, cohTaken: false, hasAttempt: false });
+        check(!current.due && current.pendingCohort && !current.missing,
+          'A current-grade questionnaire must remain pending at 0% cohort reporting');
+        check(BagrutFacts.timingClass(current) === 'current_upcoming', 'An unreported current-grade questionnaire is classified as current_upcoming');
+
+        const tz = solo({ '22283': null, '22261': null });
+        const history = subj(BagrutEngine.evaluate(tz), 'history');
+        check(history.unresolved.some(c => c.codes.includes('22283') && c.due),
+          'A 12th grader missing the 11th-grade history component must have an adaptive deficiency at 0% reporting');
+        check(history.unresolved.every(c => c.codes.includes('22283')) && history.pending.some(c => c.codes.includes('22261')),
+          'The missing previous-grade component is due while the current-grade history component remains pending');
+      });
+
+      await part('E.0b expectedGrade changes are cohort-local, immediately affect adaptive timing, and preserve full mode', async () => {
+        const activeId = Config.getActiveCohortId();
+        const otherId = Object.keys(Config.getCohortProfiles()).find(id => id !== activeId);
+        const activeRules = Config.getCohortProfiles()[activeId].rules;
+        const otherRules = Config.getCohortProfiles()[otherId].rules;
+        const component = activeRules.coreSubjects.find(s => s.id === 'history').components[0];
+        const otherComponent = otherRules.coreSubjects.find(s => s.id === 'history').components[0];
+        const tz = solo({ '22283': null });
+        const before = BagrutEngine.evaluate(tz);
+        check(subj(before, 'history').unresolved.some(c => c.codes.includes('22283')),
+          'Precondition: the 11th-grade history component blocks in adaptive mode for a 12th grader');
+        const beforeFull = evalFull(tz);
+
+        const changed = Config.upsertComponent('core', 'history', '', 0, { ...component, expectedGrade: 'יב' });
+        check(changed.ok !== false, `Updating the component grade must succeed (${changed.error || ''})`);
+        check(activeRules.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade === 'יב' &&
+          activeRules.questionnaires['22283'].expectedGrade === 'יב',
+          'The component and its questionnaire catalog entry must synchronize in the active cohort');
+        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['22283'].expectedGrade === 'יא',
+          'Changing a component grade must not affect another cohort');
+        const after = BagrutEngine.evaluate(tz);
+        check(!subj(after, 'history').unresolved.some(c => c.codes.includes('22283')) &&
+          subj(after, 'history').pending.some(c => c.codes.includes('22283')),
+          'Moving the component to the current grade must immediately remove its adaptive deficiency at 0% reporting');
+
+        const afterFull = evalFull(tz);
+        same([beforeFull.tier, kinds(beforeFull)], [afterFull.tier, kinds(afterFull)],
+          'Changing expectedGrade must not alter final-certificate mode');
+
+        const catalogUpdate = Config.setQuestionnaire('22283', { expectedGrade: 'יא' });
+        check(catalogUpdate.ok !== false && activeRules.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade === 'יא',
+          'Changing the questionnaire catalog grade must synchronize the containing component');
+        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['22283'].expectedGrade === 'יא',
+          'Questionnaire synchronization must remain confined to the active cohort');
+        resetConfig();
+      });
+
       await part('E.1 12th grade mid-year: partial subjects (only the 30%/50% part reported, rest pending for the cohort) and under 21 units', async () => {
         /* היסטוריה: רק רכיב ה-30% דווח; מתמטיקה 4 יח"ל: רק רכיב 50% אחד דווח. חניך יחיד => השכבה מתחת לסף הדיווח ברכיבים החסרים */
         const tz = solo({ '22261': null, '35472': null });
@@ -671,6 +726,8 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
       await part('E.3 12th grade: a failing sadin (current) average in a subject not yet examined is a soft watch, never a hard blocker', async () => {
         const g = 'ספרות יב1 רות בדיקה [8003]';
         /* אנגלית/מתמטיקה/מגמה ציון עובר נמוך (56) כדי שפיצוי הנקודות לא "יבלע" את התראת הנכשל השוטף */
+        const rulesLit = Config.rules().coreSubjects.find(s => s.id === 'literature'), early = rulesLit.components[0];
+        Config.upsertComponent('core', 'literature', '', 0, { ...early, expectedGrade: 'יב' });
         world({
           roster: [stu(1, 'יב', 'יב1')],
           bagrut: bagrutRows(profile(T(1), { '8283': null, '8281': null, '16382': 56, '16471': 56, '35471': 56, '35472': 56, '36361': 56 })),

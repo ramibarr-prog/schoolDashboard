@@ -64,27 +64,29 @@ const BagrutFacts = (() => {
   /**
    * תזמון רכיב מול שכבת החניך – אותה הגדרה בשער 1, בשער 2, בתקינות הצבירה ובמטריצת השאלונים.
    * עתידי: שכבת היעד גבוהה משל החניך וטרם דווח בו כלום. נדרש: דווח בו משהו (גם כישלון / חסם), או שהגיע מועדו
-   * ובמצב תעודה סופית, או שהשכבה כבר נבחנה בו (סף הדיווח השכבתי).
+   * בשכבה קודמת תמיד; בשכבה הנוכחית במצב תעודה סופית או לאחר שהשכבה נבחנה בו.
    */
   function resolveTiming({ ord, rank, strict, cohTaken, hasAttempt }) {
     const has = !!hasAttempt;
-    const due = has || (ord <= rank && (!!strict || !!cohTaken));
+    const pastGrade = ord < rank;
+    const due = has || (ord <= rank && (!!strict || pastGrade || !!cohTaken));
     return {
-      ord, hasAttempt: has, future: ord > rank && !has, expDue: ord <= rank || has, due,
-      pending: !due, pendingCohort: ord <= rank && !has && !strict && !cohTaken, missing: due && !has
+      ord, rank, hasAttempt: has, future: ord > rank && !has, expDue: ord <= rank || has, due,
+      pending: !due, pendingCohort: ord === rank && !has && !strict && !cohTaken, missing: due && !has
     };
   }
 
   /**
-   * שם קנוני לתזמון עובדתי של רכיב (הכנה לשלב 2 – אינו משנה את תוצאת resolveTiming):
-   *   past_grade        – דווח ניסיון בפועל (גם כישלון / חסם);
-   *   current_tested    – מועדו הגיע ונדרש כעת (מצב תעודה סופית או שהשכבה כבר נבחנה בו) אך טרם דווח;
-   *   current_upcoming  – מועדו הגיע אך השכבה טרם נבחנה בו ("בתהליך השנה");
+   * שם קנוני לתזמון עובדתי של רכיב:
+   *   past_grade        – מיועד לשכבה קודמת, עם ניסיון או בלעדיו;
+   *   current_tested    – רכיב נדרש בשכבה הנוכחית, או ניסיון מוקדם בשכבה עתידית;
+   *   current_upcoming  – מיועד לשכבה הנוכחית אך עדיין אינו נדרש ("בתהליך השנה");
    *   future_grade      – שכבת היעד מאוחרת משכבת החניך וטרם דווח בו דבר.
    */
   function timingClass(t) {
-    if (t.hasAttempt) return 'past_grade';
-    if (t.future) return 'future_grade';
+    if (t.ord > t.rank && !t.hasAttempt) return 'future_grade';
+    if (t.ord < t.rank) return 'past_grade';
+    if (t.hasAttempt) return 'current_tested';
     return t.due ? 'current_tested' : 'current_upcoming';
   }
 
@@ -201,7 +203,7 @@ const BagrutFacts = (() => {
     const ord = compOrd(comp, b);
     const internal = isInternalComp(comp, siblings || [comp]);
     const coh = cohortOf(ctx.gradeKey, comp.codes, scope);
-    /* צפי מותאם: רכיב שהשכבה טרם נבחנה בו אינו חוסר ("בתהליך השנה"); מצב תעודה סופית דורש הכול */
+    /* צפי מותאם: רק רכיב של השכבה הנוכחית שטרם נבחנה בו נשאר "בתהליך השנה". */
     const timing = resolveTiming({ ord, rank: ctx.rank, strict: ctx.strict, cohTaken: coh.taken, hasAttempt: !!(b && b.kind !== 'none') });
     const base = {
       codes: comp.codes, code, weight: Number(comp.weight) || 0, targetRank: ord,

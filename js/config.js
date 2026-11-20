@@ -1279,6 +1279,10 @@ const Config = {
         }
       }));
     });
+    r.majors.forEach(m => {
+      m.expectedGrade = Util.normGrade(m.expectedGrade) || 'יב';
+      m.codes.forEach(code => add(code, m.name, m.expectedGrade));
+    });
     r.internals.forEach(i => i.codes.forEach(code => add(code, i.name, i.expectedGrade)));
   },
 
@@ -1351,6 +1355,8 @@ const Config = {
       else if (kind === 'core') { c.units = c.units || 2; c.variableUnits = !!c.variableUnits; c.components = c.components || []; if (c.variableUnits) c.levels = c.levels || { 3: [], 4: [], 5: [] }; }
       else { c.units = c.units || 5; c.codes = c.codes || []; }
       list.push(c);
+      const items = kind === 'core' ? [...c.components, ...Object.values(c.levels || {}).flat()] : [c];
+      items.filter(item => item.expectedGrade).forEach(item => this._syncExpectedGrade(r, item.codes, item.expectedGrade));
     });
   },
 
@@ -1379,9 +1385,10 @@ const Config = {
       if (!codes.length) throw new Error('נדרש סמל שאלון');
       const item = { enabled: true, ...(list[index] || {}), ...comp, codes, weight: Number(comp.weight) };
       /* שכבת יעד מפורשת לרכיב נשמרת מנורמלת (י / יא / יב); ערך לא תקין או ריק מסיר אותה */
-      const grade = comp.expectedGrade ? Util.normGrade(comp.expectedGrade) : '';
+      const grade = Util.normGrade(item.expectedGrade);
       if (grade) item.expectedGrade = grade; else delete item.expectedGrade;
       if (index == null || index < 0 || index >= list.length) list.push(item); else list[index] = item;
+      if (grade) this._syncExpectedGrade(r, codes, grade);
     });
   },
 
@@ -1396,6 +1403,7 @@ const Config = {
       const c = this._clauseList(r, kind).find(x => x.id === id);
       if (!c) throw new Error('סעיף לא נמצא');
       c.codes = list;
+      if (c.expectedGrade) this._syncExpectedGrade(r, list, c.expectedGrade);
     });
   },
 
@@ -1406,6 +1414,35 @@ const Config = {
       if (!c) throw new Error('סעיף לא נמצא');
       if ('name' in patch && !String(patch.name).trim()) throw new Error('נדרש שם לסעיף');
       Object.assign(c, patch);
+      if ('expectedGrade' in patch) {
+        const grade = Util.normGrade(patch.expectedGrade);
+        if (!grade) throw new Error('שכבה לא תקינה');
+        c.expectedGrade = grade;
+        this._syncExpectedGrade(r, c.codes || [], grade);
+      }
+    });
+  },
+
+  /** קודים חלופיים ורכיבים החולקים סמל נשארים באותה שכבת יעד, במחזור הנערך בלבד. */
+  _syncExpectedGrade(r, codes, expectedGrade) {
+    const grade = Util.normGrade(expectedGrade);
+    const affected = new Set((codes || []).map(Util.normQuestionnaireCode));
+    const items = [
+      ...r.coreSubjects.flatMap(s => s.variableUnits ? Object.values(s.levels || {}).flat() : (s.components || [])),
+      ...r.majors, ...r.internals
+    ];
+    let size;
+    do {
+      size = affected.size;
+      items.forEach(item => {
+        if (!(item.codes || []).some(code => affected.has(Util.normQuestionnaireCode(code)))) return;
+        item.expectedGrade = grade;
+        item.codes.forEach(code => affected.add(Util.normQuestionnaireCode(code)));
+      });
+    } while (affected.size !== size);
+    affected.forEach(code => {
+      if (!code || code === 'פנימי') return;
+      r.questionnaires[code] = { name: '', ...(r.questionnaires[code] || {}), expectedGrade: grade, verifiedGrade: true, unverifiedGrade: false };
     });
   },
 
@@ -1414,7 +1451,9 @@ const Config = {
     code = Util.normQuestionnaireCode(code);
     const verifies = !!(patch && 'expectedGrade' in patch && Util.normGrade(patch.expectedGrade));
     return this.updateRules(r => {
+      if (patch && 'expectedGrade' in patch && !verifies) throw new Error('שכבה לא תקינה');
       r.questionnaires[code] = { name: '', expectedGrade: 'יב', ...(r.questionnaires[code] || {}), ...patch, ...(verifies ? { verifiedGrade: true, unverifiedGrade: false } : {}) };
+      if (verifies) this._syncExpectedGrade(r, [code], patch.expectedGrade);
     });
   },
   removeQuestionnaire(code) {
