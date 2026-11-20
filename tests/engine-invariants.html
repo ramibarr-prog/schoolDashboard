@@ -47,7 +47,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
   /* a fully eligible 12th grader: every core subject, a 5-unit physics major and all internal units */
   const BASE = {
     '22283': 70, '22261': 70, '34221': 70, '34225': 70, '8283': 70, '8281': 70, '1263': 70, '1264': 70, '11283': 70, '11281': 70,
-    '16382': 80, '16471': 80, '35471': 80, '35472': 80, '36361': 80,
+    '16382': 80, '16471': 80, '16483': 80, '16486': 80, '35471': 80, '35472': 80, '36361': 80,
     '86083': 'עמד בדרישות', '41083': 'בוצע', '43183': 70, '82083': 'בוצע'
   };
   const profile = (tz, changes = {}) => Object.entries({ ...BASE, ...changes }).filter(([, value]) => value !== null)
@@ -120,8 +120,8 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
     senior(11, 'יב2', { '22283': 30, '22261': 30, '34221': 30, '34225': 30, '5384': { final: 70, subject: 'אנגלית' } });
     senior(12, 'יב1', { '22283': 55, '22261': 54 });
     for (let n = 21; n <= 27; n++) { roster.push(stu(n, 'יא', n < 25 ? 'יא1' : 'יא2')); bagrut.push(...bagrutRows(partial(n, ELEVENTH))); }
-    roster.push(stu(28, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(28, { ...ELEVENTH, '8283': null }).filter(r => r.final !== null)));
-    roster.push(stu(29, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(29, { ...ELEVENTH, '8283': null, '1263': null }).filter(r => r.final !== null)));
+    roster.push(stu(28, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(28, { ...ELEVENTH, '16382': null }).filter(r => r.final !== null)));
+    roster.push(stu(29, 'יא', 'יא2')); bagrut.push(...bagrutRows(partial(29, { ...ELEVENTH, '16382': null, '35471': null }).filter(r => r.final !== null)));
     roster.push(stu(31, 'י', 'י1'));
     roster.push(stu(32, 'י', 'י1')); bagrut.push(...bagrutRows(partial(32, { '16381': 60, '16382': 60 })));
     roster.push(stu(33, 'י', 'י2')); bagrut.push(...bagrutRows(partial(33, { '16381': 30 })));
@@ -318,10 +318,10 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         check(Store.weightedAverage([{ score: 0, weight: 1 }, { score: 80, weight: 1 }]).avg === 40, 'Sadin: an entered zero counts');
       });
 
-      const ENG = { 3: ['16381', '16382'], 4: ['16382', '16471'], 5: ['16471', '16582'] };
+      const ENG = { 3: ['16381', '16382', '16383', '16387'], 4: ['16382', '16471', '16483', '16486'], 5: ['16471', '16582', '16583', '16586'] };
       const MATH = { 3: ['35173', '35371', '35372'], 4: ['35471', '35472'], 5: ['35571', '35572'] };
       const levelChanges = (e, m, ge, gm) => {
-        const changes = { '16382': null, '16471': null, '35471': null, '35472': null };
+        const changes = Object.fromEntries([...new Set([...Object.values(ENG).flat(), ...Object.values(MATH).flat()])].map(code => [code, null]));
         ENG[e].forEach(code => { changes[code] = ge; });
         MATH[m].forEach(code => { changes[code] = gm; });
         return changes;
@@ -368,7 +368,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         const ev = evalFull(solo({ '35571': 80, '35471': 60, '35472': 70 }));
         const math = subj(ev, 'math');
         check(math.units === '4' && math.comps.length === 2, 'Level 4 questionnaires must determine the level');
-        near(math.final, 65, 'Only level-4 grades may enter the average (no double counting)');
+        near(math.final, 63.5, 'Only level-4 grades may enter the 65/35 average (no double counting)');
         check(ev.isPotentialException && ev.suspect.some(s => s.includes('רמות יח"ל מעורבות')), 'Mixed levels must be flagged for review');
         const gid = (subject, id) => `${subject} יב1 מורה [${id}]`;
         world({
@@ -457,8 +457,8 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         const roster = [stu(31, 'י', 'י1')], bagrut = [];
         for (let n = 21; n <= 29; n++) roster.push(stu(n, 'יא', 'יא1'));
         for (let n = 21; n <= 27; n++) bagrut.push(...partial(n, ELEVENTH));
-        bagrut.push(...partial(28, { ...ELEVENTH, '8283': undefined }).filter(r => r.final !== undefined));
-        bagrut.push(...partial(29, { ...ELEVENTH, '8283': undefined, '1263': undefined }).filter(r => r.final !== undefined));
+        bagrut.push(...partial(28, { ...ELEVENTH, '16382': undefined }).filter(r => r.final !== undefined));
+        bagrut.push(...partial(29, { ...ELEVENTH, '16382': undefined, '35471': undefined }).filter(r => r.final !== undefined));
         world({ roster, bagrut: bagrutRows(bagrut) });
       };
 
@@ -582,7 +582,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
       await part('QA-6.4 a rule change for grade 10 leaves grades 11 and 12 untouched', async () => {
         const build = () => world({
           roster: [stu(1, 'י', 'י1'), stu(2, 'יא', 'יא1'), stu(3, 'יב', 'יב1')],
-          bagrut: bagrutRows([1, 2, 3].flatMap(n => [{ tz: T(n), code: '16381', final: 57 }, { tz: T(n), code: '16382', final: 57 }]))
+          bagrut: bagrutRows([1, 2, 3].flatMap(n => ['16381', '16382', '16383', '16387'].map(code => ({ tz: T(n), code, final: 57 }))))
         });
         const english = n => evalFull(T(n)).subjects.find(s => s.id === 'english');
         build();
@@ -629,12 +629,12 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
           'A current-grade questionnaire must remain pending at 0% cohort reporting');
         check(BagrutFacts.timingClass(current) === 'current_upcoming', 'An unreported current-grade questionnaire is classified as current_upcoming');
 
-        const tz = solo({ '22283': null, '22261': null });
-        const history = subj(BagrutEngine.evaluate(tz), 'history');
-        check(history.unresolved.some(c => c.codes.includes('22283') && c.due),
-          'A 12th grader missing the 11th-grade history component must have an adaptive deficiency at 0% reporting');
-        check(history.unresolved.every(c => c.codes.includes('22283')) && history.pending.some(c => c.codes.includes('22261')),
-          'The missing previous-grade component is due while the current-grade history component remains pending');
+        const tz = solo({ '35471': null, '35472': null });
+        const math = subj(BagrutEngine.evaluate(tz), 'math');
+        check(math.unresolved.some(c => c.codes.includes('35471') && c.due),
+          'A 12th grader missing the 11th-grade math component must have an adaptive deficiency at 0% reporting');
+        check(math.unresolved.every(c => c.codes.includes('35471')) && math.pending.some(c => c.codes.includes('35472')),
+          'The missing previous-grade component is due while the current-grade math component remains pending');
       });
 
       await part('E.0b expectedGrade changes are cohort-local, immediately affect adaptive timing, and preserve full mode', async () => {
@@ -642,40 +642,40 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         const otherId = Object.keys(Config.getCohortProfiles()).find(id => id !== activeId);
         const activeRules = Config.getCohortProfiles()[activeId].rules;
         const otherRules = Config.getCohortProfiles()[otherId].rules;
-        const component = activeRules.coreSubjects.find(s => s.id === 'history').components[0];
-        const otherComponent = otherRules.coreSubjects.find(s => s.id === 'history').components[0];
-        const tz = solo({ '22283': null });
+        const component = activeRules.coreSubjects.find(s => s.id === 'math').levels['4'][0];
+        const otherComponent = otherRules.coreSubjects.find(s => s.id === 'math').levels['4'][0];
+        const tz = solo({ '35471': null });
         const before = BagrutEngine.evaluate(tz);
-        check(subj(before, 'history').unresolved.some(c => c.codes.includes('22283')),
-          'Precondition: the 11th-grade history component blocks in adaptive mode for a 12th grader');
+        check(subj(before, 'math').unresolved.some(c => c.codes.includes('35471')),
+          'Precondition: the 11th-grade math component blocks in adaptive mode for a 12th grader');
         const beforeFull = evalFull(tz);
 
-        const changed = Config.upsertComponent('core', 'history', '', 0, { ...component, expectedGrade: 'יב' });
+        const changed = Config.upsertComponent('core', 'math', '4', 0, { ...component, expectedGrade: 'יב' });
         check(changed.ok !== false, `Updating the component grade must succeed (${changed.error || ''})`);
-        check(activeRules.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade === 'יב' &&
-          activeRules.questionnaires['22283'].expectedGrade === 'יב',
+        check(activeRules.coreSubjects.find(s => s.id === 'math').levels['4'][0].expectedGrade === 'יב' &&
+          activeRules.questionnaires['35471'].expectedGrade === 'יב',
           'The component and its questionnaire catalog entry must synchronize in the active cohort');
-        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['22283'].expectedGrade === 'יא',
+        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['35471'].expectedGrade === 'יא',
           'Changing a component grade must not affect another cohort');
         const after = BagrutEngine.evaluate(tz);
-        check(!subj(after, 'history').unresolved.some(c => c.codes.includes('22283')) &&
-          subj(after, 'history').pending.some(c => c.codes.includes('22283')),
+        check(!subj(after, 'math').unresolved.some(c => c.codes.includes('35471')) &&
+          subj(after, 'math').pending.some(c => c.codes.includes('35471')),
           'Moving the component to the current grade must immediately remove its adaptive deficiency at 0% reporting');
 
         const afterFull = evalFull(tz);
         same([beforeFull.tier, kinds(beforeFull)], [afterFull.tier, kinds(afterFull)],
           'Changing expectedGrade must not alter final-certificate mode');
 
-        const catalogUpdate = Config.setQuestionnaire('22283', { expectedGrade: 'יא' });
-        check(catalogUpdate.ok !== false && activeRules.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade === 'יא',
+        const catalogUpdate = Config.setQuestionnaire('35471', { expectedGrade: 'יא' });
+        check(catalogUpdate.ok !== false && activeRules.coreSubjects.find(s => s.id === 'math').levels['4'][0].expectedGrade === 'יא',
           'Changing the questionnaire catalog grade must synchronize the containing component');
-        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['22283'].expectedGrade === 'יא',
+        check(otherComponent.expectedGrade === 'יא' && otherRules.questionnaires['35471'].expectedGrade === 'יא',
           'Questionnaire synchronization must remain confined to the active cohort');
         resetConfig();
       });
 
-      await part('E.1 12th grade mid-year: partial subjects (only the 30%/50% part reported, rest pending for the cohort) and under 21 units', async () => {
-        /* היסטוריה: רק רכיב ה-30% דווח; מתמטיקה 4 יח"ל: רק רכיב 50% אחד דווח. חניך יחיד => השכבה מתחת לסף הדיווח ברכיבים החסרים */
+      await part('E.1 12th grade mid-year: partial subjects (only the 30%/65% part reported, rest pending for the cohort) and under 21 units', async () => {
+        /* היסטוריה: רק רכיב ה-30% דווח; מתמטיקה 4 יח"ל: רק רכיב ה-65% דווח. חניך יחיד => השכבה מתחת לסף הדיווח ברכיבים החסרים */
         const tz = solo({ '22261': null, '35472': null });
         const adaptive = BagrutEngine.evaluate(tz);
         check(adaptive.adaptive === true && adaptive.tier === 1 && adaptive.tierText === BagrutEngine.TIER_TEXT.adaptive[1],
@@ -726,11 +726,9 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
       await part('E.3 12th grade: a failing sadin (current) average in a subject not yet examined is a soft watch, never a hard blocker', async () => {
         const g = 'ספרות יב1 רות בדיקה [8003]';
         /* אנגלית/מתמטיקה/מגמה ציון עובר נמוך (56) כדי שפיצוי הנקודות לא "יבלע" את התראת הנכשל השוטף */
-        const rulesLit = Config.rules().coreSubjects.find(s => s.id === 'literature'), early = rulesLit.components[0];
-        Config.upsertComponent('core', 'literature', '', 0, { ...early, expectedGrade: 'יב' });
         world({
           roster: [stu(1, 'יב', 'יב1')],
-          bagrut: bagrutRows(profile(T(1), { '8283': null, '8281': null, '16382': 56, '16471': 56, '35471': 56, '35472': 56, '36361': 56 })),
+          bagrut: bagrutRows(profile(T(1), { '8283': null, '8281': null, '16382': 56, '16471': 56, '16483': 56, '16486': 56, '35471': 56, '35472': 56, '36361': 56 })),
           sadin: sadinRows([{ tz: T(1), ev: 'מבחן (50)', sc: 40, grp: g, dt: '01/11/2026' }, { tz: T(1), ev: 'בוחן (50)', sc: 40, grp: g, dt: '10/11/2026' }])
         });
         /* ללא תחזית משוטף: מקצוע שהשכבה טרם נבחנה בו הוא "בתהליך" בלבד, גם כשהסדין נכשל */
@@ -752,8 +750,8 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
           roster: [41, 42, 43, 44].map(n => stu(n, 'יא', 'יא1')),
           bagrut: bagrutRows([
             ...partial(41, ELEVENTH),
-            ...partial(42, { ...ELEVENTH, '22283': 40 }),
-            ...partial(43, Object.fromEntries(Object.entries({ ...ELEVENTH, '8283': 40 }).filter(([code]) => code !== '1263'))),
+            ...partial(42, { ...ELEVENTH, '16382': 40 }),
+            ...partial(43, Object.fromEntries(Object.entries({ ...ELEVENTH, '16382': 40 }).filter(([code]) => code !== '35471'))),
             ...partial(44, ELEVENTH)
           ])
         });
@@ -797,6 +795,114 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
           full.manualReview.foreignCodes[0].code === '99999' && full.manualReview.foreignCodes[0].reason === 'unlisted-code',
           `An unmapped questionnaire must require a coordinator decision even when everything else passes (got ${JSON.stringify(full.manualReview)})`);
         check(BagrutEngine.evaluate(foreign).manualReview.required === true, 'The adaptive forecast must flag the unmapped questionnaire as well');
+      });
+    });
+
+    await group('Group F — new curriculum, vaulted 30%, and saved-cohort compatibility', async () => {
+      resetConfig();
+      await part('F.1 exact curriculum weights and internal/external classification drive the weighted grades', async () => {
+        const rules = Config.rules();
+        const english = rules.coreSubjects.find(s => s.id === 'english'), math = rules.coreSubjects.find(s => s.id === 'math');
+        const englishCodes = {
+          3: [['16381'], ['16382'], ['16383', '16384'], ['16387', '16385']],
+          4: [['16382'], ['16471', '16481'], ['16483', '16484'], ['16486', '16487', '16485']],
+          5: [['16471', '16481'], ['16582'], ['16583', '16584'], ['16586', '16587', '16585']]
+        };
+        const mathWeights = { 3: [25, 35, 40], 4: [65, 35], 5: [60, 40] };
+        rules.coreSubjects.forEach(s => {
+          const lists = s.variableUnits ? Object.values(s.levels) : [s.components];
+          lists.forEach(list => same(list.reduce((sum, c) => sum + c.weight, 0), 100, `${s.id}: exact 100% total`));
+        });
+        ['history', 'literature', 'tanach', 'hebrew', 'civics'].forEach(id => {
+          const c = rules.coreSubjects.find(s => s.id === id).components[0];
+          check(c.expectedGrade === 'יב' && c.codes.every(code => rules.questionnaires[code].expectedGrade === 'יב'),
+            `${id}: the alternative assessment and its catalog entries must be due in grade 12`);
+        });
+        const civics = rules.coreSubjects.find(s => s.id === 'civics');
+        same(civics.components.map(c => [c.codes, c.weight]), [
+          [['34263', '34283', '34273', '34221', '34224'], 30],
+          [['34271', '34274', '34281', '34284', '34225'], 70]
+        ], 'Civics keeps the existing codes as alternatives in the 30/70 curriculum');
+        same(math.levels['3'][0].codes, ['35173', '35183', '35172'], 'Math alternative-assessment codes');
+        check(BagrutFacts.isInternalComp(math.levels['3'][0], math.levels['3']), 'The 25% math alternative assessment must be internal');
+
+        [3, 4, 5].forEach(level => {
+          const ec = english.levels[level], mc = math.levels[level];
+          same(ec.map(c => c.codes), englishCodes[level], `English ${level}: all four code groups`);
+          same(ec.map(c => c.weight), [27, 27, 26, 20], `English ${level}: weights`);
+          same(mc.map(c => c.weight), mathWeights[level], `Math ${level}: weights`);
+          same(ec.map(c => BagrutFacts.isInternalComp(c, ec)), [false, false, true, false],
+            `English ${level}: only the portfolio is internal, never the oral exam`);
+          ec.forEach(c => check(c.codes.every(code => rules.questionnaires[code] && rules.questionnaires[code].name),
+            `English ${level}: every alternative has named catalog metadata`));
+          const changes = Object.fromEntries([english, math].flatMap(s => Object.values(s.levels).flat().flatMap(c => c.codes)).map(code => [code, null]));
+          ec.forEach((c, i) => { changes[c.codes[0]] = [20, 80, 60, 90][i]; });
+          mc.forEach((c, i) => { changes[c.codes[0]] = [20, 80, 60][i]; });
+          const ev = evalFull(solo(changes));
+          same(subj(ev, 'english').units, String(level), `English ${level}: detected level`);
+          near(subj(ev, 'english').final, 60.6, `English ${level}: weighted four-component result`);
+          same(subj(ev, 'math').units, String(level), `Math ${level}: detected level`);
+          near(subj(ev, 'math').final, { 3: 57, 4: 41, 5: 44 }[level], `Math ${level}: weighted curriculum result`);
+        });
+        const ev = evalFull(solo({ '34221': null, '34225': null, '34263': 70, '34274': 70 }));
+        check(subj(ev, 'civics').status === 'pass' && !ev.manualReview.foreignCodes.some(c => ['34263', '34274'].includes(c.code)),
+          'New civics alternatives must satisfy the subject without a foreign-code warning');
+      });
+
+      await part('F.2 vaulted history 30%: pass, soft reverse-pending at 65, or hard reverse30', async () => {
+        [70, 50, 20].forEach(score => {
+          const ev = BagrutEngine.evaluate(solo({ '22283': null, '22261': score }));
+          const s = subj(ev, 'history'), c = s.comps.find(c => c.codes.includes('22283'));
+          check(c.pendingCohort && !c.due && c.cohortPct === 0, `${score}: vaulted 30% remains pending at 0% reporting`);
+          if (score === 70) {
+            check(s.status === 'pass' && !ev.blockers.some(b => !b.info), '70 in the 70% exam must pass with no blocker');
+          } else if (score === 50) {
+            check(s.status === 'await' && s.reverse.required30 === 65, '50 in the 70% exam must await 65 in the 30%');
+            check(ev.blockers.some(b => b.k === 'reverse-pending' && b.hard === false && b.watch === true) &&
+              ev.blockers.every(b => !b.hard), 'A recoverable pending 30% must raise only a soft watch');
+          } else {
+            check(ev.blockers.some(b => b.k === 'reverse30' && b.hard === true),
+              '20 in the 70% exam cannot be rescued even by 100 in the 30% and must block');
+          }
+        });
+      });
+
+      await part('F.3 restoring saved cohorts preserves old compositions and custom metadata, adding only missing catalog entries', async () => {
+        const legacy = defaultBagrutRules();
+        legacy.version = 3;
+        const english = legacy.coreSubjects.find(s => s.id === 'english'), math = legacy.coreSubjects.find(s => s.id === 'math');
+        english.levels['4'] = [{ codes: ['16382'], weight: 50, expectedGrade: 'יא' }, { codes: ['16471'], weight: 50, expectedGrade: 'יב' }];
+        math.levels['4'][0].weight = 61; math.levels['4'][1].weight = 39;
+        legacy.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade = 'יא';
+        legacy.coreSubjects.find(s => s.id === 'civics').components = [
+          { codes: ['34221', '34224', '34283'], weight: 20, expectedGrade: 'יא' },
+          { codes: ['34225', '34284', '34281'], weight: 80, expectedGrade: 'יב' }
+        ];
+        legacy.questionnaires['22283'] = { name: 'שם סינתטי מותאם', expectedGrade: 'יא', verifiedGrade: true };
+        legacy.questionnaires['29283'].expectedGrade = 'יא';
+        delete legacy.questionnaires['34263']; delete legacy.questionnaires['16483']; delete legacy.questionnaires['35172'];
+        const beforeCore = Util.clone(legacy.coreSubjects), beforeCatalog = Util.clone(legacy.questionnaires);
+        Config.applyCohortState({ saved: { id: 'saved', name: 'מחזור סינתטי שמור', rules: legacy } }, { 10: 'saved', 11: 'saved', 12: 'saved' });
+        Config._syncQuestionnaires();
+        const restored = Config.rules();
+        same(restored.coreSubjects, beforeCore, 'Restoration must not replace old or customized weights, codes, or grades');
+        Object.entries(beforeCatalog).forEach(([code, entry]) => same(restored.questionnaires[code], entry, `Existing catalog metadata ${code} is preserved`));
+        ['34263', '16483', '35172'].forEach(code => check(restored.questionnaires[code] && restored.questionnaires[code].name,
+          `Missing metadata for ${code} is added`));
+        const once = Util.clone(restored);
+        Config._syncQuestionnaires();
+        same(restored, once, 'Repeated catalog synchronization is idempotent');
+        const missingGrade = Util.clone(legacy);
+        delete missingGrade.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade;
+        Config._backfillExpectedGrades(missingGrade);
+        same(missingGrade.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade, 'יא',
+          'A missing component grade must inherit saved catalog metadata, not the new default');
+        delete missingGrade.questionnaires;
+        delete missingGrade.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade;
+        Config._syncQuestionnairesOf(missingGrade);
+        same(missingGrade.coreSubjects.find(s => s.id === 'history').components[0].expectedGrade, 'יב',
+          'A legacy profile with neither grade nor catalog must safely receive the default metadata');
+        resetConfig();
       });
     });
   } catch (e) {

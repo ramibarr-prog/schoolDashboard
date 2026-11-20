@@ -52,7 +52,7 @@ window.fetch = (input, options) => {
 
   const BASE = {
     '22283': 70, '22261': 70, '34221': 70, '34225': 70, '8283': 70, '8281': 70, '1263': 70, '1264': 70, '11283': 70, '11281': 70,
-    '16382': 80, '16471': 80, '35471': 80, '35472': 80, '36361': 80,
+    '16382': 80, '16471': 80, '16483': 80, '16486': 80, '35471': 80, '35472': 80, '36361': 80,
     '86083': 'עמד בדרישות', '41083': 'בוצע', '43183': 70, '82083': 'בוצע'
   };
   const profile = (tz, changes = {}) => Object.entries({ ...BASE, ...changes }).filter(([, value]) => value !== null)
@@ -166,8 +166,8 @@ window.fetch = (input, options) => {
     add(13, 'יב', 'יב2', profile(T(13), { '22283': 30, '22261': 30, '34221': 30, '34225': 30 }));
     add(14, 'יב', 'יב1', profile(T(14)), { track: 'אתגר' });
     for (let n = 21; n <= 27; n++) add(n, 'יא', n < 25 ? 'יא1' : 'יא2', partial(n, ELEVENTH), n === 24 ? { track: 'מב"ר' } : {});
-    add(28, 'יא', 'יא2', partial(28, { ...ELEVENTH, '8283': undefined }).filter(r => r.final !== undefined));
-    add(29, 'יא', 'יא2', partial(29, { ...ELEVENTH, '8283': undefined, '1263': undefined }).filter(r => r.final !== undefined));
+    add(28, 'יא', 'יא2', partial(28, { ...ELEVENTH, '16382': undefined }).filter(r => r.final !== undefined));
+    add(29, 'יא', 'יא2', partial(29, { ...ELEVENTH, '16382': undefined, '35471': undefined }).filter(r => r.final !== undefined));
     add(31, 'י', 'י1', null);
     add(32, 'י', 'י1', partial(32, { '16381': 60, '16382': 60 }));
     add(33, 'י', 'י2', partial(33, { '16381': 30 }));

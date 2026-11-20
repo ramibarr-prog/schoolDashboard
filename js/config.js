@@ -141,7 +141,7 @@ const Util = {
 const DEFAULT_CLOUD_URL = '';
 
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
-const RULES_VERSION = 3;
+const RULES_VERSION = 4;
 
 /* מחזורי לימוד ברירת מחדל ושיוך שכבות אליהם (מפתח השכבה: 12 / 11 / 10) */
 const COHORT_SEED = [
@@ -180,28 +180,31 @@ function defaultBagrutRules() {
     },
     coreSubjects: [
       { id: 'history', name: 'היסטוריה', units: 2, keywords: ['היסטוריה'], enabled: true,
-        components: on([{ codes: ['22283', '29283'], weight: 30, expectedGrade: 'יא' }, { codes: ['22261', '22264'], weight: 70, expectedGrade: 'יב' }]) },
+        components: on([{ codes: ['22283', '29283'], weight: 30, expectedGrade: 'יב' }, { codes: ['22261', '22264'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'civics', name: 'אזרחות', units: 2, keywords: ['אזרחות'], enabled: true,
-        components: on([{ codes: ['34221', '34224', '34283'], weight: 20, expectedGrade: 'יא' }, { codes: ['34225', '34284', '34281'], weight: 80, expectedGrade: 'יב' }]) },
+        components: on([{ codes: ['34263', '34283', '34273', '34221', '34224'], weight: 30, expectedGrade: 'יב' }, { codes: ['34271', '34274', '34281', '34284', '34225'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'literature', name: 'ספרות', units: 2, keywords: ['ספרות'], enabled: true,
-        components: on([{ codes: ['8283'], weight: 30, expectedGrade: 'יא' }, { codes: ['8281', '8284'], weight: 70, expectedGrade: 'יב' }]) },
+        components: on([{ codes: ['8283'], weight: 30, expectedGrade: 'יב' }, { codes: ['8281', '8284'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'tanach', name: 'תנ"ך', units: 2, keywords: ['תנך', 'תנ"ך', 'מקרא'], enabled: true,
-        components: on([{ codes: ['1263', '2383'], weight: 30, expectedGrade: 'יא' }, { codes: ['1264', '1261'], weight: 70, expectedGrade: 'יב' }]) },
+        components: on([{ codes: ['1263', '2383'], weight: 30, expectedGrade: 'יב' }, { codes: ['1264', '1261'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'hebrew', name: 'עברית', units: 2, keywords: ['עברית', 'הבעה', 'לשון'], enabled: true,
-        components: on([{ codes: ['11283'], weight: 30, expectedGrade: 'יא' }, { codes: ['11281', '11241', '11247', '11267', '11284'], weight: 70, expectedGrade: 'יב' }]) },
+        components: on([{ codes: ['11283'], weight: 30, expectedGrade: 'יב' }, { codes: ['11281', '11241', '11247', '11267', '11284'], weight: 70, expectedGrade: 'יב' }]) },
       { id: 'english', name: 'אנגלית', variableUnits: true, defaultLevel: '4', keywords: ['אנגלית'], enabled: true,
         components: [],
         levels: {
-          '3': on([{ codes: ['16381'], weight: 50, expectedGrade: 'י' }, { codes: ['16382'], weight: 50, expectedGrade: 'יא' }]),
-          '4': on([{ codes: ['16382'], weight: 50, expectedGrade: 'יא' }, { codes: ['16471'], weight: 50, expectedGrade: 'יב' }]),
-          '5': on([{ codes: ['16471'], weight: 50, expectedGrade: 'יא' }, { codes: ['16582'], weight: 50, expectedGrade: 'יב' }])
+          '3': on([{ codes: ['16381'], weight: 27, expectedGrade: 'י', internal: false }, { codes: ['16382'], weight: 27, expectedGrade: 'יא', internal: false },
+            { codes: ['16383', '16384'], weight: 26, expectedGrade: 'יב', internal: true }, { codes: ['16387', '16385'], weight: 20, expectedGrade: 'יב', internal: false }]),
+          '4': on([{ codes: ['16382'], weight: 27, expectedGrade: 'יא', internal: false }, { codes: ['16471', '16481'], weight: 27, expectedGrade: 'יב', internal: false },
+            { codes: ['16483', '16484'], weight: 26, expectedGrade: 'יב', internal: true }, { codes: ['16486', '16487', '16485'], weight: 20, expectedGrade: 'יב', internal: false }]),
+          '5': on([{ codes: ['16471', '16481'], weight: 27, expectedGrade: 'יא', internal: false }, { codes: ['16582'], weight: 27, expectedGrade: 'יב', internal: false },
+            { codes: ['16583', '16584'], weight: 26, expectedGrade: 'יב', internal: true }, { codes: ['16586', '16587', '16585'], weight: 20, expectedGrade: 'יב', internal: false }])
         } },
       { id: 'math', name: 'מתמטיקה', variableUnits: true, majorEligible: false, defaultLevel: '4', keywords: ['מתמטיקה', 'חשבון'], enabled: true,
         components: [],
         levels: {
-          '3': on([{ codes: ['35173', '35183'], weight: 20, expectedGrade: 'י' }, { codes: ['35371', '35381'], weight: 40, expectedGrade: 'יא' }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב' }]),
-          '4': on([{ codes: ['35471', '35481'], weight: 50, expectedGrade: 'יא' }, { codes: ['35472', '35482'], weight: 50, expectedGrade: 'יב' }]),
-          '5': on([{ codes: ['35571', '35581'], weight: 50, expectedGrade: 'יא' }, { codes: ['35572', '35582'], weight: 50, expectedGrade: 'יב' }])
+          '3': on([{ codes: ['35173', '35183', '35172'], weight: 25, expectedGrade: 'יב', internal: true }, { codes: ['35371', '35381'], weight: 35, expectedGrade: 'יא' }, { codes: ['35372', '35380', '35382'], weight: 40, expectedGrade: 'יב' }]),
+          '4': on([{ codes: ['35471', '35481'], weight: 65, expectedGrade: 'יא' }, { codes: ['35472', '35482'], weight: 35, expectedGrade: 'יב' }]),
+          '5': on([{ codes: ['35571', '35581'], weight: 60, expectedGrade: 'יא' }, { codes: ['35572', '35582'], weight: 40, expectedGrade: 'יב' }])
         } }
     ],
     /* מגמות: codeMode 'any' = מספיק שאלון אחד מהרשימה (חלופות); majorNames = שמות המגמה בעמודת "מגמה" של קובץ קבוצות הלימוד */
@@ -231,14 +234,22 @@ function defaultBagrutRules() {
     questionnaires: (() => {
       const cat = {};
       const qs = (codes, name, expectedGrade) => codes.forEach(c => { cat[c] = q(name, expectedGrade); });
-      qs(['22283', '29283'], 'היסטוריה – ציון בית-ספרי', 'יא'); qs(['22261', '22264'], 'היסטוריה – בחינה', 'יב');
-      qs(['34221', '34224', '34283'], 'אזרחות – ציון בית-ספרי', 'יא'); qs(['34225', '34284', '34281'], 'אזרחות – בחינה', 'יב');
-      qs(['8283'], 'ספרות – ציון בית-ספרי', 'יא'); qs(['8281', '8284'], 'ספרות – בחינה', 'יב');
-      qs(['1263', '2383'], 'תנ"ך – ציון בית-ספרי', 'יא'); qs(['1264', '1261'], 'תנ"ך – בחינה', 'יב');
-      qs(['11283'], 'עברית – ציון בית-ספרי', 'יא'); qs(['11281', '11241', '11247', '11267', '11284'], 'עברית – בחינה', 'יב');
+      qs(['22283', '29283'], 'היסטוריה – ציון בית-ספרי', 'יב'); qs(['22261', '22264'], 'היסטוריה – בחינה', 'יב');
+      qs(['34263', '34283', '34273', '34221', '34224'], 'אזרחות – הערכה חלופית בית-ספרית (30%)', 'יב');
+      qs(['34271', '34274', '34281', '34284', '34225'], 'אזרחות – בחינה חיצונית (70%)', 'יב');
+      qs(['8283'], 'ספרות – ציון בית-ספרי', 'יב'); qs(['8281', '8284'], 'ספרות – בחינה', 'יב');
+      qs(['1263', '2383'], 'תנ"ך – ציון בית-ספרי', 'יב'); qs(['1264', '1261'], 'תנ"ך – בחינה', 'יב');
+      qs(['11283'], 'עברית – ציון בית-ספרי', 'יב'); qs(['11281', '11241', '11247', '11267', '11284'], 'עברית – בחינה', 'יב');
       qs(['16381'], 'אנגלית 3 יח"ל – שאלון א', 'י'); qs(['16382'], 'אנגלית – שאלון ב', 'יא');
-      qs(['16471', '16582'], 'אנגלית 4/5 יח"ל – שאלון', 'יב');
-      qs(['35173', '35183'], 'מתמטיקה 3 יח"ל – ציון בית-ספרי', 'י'); qs(['35371', '35381'], 'מתמטיקה 3 יח"ל – שאלון א', 'יא');
+      qs(['16471', '16481'], 'אנגלית 4/5 יח"ל – בחינה בכתב', 'יב');
+      qs(['16582'], 'אנגלית 5 יח"ל – בחינה בכתב', 'יב');
+      qs(['16383', '16384'], 'אנגלית 3 יח"ל – תלקיט פנימי (26%)', 'יב');
+      qs(['16387', '16385'], 'אנגלית 3 יח"ל – בחינה חיצונית בעל פה (20%)', 'יב');
+      qs(['16483', '16484'], 'אנגלית 4 יח"ל – תלקיט פנימי (26%)', 'יב');
+      qs(['16486', '16487', '16485'], 'אנגלית 4 יח"ל – בחינה חיצונית בעל פה (20%)', 'יב');
+      qs(['16583', '16584'], 'אנגלית 5 יח"ל – תלקיט פנימי (26%)', 'יב');
+      qs(['16586', '16587', '16585'], 'אנגלית 5 יח"ל – בחינה חיצונית בעל פה (20%)', 'יב');
+      qs(['35173', '35183', '35172'], 'מתמטיקה 3 יח"ל – הערכה חלופית בית-ספרית (25%)', 'יב'); qs(['35371', '35381'], 'מתמטיקה 3 יח"ל – שאלון א', 'יא');
       qs(['35372', '35380', '35382'], 'מתמטיקה 3 יח"ל – שאלון ב', 'יב');
       qs(['35471', '35481'], 'מתמטיקה 4 יח"ל – שאלון א', 'יא'); qs(['35472', '35482'], 'מתמטיקה 4 יח"ל – שאלון ב', 'יב');
       qs(['35571', '35581'], 'מתמטיקה 5 יח"ל – שאלון א', 'יא'); qs(['35572', '35582'], 'מתמטיקה 5 יח"ל – שאלון ב', 'יב');
@@ -1216,11 +1227,13 @@ const Config = {
 
   /**
    * מילוי expectedGrade ברכיבי ליבה של פרופילים שמורים שנוצרו לפני שהשדה נוסף: התאמה לרכיב ברירת המחדל באותו
-   * (מקצוע, רמה) לפי מפתח סמלים זהה, ובהיעדרו לפי סמל משותף. רכיב שכבר יש לו שכבה מפורשת לא משתנה.
+   * (מקצוע, רמה) לפי מפתח סמלים זהה, ובהיעדרו לפי סמל משותף. שכבה קיימת בקטלוג נשמרת בעדיפות;
+   * רכיב שכבר יש לו שכבה מפורשת לא משתנה.
    */
   _backfillExpectedGrades(r) {
     if (!r || !Array.isArray(r.coreSubjects)) return;
     const defaults = defaultBagrutRules().coreSubjects;
+    const catalog = r.questionnaires || {};
     const keyOf = c => (c.codes || []).map(String).sort().join(',');
     r.coreSubjects.forEach(s => {
       /* מתמטיקה 5 יח"ל אינה מחליפה מגמה בשער 2 – גם בפרופילים שמורים */
@@ -1233,6 +1246,8 @@ const Config = {
       pairs.forEach(([list, defList]) => (list || []).forEach(c => {
         if (!defList || !c || !Array.isArray(c.codes) || Util.ord(Util.normGrade(c.expectedGrade)) >= 10) return;
         const codes = c.codes.map(String);
+        const grades = new Set(codes.map(code => Util.normGrade((catalog[code] || {}).expectedGrade)).filter(g => Util.ord(g) >= 10));
+        if (grades.size === 1) { c.expectedGrade = [...grades][0]; return; }
         const match = defList.find(d => keyOf(d) === keyOf(c)) || defList.find(d => (d.codes || []).some(x => codes.includes(String(x))));
         if (match && match.expectedGrade) c.expectedGrade = match.expectedGrade;
       }));
@@ -1258,6 +1273,10 @@ const Config = {
       r.exceptionDetection.immigrantCodes = normalizeCodes(r.exceptionDetection.immigrantCodes);
     }
     this._backfillExpectedGrades(r);
+    /* קטלוג חדש אינו מחליף רכיבים, משקלים או מטא-דאטה שכבר נשמרו במחזור. */
+    Object.entries(defaultBagrutRules().questionnaires).forEach(([code, entry]) => {
+      if (!r.questionnaires[code]) r.questionnaires[code] = Util.clone(entry);
+    });
     const add = (code, name, expectedGrade) => {
       if (!code || code === 'פנימי') return;
       if (!r.questionnaires[code]) r.questionnaires[code] = { name: name || '', expectedGrade: expectedGrade || 'יב' };

@@ -132,14 +132,14 @@ window.fetch = (input, options) => {
     assert(wide.wide && wide.rows.length === 1 && wide.rows[0].code === '8283' && wide.rows[0].questionnaireCode === '8283' && wide.warnings.some(w => w.includes('"עוד נתונים"')), 'Wide code normalization or extra-sheet warning failed');
     Config._cache.bagrutData = { data: Parser.slimRows('bagrut', wide.rows) };
     Store.refresh();
-    assert(Store.bagrutBest(tz, ['8283'])?.num === 80 && BagrutEngine.compOrd({ codes: ['008283'] }) === 11 && BagrutEngine.isInternalComp({ codes: ['008283'] }), 'Imported padded codes do not match rules/catalog');
+    assert(Store.bagrutBest(tz, ['8283'])?.num === 80 && BagrutEngine.compOrd({ codes: ['008283'] }) === 12 && BagrutEngine.isInternalComp({ codes: ['008283'] }), 'Imported padded codes do not match rules/catalog');
     const rules = Util.clone(Config.rules()), literature = rules.coreSubjects.find(s => s.id === 'literature');
     literature.components[0].codes = ['008283', '8283'];
     rules.questionnaires['008283'] = { name: 'Old padded entry', expectedGrade: 'י' };
     rules.majors[0].codes = ['008283']; rules.majors[0].weights = { '008283': 75 };
     rules.exceptionDetection.immigrantCodes = ['005384'];
     Config._syncQuestionnairesOf(rules);
-    assert(literature.components[0].codes.join() === '8283' && !rules.questionnaires['008283'] && rules.questionnaires['8283'].expectedGrade === 'יא', 'Rules/catalog canonicalization lost the canonical entry');
+    assert(literature.components[0].codes.join() === '8283' && !rules.questionnaires['008283'] && rules.questionnaires['8283'].expectedGrade === 'יב', 'Rules/catalog canonicalization lost the canonical entry');
     assert(rules.majors[0].weights['8283'] === 75 && rules.exceptionDetection.immigrantCodes.join() === '5384', 'Related questionnaire references were not normalized');
     Config.withRules(rules, () => assert(Store.bagrutBest(tz, literature.components[0].codes)?.num === 80, 'Normalized custom rules did not match imported codes'));
     assert(Config.setQuestionnaire('000999', { name: 'Test', expectedGrade: 'יא' }).ok && Config.rules().questionnaires['999'] && !Config.rules().questionnaires['000999'], 'Catalog edits saved a padded key');
