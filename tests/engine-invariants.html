@@ -959,6 +959,317 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         resetConfig();
       });
     });
+    await group('Group G — Golden students (22 profiles) in Grade 12 final-certificate mode (fullMode: true)', async () => {
+      const ENG = { 3: ['16381', '16382', '16383', '16387'], 4: ['16382', '16471', '16483', '16486'], 5: ['16471', '16582', '16583', '16586'] };
+      const MATH = { 3: ['35173', '35371', '35372'], 4: ['35471', '35472'], 5: ['35571', '35572'] };
+      const id = n => T(700 + n);
+      const student = (n, extra = {}) => stu(700 + n, 'יב', 'יב1', extra);
+      const levels = (e, m, score = 80) => ({
+        ...Object.fromEntries([...new Set([...Object.values(ENG).flat(), ...Object.values(MATH).flat()])].map(code => [code, null])),
+        ...Object.fromEntries([...ENG[e], ...MATH[m]].map(code => [code, score]))
+      });
+      const golden = (n, changes = {}, extra = {}) => {
+        world({ roster: [student(n)], bagrut: bagrutRows(profile(id(n), changes)), ...extra });
+        return id(n);
+      };
+      const evaluated = new Set();
+      const final = (n, opts = {}) => {
+        const ev = evalFull(id(n), opts);
+        evaluated.add(n);
+        check(ev && ev.mode === 'full' && ev.adaptive === false && ev.rank === 12,
+          `G-${String(n).padStart(2, '0')}: must use grade 12 final-certificate policy`);
+        return ev;
+      };
+      const run = (n, title, fn) => part(`G-${String(n).padStart(2, '0')} ${title}`, async () => {
+        resetConfig();
+        await fn();
+      });
+      // Unlike noNaN, this also rejects actual undefined values before JSON serialization can hide them.
+      const defined = (value, path = 'evaluation') => {
+        check(value !== undefined, `${path} must not be undefined`);
+        if (value && typeof value === 'object') Object.entries(value).forEach(([key, child]) => defined(child, `${path}.${key}`));
+      };
+
+      await run(1, 'fully eligible; new cohort weights apply to real evaluations', async () => {
+        golden(1);
+        const ev = final(1);
+        same([ev.tier, ev.tierText, ev.blockers.length], [1, 'זכאי מלא', 0], 'Full eligibility without blockers');
+        check(ev.subjects.every(s => s.status === 'pass') && ev.internals.every(i => i.done), 'Every core and internal subject passes');
+        same([ev.totalUnits, ev.major.chosen.id, ev.major.chosen.units], [23, 'physics', 5], '23 units and a five-unit major');
+        for (const level of [3, 4, 5]) {
+          golden(1, {
+            ...levels(4, level),
+            ...Object.fromEntries(MATH[level].map((code, i) => [code, [60, 80, 90][i]])),
+            ...Object.fromEntries(ENG[4].map((code, i) => [code, [60, 70, 80, 90][i]])),
+            '34221': 60, '34225': 80
+          });
+          const out = final(1), math = subj(out, 'math'), english = subj(out, 'english');
+          same(math.comps.map(c => c.weight), { 3: [25, 35, 40], 4: [65, 35], 5: [60, 40] }[level], `Math ${level} new curriculum`);
+          check(MATH[level].slice(level === 3 ? 1 : 0).every(code => Config.magenWeight(code) === 50), `Math ${level}: external components use 50% magen`);
+          near(math.final, { 3: 79, 4: 67, 5: 68 }[level], `Math ${level} weighted score`);
+          same(english.comps.map(c => c.weight), [27, 27, 26, 20], 'All four English components');
+          check(ENG[4].every(code => Config.magenWeight(code) === 30), 'English uses the cohort default of 30% magen');
+          near(english.final, 73.9, 'English four-component weighted score');
+          near(subj(out, 'civics').final, 74, 'Civics uses 30/70');
+          check(out.tier === 1 && out.blockers.length === 0, `Complete math level ${level} stays eligible`);
+        }
+      });
+
+      await run(2, 'one allowed range compensation or points compensation', async () => {
+        for (const [score, type, note] of [[50, 'range', 'קיזוז'], [40, 'points', 'פיצוי נקודות']]) {
+          golden(2, { '22283': score, '22261': score });
+          const ev = final(2), history = subj(ev, 'history');
+          check(ev.tier <= 2 && ev.compensation && ev.compensation.type === type, `${score}: eligibility via ${type}`);
+          check(history.final === score && history.compApplied === type && ev.notes.some(n => n.includes(note)), `${score}: explicit compensation and explanatory note`);
+          same(ev.blockers, [], `${score}: no remaining blockers`);
+        }
+      });
+
+      await run(3, 'all core subjects pass but only 19 units', async () => {
+        golden(3, { ...levels(5, 4), '36361': null });
+        const ev = final(3);
+        check(ev.subjects.every(s => s.status === 'pass'), 'Every mandatory subject must pass');
+        same(ev.totalUnits, 19, 'Five-unit English plus four-unit math and the other cores total 19');
+        check(ev.tier === 4 && ev.blockers.some(b => b.k === 'units' && b.hard), `Under 21 units must block (tier ${ev.tier})`);
+      });
+
+      await run(4, 'single 40 without enough compensation points', async () => {
+        golden(4, { ...levels(4, 4, 55), '36361': 55, '22283': 40, '22261': 40 });
+        const ev = final(4), history = subj(ev, 'history');
+        check(history.status === 'severe' && !history.compApplied && ev.compensation === null, 'A 40 without sufficient points is not compensated');
+        // Engine contract (classify, unchanged since the pre-split engine; see QA-3.3): one hard blocker = tier 3, compounding hard blockers = tier 4.
+        check(ev.tier === 3 && ev.autoTier === 3 && ev.blockers.some(b => b.k === 'severe' && b.hard), `Uncompensated single 40 is a hard blocker, not eligible (got tier ${ev.tier})`);
+        golden(4, { ...levels(4, 4, 55), '36361': 55, '22283': 40, '22261': 40, '34221': 40, '34225': 40 });
+        const two = final(4);
+        check(two.tier === 4 && two.compensation === null && two.blockers.filter(b => b.hard).length >= 2, `Two uncompensated 40s must be tier 4 (got ${two.tier})`);
+      });
+
+      await run(5, 'double range failure and uncompensable Hebrew', async () => {
+        golden(5, { '22283': 48, '22261': 48, '34221': 50, '34225': 50 });
+        const double = final(5);
+        check(double.tier >= 3 && double.compensation === null && double.blockers.some(b => b.k === 'comp-over' && b.hard),
+          `48 and 50 exceed the quota: hard comp-over blocker, not eligible (got tier ${double.tier})`);
+        for (const score of [50, 40]) {
+          golden(5, { '11283': score, '11281': score });
+          const ev = final(5);
+          check(ev.tier === 3 && ev.blockers.some(b => b.k === 'critical' && b.hard), `Hebrew ${score} is a hard critical blocker, not eligible (got tier ${ev.tier})`);
+          check(!subj(ev, 'hebrew').compApplied && ev.compensation === null, `Hebrew ${score} permits neither form of compensation`);
+        }
+        golden(5, { '11283': 40, '11281': 40, '22283': 40, '22261': 40 });
+        const compound = final(5);
+        check(compound.tier === 4 && compound.atRisk === true && kinds(compound).includes('critical'), `Hebrew 40 plus another failure must be tier 4 (got ${compound.tier})`);
+      });
+
+      await run(6, 'special education is included in engine and advisor metrics', async () => {
+        world({
+          roster: [student(1), student(6, { track: Config.SPECIAL_ED })],
+          bagrut: bagrutRows([...profile(id(1)), ...profile(id(6), { '36361': 40 })])
+        });
+        const regular = final(1), special = final(6), summary = BagrutAdvisor.summarize([regular, special]);
+        same([regular.tier, special.tier], [1, 4], 'Both tracks are evaluated by the engine');
+        same([summary.counted, summary.specialEd, summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd],
+          [2, 1, 50, 100], 'Special-ed student changes the inclusive denominator, not the exclusive one');
+      });
+
+      await run(7, 'unmapped questionnaire holds automatic eligibility until a decision', async () => {
+        golden(7, { '999001': { final: 80, subject: 'מקצוע סינתטי לא ממופה' } });
+        const ev = final(7);
+        check(ev.manualReview.required === true && ev.tier >= 3, 'Unknown code must prevent automatic eligibility');
+        check(ev.manualReview.foreignCodes.some(c => c.code === '999001' && c.reason === 'unlisted-code'), 'Unknown code is explicitly reported');
+        check(Config.setException(id(7), { isException: true, overrideStatus: 'eligible', reason: 'synthetic review' }).ok, 'Coordinator decision is saved');
+        const decided = final(7);
+        check(decided.manual && decided.tier === 1 && !decided.manualReview.required, 'Coordinator decision resolves the hold');
+      });
+
+      await run(8, 'rosterOverride persists class and track in eligibility inputs', async () => {
+        golden(8);
+        const before = final(8);
+        check(Config.setRosterOverride(id(8), { grade: 'יב', homeroom: 'יב2', track: Config.SPECIAL_ED }).ok, 'Save class/track override');
+        Store.refresh();
+        const override = Config.getRosterOverrides()[id(8)], trainee = Store.trainees.get(id(8)), ev = final(8);
+        same([override.grade, override.homeroom, override.track], ['יב', 'יב2', Config.SPECIAL_ED], 'Override is stored');
+        same([trainee.gradeKey, trainee.classKey, Config.trackFor(id(8), trainee.track, trainee.classKey)],
+          ['יב', 'יב2', Config.SPECIAL_ED], 'Effective engine inputs use the override');
+        same([ev.tier, ev.totalUnits, ev.cohortId], [before.tier, before.totalUnits, before.cohortId], 'Same-grade reassignment preserves eligibility and cohort');
+        same(BagrutAdvisor.summarize([ev]).specialEd, 1, 'Advisor uses the overridden track');
+      });
+
+      await run(9, 'reinforcement neither duplicates units nor changes the selected level', async () => {
+        golden(9);
+        const before = final(9);
+        golden(9, {}, { groups: groupRows([
+          { tz: id(9), grade: 'יב', cls: 'יב1', gid: 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7901]' },
+          { tz: id(9), grade: 'יב', cls: 'יב1', gid: 'תגבור מתמטיקה 5 יח"ל יב1 מורה בדיקה [7902]' }
+        ]) });
+        const ev = final(9);
+        check(Store.groupsOf(id(9)).length === 2 && Store.groupsOf(id(9)).some(g => g.reinforcement), 'Both real and reinforcement groups were imported');
+        same([ev.tier, ev.totalUnits, subj(ev, 'math').units, ev.blockers],
+          [before.tier, before.totalUnits, '4', before.blockers], 'Reinforcement cannot harm eligibility or double count units');
+      });
+
+      await run(10, 'new student with zero personal bagrut rows', async () => {
+        // A classmate makes the dataset loaded; this is not the neutral "no file uploaded" state.
+        world({ roster: [student(1), student(10)], bagrut: bagrutRows(profile(id(1))) });
+        same(Store.attemptsOf(id(10)).length, 0, 'New student has no bagrut records');
+        const ev = final(10), summary = BagrutAdvisor.summarize([ev]);
+        check(ev.tier === 4 && kinds(ev).includes('questionnaire') && ev.totalUnits === 0, 'Final mode identifies missing requirements');
+        noNaN([ev, summary], 'new-student');
+        defined([ev, summary]);
+      });
+
+      await run(11, '55 passes but 54 is compensation, never pass', async () => {
+        for (const [score, status, tier] of [[55, 'pass', 1], [54, 'comp', 2]]) {
+          golden(11, { '22283': score, '22261': score });
+          const ev = final(11);
+          same([subj(ev, 'history').final, subj(ev, 'history').status, ev.tier], [score, status, tier], `Threshold ${score}`);
+        }
+      });
+
+      await run(12, '54.4/54.5 rounding and derived 30%/50% magen', async () => {
+        for (const [internal, raw, rounded, status, tier] of [[53, 54.4, 54, 'comp', 2], [51, 54.5, 55, 'pass', 1]]) {
+          golden(12, { '22283': internal, '22261': raw === 54.4 ? 55 : 56 });
+          const ev = final(12), history = subj(ev, 'history');
+          near(history.final, raw, 'Unrounded weighted history score');
+          same([Math.round(history.final), history.status, ev.tier], [rounded, status, tier], 'Round once at the subject threshold');
+        }
+        for (const [subject, codes, weight, submission] of [
+          ['english', ENG[4], 30, 65], ['math', MATH[4], 50, 59]
+        ]) {
+          for (const [raw, exam, rounded, status, tier] of [
+            [54.4, weight === 30 ? 349 / 7 : 49.8, 54, 'comp', 2],
+            [54.5, 50, 55, 'pass', 1]
+          ]) {
+            near(submission * weight / 100 + exam * (100 - weight) / 100, raw, `${subject}: raw submission/exam boundary`);
+            golden(12, Object.fromEntries(codes.map(code => [code, { sub: submission, exam }])));
+            const ev = final(12), s = subj(ev, subject), attempts = Store.attemptsOf(id(12)).filter(a => codes.includes(a.code));
+            check(attempts.length === codes.length && attempts.every(a => a.derived && a.final === '' && a.cls.num === rounded),
+              `${subject}: every component is derived from submission/exam, rounded to ${rounded}`);
+            check(codes.every(code => Config.magenWeight(code, Config.rulesForGrade('יב')) === weight), `${subject}: actual magen weight is ${weight}%`);
+            same([s.final, s.status, ev.tier], [rounded, status, tier], `${subject}: derived ${raw} gives ${status}`);
+          }
+        }
+      });
+
+      await run(13, 'English level change 5 to 4 is informational only', async () => {
+        golden(13, { '16582': 40 });
+        const ev = final(13), english = subj(ev, 'english');
+        same([english.units, english.comps.length, english.final, ev.totalUnits, ev.tier], ['4', 4, 80, 23, 1], 'Only complete four-unit English is counted');
+        const old = ev.manualReview.foreignCodes.find(c => c.code === '16582');
+        check(old && old.reason === 'other-level' && old.informational === true, 'Old five-unit questionnaire remains informational');
+        check(!ev.manualReview.required && ev.blockers.length === 0 && !ev.manual, 'Clean level change needs no blocking coordinator decision');
+      });
+
+      await run(14, 'best repeated sitting is selected once regardless of row order', async () => {
+        const rows = [...profile(id(14), { '22283': null }),
+          { tz: id(14), code: '22283', final: 40, moed: 'חורף' },
+          { tz: id(14), code: '22283', final: 80, moed: 'קיץ' }];
+        for (const bagrut of [rows, [...rows].reverse()]) {
+          world({ roster: [student(14)], bagrut: bagrutRows(bagrut) });
+          const ev = final(14), history = subj(ev, 'history');
+          same(Store.attemptsOf(id(14)).filter(a => a.code === '22283').length, 2, 'Keep both sittings for audit');
+          same([history.comps.length, history.comps[0].num, history.final, ev.totalUnits, ev.tier],
+            [2, 80, 73, 23, 1], 'Best grade counted once');
+        }
+      });
+
+      await run(15, 'mandatory-subject exemption needs coordinator review', async () => {
+        golden(15, { '22283': 'פטור', '22261': 'פטור' });
+        const ev = final(15);
+        check(subj(ev, 'history').status === 'exempt' && ev.manualReview.required === true, 'Exemption cannot silently grant eligibility');
+        check(ev.tier >= 3 && ev.blockers.some(b => b.k === 'exempt-review' && b.hard), 'Exemption raises an explicit review blocker');
+        check(Config.setException(id(15), { isException: true, overrideStatus: 'eligible', reason: 'synthetic exemption approval' }).ok, 'Save exemption decision');
+        check(final(15).tier === 1 && final(15).manual, 'Only the coordinator decision permits eligibility');
+      });
+
+      await run(16, 'missing grade-12 internal 30% blocks final certification', async () => {
+        golden(16, { '22283': null, '22261': 80 });
+        const ev = final(16), history = subj(ev, 'history'), missing = history.comps.find(c => c.codes.includes('22283'));
+        same(Config.rulesForGrade('יב').coreSubjects.find(s => s.id === 'history').components[0].expectedGrade, 'יב', 'Use the new grade-12 internal default');
+        check(missing.internal && missing.due && history.incomplete === true && history.final === null && history.missingPct === 30,
+          'An external grade alone cannot replace the required 30% in final mode');
+        // Same contract as QA-3.3: a single missing 30% is a hard blocker (tier 3, savable), never eligible.
+        check(ev.tier === 3 && ev.savable === true && ev.blockers.some(b => b.k === 'questionnaire' && b.hard && b.text.includes('22283')),
+          `Missing 30% must block final certification (got tier ${ev.tier})`);
+        golden(16, { '22283': null, '22261': 80, '34221': null, '34225': 80 });
+        const two = final(16);
+        check(two.tier === 4 && ['history', 'civics'].every(s => subj(two, s).incomplete === true), `Two missing 30% components must be tier 4 (got ${two.tier})`);
+      });
+
+      await run(17, 'twelve-year override leaves eligibility denominator and is not at risk', async () => {
+        golden(17, { '36361': 40 });
+        check(Config.setException(id(17), { isException: true, overrideStatus: 'twelve', reason: 'synthetic twelve-year track' }).ok, 'Save twelve-year status');
+        const ev = final(17), summary = BagrutAdvisor.summarize([ev]);
+        same([ev.tier, ev.overrideStatus, ev.atRisk, summary.total, summary.counted], [5, 'twelve', false, 1, 0], 'Twelve-year student is not a failed eligibility candidate');
+      });
+
+      await run(18, 'plus5 simulation respects both borderline boundaries', async () => {
+        const rules = Config.rulesForGrade('יב');
+        for (const score of [rules.borderlineMin - 0.1, rules.borderlineMin, rules.passGrade - 1, rules.passGrade]) {
+          golden(18, { '22283': score, '22261': score });
+          const ordinary = final(18, { plus5: false }), boosted = final(18, { plus5: true });
+          const eligibleForBonus = score >= rules.borderlineMin && score < rules.passGrade;
+          const history = subj(boosted, 'history');
+          near(history.adj, score + (eligibleForBonus ? rules.borderlineBonus : 0), `${score}: configured bonus only inside the interval`);
+          same(history.boosted, eligibleForBonus, `${score}: boost marker`);
+          same(subj(ordinary, 'history').boosted, false, 'Ordinary evaluation never applies the bonus');
+          if (eligibleForBonus) same([subj(ordinary, 'history').status, ordinary.tier, history.status, boosted.tier], ['comp', 2, 'pass', 1], 'Bonus changes borderline compensation into a full pass');
+          else same([history.status, boosted.tier], [subj(ordinary, 'history').status, ordinary.tier], 'Outside the interval, classification is unchanged');
+        }
+      });
+
+      await run(19, 'failed five-unit primary major blocks gate 2', async () => {
+        golden(19, { '36361': 40 });
+        const ev = final(19), physics = ev.major.cands.find(c => c.id === 'physics');
+        check(physics.units === 5 && physics.status === 'fail', 'Primary five-unit major failed');
+        check(ev.tier === 4 && ev.gates[2] === 'fail' && ev.blockers.some(b => b.k === 'major-fail' && b.gate === 2 && b.hard), 'Major gate blocks eligibility');
+      });
+
+      await run(20, 'traffic education 700181 is not a foreign questionnaire hold', async () => {
+        golden(20);
+        const before = final(20);
+        golden(20, { '700181': { final: 40, subject: 'חינוך תעבורתי' } });
+        const ev = final(20);
+        check(Store.attemptsOf(id(20)).some(a => a.code === '700181'), 'Traffic questionnaire was actually imported');
+        check(!ev.manualReview.required && !ev.manualReview.foreignCodes.some(c => c.code === '700181'), 'Traffic education does not require coordinator review');
+        same([ev.tier, ev.totalUnits, ev.blockers, ev.tierText], [before.tier, before.totalUnits, before.blockers, before.tierText], 'Traffic education neither blocks nor earns bagrut units');
+      });
+
+      await run(21, 'explicit useCurrent false/true comparison in fullMode', async () => {
+        golden(21, { '22283': null }, { sadin: sadinRows([
+          { tz: id(21), ev: 'מבחן (100)', sc: 80, grp: 'היסטוריה יב1 מורה בדיקה [7921]', dt: '01/11/2026' }
+        ]) });
+        const off = final(21, { useCurrent: false }), on = final(21, { useCurrent: true });
+        const a = subj(off, 'history'), b = subj(on, 'history');
+        same([a.final, a.status, a.incomplete, a.forecast], [null, 'missing', true, false], 'Without current grades, missing 30% stays unresolved');
+        same([b.final, b.status, b.incomplete, b.source, b.forecast, b.filled.length], [73, 'pass', false, 'current', true, 1], 'With current grades, 80 fills only the missing 30%');
+        check(off.tier >= 3, 'Without current grades the student cannot be automatically eligible');
+        same([on.tier, off.totalUnits, on.totalUnits, on.usedForecast], [1, 21, 21, true], 'Forecast can change tier but must not award earned units');
+        check(kinds(off).includes('questionnaire') && !kinds(on).includes('questionnaire'), 'The missing-component blocker is removed only in the forecast');
+        same(final(21, { useCurrent: false }), off, 'Turning forecast off immediately restores the actual certificate result');
+      });
+
+      await run(22, 'INV-7 removing manual decision and roster override restores automatic state', async () => {
+        golden(22, { '22283': 40, '22261': 40, '34221': 40, '34225': 40 });
+        const before = final(22), traineeBefore = Util.clone(Store.trainees.get(id(22)));
+        const exceptionsBefore = Util.clone(Config.data.traineeExceptions), overridesBefore = Util.clone(Config.getRosterOverrides());
+        check(before.tier === 4 && !before.manual, 'Automatic baseline is blocked');
+        check(Config.setException(id(22), { isException: true, overrideStatus: 'eligible', reason: 'synthetic INV-7 decision' }).ok, 'Set manual decision');
+        check(Config.setRosterOverride(id(22), { grade: 'יב', homeroom: 'יב2', track: Config.SPECIAL_ED }).ok, 'Set roster override');
+        Store.refresh();
+        const manual = final(22);
+        check(manual.manual && manual.tier === 1 && Store.trainees.get(id(22)).classKey === 'יב2', 'Both overrides actually take effect');
+        check(Config.setException(id(22), { isException: false, overrideStatus: '', reason: '' }).ok, 'Clear manual decision');
+        same(final(22), before, 'Clearing the decision immediately restores automatic evaluation');
+        check(Config.removeRosterOverride(id(22)).ok, 'Remove roster override');
+        Store.refresh();
+        same(final(22), before, 'Full evaluation is restored with no residual override state');
+        same(Store.trainees.get(id(22)), traineeBefore, 'Original roster identity is restored');
+        same(Config.data.traineeExceptions, exceptionsBefore, 'No residual manual decision');
+        same(Config.getRosterOverrides(), overridesBefore, 'No residual roster override');
+      });
+      same([...evaluated].sort((a, b) => a - b), Array.from({ length: 22 }, (_, i) => i + 1), 'All 22 distinct golden profiles were evaluated in fullMode');
+      resetConfig();
+    });
   } catch (e) {
     outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });
   } finally {
