@@ -856,6 +856,42 @@ window.fetch = (input, options) => {
         const pe = [...$id('profBody').querySelectorAll('tbody tr')].find(r => r.children[0] && r.children[0].textContent.trim() === '41083');
         same(pe && pe.lastElementChild.textContent.trim(), 'נכשל', 'Other internal units keep the 0-100 scale (4 is a failure)');
       });
+
+      await part('Regression: final-certificate mode applies to grade 12 only; grades 10/11 stay adaptive', async () => {
+        resetConfig();
+        const eleventh = { '22283': 70, '34221': 70, '8283': 70, '1263': 70, '11283': 70, '16382': 70, '35471': 70 };
+        world({
+          roster: [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב1'), stu(3, 'יא', 'יא1'), stu(4, 'יא', 'יא1')],
+          bagrut: bagrutRows([...profile(T(1)), ...profile(T(2)),
+            ...[3, 4].flatMap(n => Object.entries(eleventh).map(([code, final]) => ({ tz: T(n), code, final })))])
+        });
+        const app = newApp();
+        app.state.sim = { ...FULL };
+        const junior = app.getEval(T(3)), senior = app.getEval(T(1));
+        check(junior.adaptive === true && senior.adaptive === false && senior.mode === 'full', `fullMode: grade 11 adaptive ${junior.adaptive}, grade 12 adaptive ${senior.adaptive}`);
+        same(junior, BagrutEngine.evaluate(T(3), ADAPTIVE), 'Grade 11 under fullMode equals the adaptive engine result');
+        check(BagrutEngine.evaluate(T(3), FULL).blockers.some(b => b.hard && b.miss) && !junior.blockers.some(b => b.hard && b.miss),
+          'Final-certificate missing-requirement blockers are not applied to grade 11');
+
+        app.state.filters.grade = 'יא';
+        app.renderBagrutPanel();
+        const btn = mode => $id('bagrut-whatif').querySelector(`button[data-mode="${mode}"]`);
+        check(btn('final').disabled === true && btn('final').getAttribute('aria-pressed') === 'false' && btn('adaptive').getAttribute('aria-pressed') === 'true',
+          'Grade 11 scope: final mode is disabled and adaptive is shown as active');
+        check($id('bagrut-cohort').innerHTML !== '', 'Grade 11 scope: active cohort questionnaires bar is shown');
+        app.acts.bagrutMode.call(app, btn('final'));
+        check(app.state.sim.fullMode === true, 'A disabled final button does not change state');
+        app.acts.bagrutMode.call(app, btn('adaptive'));
+        check(app.state.sim.fullMode === false, 'The adaptive button still works');
+
+        app.state.filters.grade = 'all';
+        app.state.sim = { ...FULL };
+        app.evals.clear();
+        app.renderBagrutPanel();
+        check(!btn('final').disabled && btn('final').getAttribute('aria-pressed') === 'true' && /י"ב בלבד/.test(btn('final').title),
+          'With grade 12 in scope the final toggle works and its title states it applies to grade 12 only');
+        check(errorsOf(app).length === 0, 'No panel error');
+      });
     });
   } catch (e) {
     outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });

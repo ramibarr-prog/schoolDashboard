@@ -189,7 +189,12 @@ const App = {
      ------------------------------------------------------------------ */
   getEval(tz) {
     let e = this.evals.get(tz);
-    if (!e) { e = BagrutEngine.evaluate(tz, this.state.sim); this.evals.set(tz, e); }
+    if (!e) {
+      /* מצב תעודה סופית חל על שכבת י"ב בלבד; י' ו-י"א נשפטות תמיד לפי צפי מותאם / תקינות צבירה */
+      const t = Store.trainees.get(tz), sim = this.state.sim;
+      e = BagrutEngine.evaluate(tz, t && t.gradeKey !== 'יב' ? { ...sim, fullMode: false } : sim);
+      this.evals.set(tz, e);
+    }
     return e;
   },
 
@@ -1081,7 +1086,8 @@ const App = {
     const list = this.bagrutList(rows);
     const tierCount = [0, 0, 0, 0, 0, 0];
     evalRows.forEach(r => { tierCount[r.ev.tier]++; });
-    const TT = BagrutEngine.TIER_TEXT[sim.fullMode ? 'full' : 'adaptive'];
+    const hasGrade12 = rows.some(r => r.t.gradeKey === 'יב'), fullMode = hasGrade12 && !!sim.fullMode;
+    const TT = BagrutEngine.TIER_TEXT[fullMode ? 'full' : 'adaptive'];
     const option = (id, label) => `<option value="${id}" ${st.chip === id ? 'selected' : ''}>${E(label)}</option>`;
     const paceCount = status => paceRows.filter(r => r.ev.paceStatus === status).length;
     setHtml('bagrutStatusSelect',
@@ -1098,12 +1104,14 @@ const App = {
       option('attention', `👀 דורשים תשומת לב (${this.filterByChip(rows, 'attention').length})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
-    const modeBtn = (full, label, title) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${!!sim.fullMode === full}" title="${E(title)}">${label}</button>`;
+    const modeBtn = (full, label, title, off = false) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${fullMode === full}" title="${E(title)}"${off ? ' disabled class="opacity-50 cursor-not-allowed"' : ''}>${label}</button>`;
+    const finalBtn = hasGrade12 ? modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'בדיקה מחמירה לשכבת י"ב בלבד: כל השאלונים והיחידות הפנימיות נדרשים; שכבות י\' ו-י"א ממשיכות להישפט לפי תקינות צבירה')
+      : modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'זמין לשכבת י"ב בלבד — שכבות י\' ו-י"א נשפטות לפי תקינות צבירה', true);
     setHtml('bagrut-whatif',
-      `<span class="seg flex flex-col" role="group" aria-label="מצב הערכה">${modeBtn(false, '📅 צפי מותאם לשלב בשנה', 'נשפט לפי המבחנים שהשכבה כבר עברה; מה שטרם דווח לשכבה אינו חוסר')}${modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'בדיקה מחמירה: כל השאלונים והיחידות הפנימיות נדרשים')}</span>` +
+      `<span class="seg flex flex-col" role="group" aria-label="מצב הערכה">${modeBtn(false, '📅 צפי מותאם לשלב בשנה', 'נשפט לפי המבחנים שהשכבה כבר עברה; מה שטרם דווח לשכבה אינו חוסר')}${finalBtn}</span>` +
       sw('ignoreInternals', 'התעלם מחוסר יחידות פנימיות (חנ"ג, מעורבות, השכלה כללית ומדעים)') + sw('plus5', 'תוספת +5 לגבוליים 50-54') + sw('useCurrent', 'שלב ציונים שוטפים כתחזית (תצוגה מקדימה)'));
 
-    this.renderCohortInfo(rows);
+    this.renderCohortInfo(rows, fullMode);
     this.renderBagrutKpis(stats, tierCount, TT, paceRows);
     const drillOpts = BagrutAdvisor.drillOptions();
     if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
@@ -1214,10 +1222,10 @@ const App = {
   },
 
   /** שורת שקיפות: אילו רכיבים כבר נבחנו בשכבה (>= 15% מהחניכים עם ציון) ואילו עדיין "בתהליך" */
-  renderCohortInfo(rows) {
+  renderCohortInfo(rows, fullMode = !!this.state.sim.fullMode && rows.some(r => r.t.gradeKey === 'יב')) {
     const box = $('bagrut-cohort');
     if (!box) return;
-    if (this.state.sim.fullMode || !Store.loaded.bagrut) { box.innerHTML = ''; return; }
+    if (fullMode || !Store.loaded.bagrut) { box.innerHTML = ''; return; }
     const grades = Util.GRADE_KEYS.filter(g => rows.some(r => r.t.gradeKey === g));
     const lines = grades.map(g => {
       const all = BagrutEngine.activeCohortQuestionnaires(g);
@@ -3476,6 +3484,7 @@ const App = {
       this.showMxPop(el, true);
     },
     bagrutMode(el) {
+      if (el.disabled) return;
       this.state.sim.fullMode = el.dataset.mode === 'final';
       this.evals.clear();
       ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t));
