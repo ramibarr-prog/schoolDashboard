@@ -648,7 +648,7 @@ window.fetch = (input, options) => {
         app.state.groupsViewMode = 'anomalies';
         app.renderGroupsPanel();
         const cardN = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
-        check(anomalies === cardN('missing') + cardN('missing_major') + cardN('duplicate'), `Placement card: ${anomalies} vs destination missing+major+duplicate ${cardN('missing') + cardN('missing_major') + cardN('duplicate')}`);
+        check(anomalies === cardN('all'), `Placement card: ${anomalies} vs all destination anomalies ${cardN('all')}`);
       });
 
       await part('INV-5 / QA-10.2 / QA-10.3 / QA-10.7 every student: engine, eligibility table and 360 card agree', async () => {
@@ -974,6 +974,156 @@ window.fetch = (input, options) => {
           check(!ev.focus.some(f => f.target && f.text.includes(s.name)), `${internalWeight}%: an info-level (1+) target is not pushed as a pedagogical focus item`);
         }
         resetConfig();
+      });
+    });
+    await group('Cross-Overview Parity — shared placement, attention, sadin summary and benchmark', async () => {
+      const fixture = () => {
+        const fx = schoolFixture();
+        for (const [grade, cls, n, id] of [['יב', 'יב1', 1, 9500], ['יא', 'יא1', 21, 9600], ['י', 'י1', 31, 9700]]) {
+          fx.groups.push(...groupRows([0, 1].map(i => ({ tz: T(n), grade, cls, gid: `חינוך ${cls} דוד בדיקה [${id + i}]` }))));
+          if (grade !== 'יב') {
+            for (const [i, subject] of ['מתמטיקה', 'אנגלית'].entries()) {
+              const grp = `${subject} 4 יח"ל ${cls} דוד בדיקה [${id + 10 + i}]`;
+              fx.sadin.push(...sadinRows([
+                { tz: T(n), ev: 'מבחן א (90)', sc: 80, grp, dt: '01/10/2026' },
+                { tz: T(n), ev: 'מבחן ב (10)', sc: 0, grp, dt: '08/10/2026' }
+              ]));
+            }
+          }
+        }
+        fx.groups.push(...groupRows([1, 2, 3, 4, 14, 21].map(n => {
+          const t = fx.roster.find(t => t.tz === T(n));
+          return { tz: t.tz, grade: t.grade, cls: t.homeroom, gid: 'פיזיקה 5 יח"ל יב1 דוד בדיקה [9800]' };
+        })));
+        fx.sadin.push(...fx.sadin.filter(r => r.tz === T(1)).map(r => ({ ...r, tz: T(5) })));
+        return fx;
+      };
+      const build = () => { resetConfig(); world(fixture()); applySchoolConfig(); };
+      const cards = () => [...$id('overview-body').querySelectorAll('.ov-card')];
+      const value = card => card.querySelector('.ov-value').textContent.trim();
+      const summaryText = summary => [
+        `ממוצע כללי בסינון: ${Util.fmt(summary.avg, 1)}`,
+        `100% ציונים עוברים: ${summary.cleanCount} מתוך ${summary.gradedCount} עם ציונים`
+      ];
+      const hasSummary = (summary, rosterCount, label) => {
+        const box = $id('sadin-summary');
+        check(box && !box.classList.contains('hidden'), `${label}: visible summary`);
+        if (!box) return;
+        summaryText(summary).forEach(text => check(box.textContent.includes(text), `${label}: visible "${text}"`));
+        check(box.textContent.includes(`מוצגים ${summary.totalCount} מתוך ${rosterCount} חניכים בחיתוך`), `${label}: displayed population`);
+        check(box.nextElementSibling === $id('sadin-table') && document.querySelectorAll('#sadin-summary').length === 1, `${label}: summary is created once above the table`);
+      };
+
+      await part('All grades and homerooms: both routine modes, exact destination populations and visible KPIs', async () => {
+        build();
+        const full = newApp().overviewModel();
+        check(full.anomaliesModel.byCategory.suspect > 0, 'Fixture exercises suspect anomalies');
+        check(full.anomaliesModel.hiddenRoutineCount > 0, 'Fixture exercises routine anomalies');
+        check(full.bagrutRisk.some(r => full.multi.some(s => s.t.tz === r.t.tz)), 'Fixture exercises overlap in attention union');
+        check(full.multi.some(r => r.failing === 0 && GroupAnalyzer.riskSubjects(r).length >= 2), 'Fixture exercises 2+ missing subjects without failing averages');
+        for (const grade of ['all', 'יב', 'יא', 'י']) {
+          const cls = Store.traineeList().find(t => grade === 'all' || t.gradeKey === grade).classKey;
+          for (const homeroom of ['all', cls]) {
+            const app = newApp({ grade, cls: homeroom });
+            const label = `${grade}/${homeroom}`;
+            const list = app.filtered();
+            check(list.length > 0, `${label}: nonempty test slice`);
+            for (const showRoutineDuplicates of [false, true]) {
+              app.state.showRoutineDuplicates = showRoutineDuplicates;
+              const m = app.overviewModel(), am = app.placementAnomaliesModel(list);
+              const raw = GroupAnalyzer.placementAnomalies(list);
+              const expected = raw.rows.filter(r => showRoutineDuplicates || !r.isRoutineDuplicate);
+              same([m.anomaliesModel.total, m.anomaliesModel.studentsCount], [am.total, am.studentsCount], `${label}/${showRoutineDuplicates}: shared placement model`);
+              same([am.total, am.studentsCount, am.hiddenRoutineCount], [expected.length, new Set(expected.map(r => r.tz)).size, raw.rows.filter(r => r.isRoutineDuplicate).length], `${label}/${showRoutineDuplicates}: exact source rows`);
+              same(am.byCategory, {
+                missing: expected.filter(r => ['missing', 'missing_major'].includes(r.category)).length,
+                duplicate: expected.filter(r => r.category === 'duplicate').length,
+                suspect: expected.filter(r => r.category === 'suspect').length
+              }, `${label}: category partition`);
+              same([...am.byTrainee.keys()].sort(), [...new Set(expected.map(r => r.tz))].sort(), `${label}: placement student set`);
+              app.renderOverviewPanel();
+              same(value(cards()[3]), String(am.total), `${label}: card 4 total`);
+              check(cards()[3].textContent.includes(`${am.studentsCount} חניכים · חוסר ${am.byCategory.missing} • כפילות ${am.byCategory.duplicate} • חשודים ${am.byCategory.suspect}`), `${label}: card 4 detail`);
+              app.renderGroupsPanel();
+              const groupsCard = $id('groups-kpis').querySelector('[data-cat="all"]');
+              same(groupsCard.querySelector('.n').textContent, String(am.total), `${label}: groups total`);
+              same(groupsCard.querySelector('.s').textContent, `${am.studentsCount} חניכים`, `${label}: groups students`);
+              const t = list[0], mine = app.placementAnomaliesModel([t]);
+              app.state.profileTz = t.tz;
+              app.renderTrainee360Panel();
+              const placement = $id('profKpis').lastElementChild;
+              same(placement.querySelector('.v').textContent, mine.total ? mine.total === 1 ? 'חריגה אחת' : `${mine.total} חריגות` : '✓ תקין', `${label}: 360 placement count`);
+              if (mine.total) same(placement.querySelector('.s').textContent, mine.byTrainee.get(t.tz).text, `${label}: 360 placement detail`);
+            }
+            const m = app.overviewModel(), attention = app.attentionModel(list, m.rows, m.sheet);
+            same([...app.attentionTzs()].sort(), [...m.attention].sort(), `${label}: attentionTzs`);
+            same([...m.attention].sort(), [...attention.tzSet].sort(), `${label}: attention model`);
+            app.renderOverviewPanel();
+            same(value(cards()[0]), String(m.attention.size), `${label}: card 1 count`);
+            same(value(cards()[1]), m.avg == null ? '—' : Util.fmt(m.avg, 1), `${label}: card 2 displayed average`);
+            app.state.bagrutScope = '12'; app.state.bagrutScopeSet = false;
+            app.acts.ovGo.call(app, cards()[0]);
+            same([app.state.filters.grade, app.state.filters.cls, app.state.bagrutScope, app.state.bagrutScopeSet], [grade, homeroom, app.scopeOfGrade(grade), true], `${label}: card 1 preserves scope on first entry`);
+            same(tzsIn($id('bagrut-table')), [...m.attention].sort(), `${label}: attention destination ID set`);
+            same(app.bagrutList(app.dashRows()).length, m.attention.size, `${label}: attention row count`);
+            check($id('bagrut-kpis').textContent.includes(`במעקב: ${m.attention.size} · ${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ שליליים/חסרים בשוטף`), `${label}: visible attention breakdown`);
+            const outside = Store.traineeList().filter(t => !list.includes(t)).map(t => ({ t, ev: app.getEval(t.tz) }));
+            const expectedOutside = app.attentionModel(outside.map(r => r.t), outside).tzSet;
+            same(app.filterByChip(outside, 'attention').map(r => r.t.tz).sort(), [...expectedOutside].sort(), `${label}: chip uses supplied rows, not global filters`);
+
+            app.state.sadin.strip = 'all';
+            app.renderSadinPanel();
+            const summary = app.sadinSummary(GroupAnalyzer.sadinSheet(list, {}));
+            same([m.avg, m.clean], [summary.avg, summary.cleanCount], `${label}: card 2 summary`);
+            hasSummary(summary, list.length, label);
+            app.state.sadin.strip = 'multiple';
+            app.renderSadinPanel();
+            same(tzsIn($id('sadin-table')), m.multi.map(r => r.t.tz).sort(), `${label}: multiple destination ID set`);
+            const multiple = optionCounts($id('sadinFilterSelect')).find(o => o.value === 'multiple');
+            same(multiple.n, m.multi.length, `${label}: multiple filter count`);
+            check($id('sadinFilterSelect').selectedOptions[0].textContent.includes('2+ מקצועות בסיכון (שלילי/חסר)'), `${label}: multiple label`);
+            hasSummary(app.sadinSummary(m.multi), list.length, `${label}/multiple`);
+
+            app.renderOverviewPanel();
+            const expectedPct = m.bench.pace ? m.stats.pctInclSpecialEd : m.stats.eligibilityInclSpecialEd;
+            same(value(cards()[2]), m.bagrutOn ? `${expectedPct}%` : '—', `${label}: card 3 displayed percentage`);
+            app.acts.ovGo.call(app, cards()[2]);
+            same(tzsIn($id('bagrut-table')), m.bench.rows.map(r => r.t.tz).sort(), `${label}: benchmark destination ID set`);
+            const shown = /(\d+)%\s*(?:צפי זכאות · כולל חנ"מ|תקינות צבירה \([^)]*\) · כולל חנ"מ)/.exec($id('bagrut-kpis').textContent);
+            same(shown ? Number(shown[1]) : null, expectedPct, `${label}: card 3 vs visible bagrut percentage`);
+            noGarbage(label);
+            same(errorsOf(app), [], `${label}: no panel errors`);
+          }
+        }
+      });
+
+      await part('Missing datasets and empty slice: no stale summary or risk from unloaded sources', async () => {
+        for (const loaded of ['grades', 'groups', 'neither']) {
+          resetConfig();
+          const fx = fixture();
+          world({ roster: fx.roster, sadin: loaded === 'grades' ? fx.sadin : [], groups: loaded === 'groups' ? fx.groups : [] });
+          const app = newApp();
+          app.getEval = () => ({ atRisk: true });
+          const am = app.placementAnomaliesModel(app.filtered()), att = app.attentionModel();
+          same(am.ready, loaded !== 'neither', `${loaded}: placement readiness`);
+          same(att.bagrutRisk.length, 0, `${loaded}: unloaded bagrut never contributes risk`);
+          same(att.multi.length, loaded === 'grades' ? GroupAnalyzer.sadinSheet(app.filtered(), {}).filter(r => GroupAnalyzer.riskSubjects(r).length >= 2).length : 0, `${loaded}: only loaded grades contribute multi`);
+          if (loaded === 'grades') {
+            app.renderSadinPanel();
+            hasSummary(app.sadinSummary(GroupAnalyzer.sadinSheet(app.filtered(), {})), app.filtered().length, loaded);
+            app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'multiple' } });
+            same(tzsIn($id('sadin-table')), [...att.tzSet].sort(), 'Grades-only attention destination');
+            world({ roster: fx.roster });
+            app.renderSadinPanel();
+            check($id('sadin-summary').classList.contains('hidden') && !$id('sadin-summary').textContent, 'Unloading grades clears stale summary');
+          }
+        }
+        build();
+        const app = newApp({ grade: 'י', cls: 'י2', track: 'חנ"מ' });
+        const m = app.overviewModel();
+        same([m.anomaliesModel.total, m.anomaliesModel.studentsCount, m.attention.size, m.multi.length, m.avg, m.clean], [0, 0, 0, 0, null, 0], 'Empty overview metrics');
+        app.renderSadinPanel();
+        hasSummary(app.sadinSummary([]), 0, 'Empty slice');
       });
     });
   } catch (e) {

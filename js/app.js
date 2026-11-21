@@ -777,6 +777,44 @@ const App = {
   /* ==================================================================
      חדר בקרה פדגוגי – תמונת מצב (לשונית ברירת המחדל)
      ================================================================== */
+  /** חריגות שיבוץ לכל התצוגות; חוסר כולל גם היעדר מגמה, וכפילויות שגרתיות כפופות למתג הגלובלי. */
+  placementAnomaliesModel(list) {
+    const ready = Store.loaded.groups || Store.loaded.grades;
+    const source = ready ? GroupAnalyzer.placementAnomalies(list) : { rows: [], outside: { unmatched: 0, unmatchedList: [] } };
+    const hiddenRoutineCount = source.rows.filter(r => r.isRoutineDuplicate).length;
+    const rows = this.state.showRoutineDuplicates ? source.rows : source.rows.filter(r => !r.isRoutineDuplicate);
+    const byCategory = { missing: 0, duplicate: 0, suspect: 0 }, byTrainee = new Map();
+    rows.forEach(r => {
+      byCategory[r.category === 'missing_major' ? 'missing' : r.category]++;
+      if (!byTrainee.has(r.tz)) byTrainee.set(r.tz, { tz: r.tz, items: [], severe: false, text: '' });
+      const a = byTrainee.get(r.tz);
+      a.items.push(r);
+      if (r.kind !== 'nomajor') a.severe = true;
+    });
+    byTrainee.forEach(a => {
+      a.text = a.items.map(r => `${GroupAnalyzer.ANOMALY_LABEL[r.kind] || r.kindLabel}: ${r.subject}`).join(' • ');
+    });
+    return { ready, rows, total: rows.length, studentsCount: byTrainee.size, byCategory, byTrainee, hiddenRoutineCount, outside: source.outside };
+  },
+
+  /** מעקב הוא איחוד סיכון בבגרות ו-2+ מקצועות שליליים/חסרים בסדין, רק ממקורות שנטענו. */
+  attentionModel(list = this.filtered(), rows, sheet) {
+    const bagrutRisk = Store.loaded.bagrut ? (rows || list.map(t => ({ t, ev: this.getEval(t.tz) }))).filter(r => r.ev.atRisk) : [];
+    const multi = Store.loaded.grades ? (sheet || GroupAnalyzer.sadinSheet(list, {})).filter(r => GroupAnalyzer.riskSubjects(r).length >= 2) : [];
+    return { bagrutRisk, multi, tzSet: new Set([...bagrutRisk.map(r => r.t.tz), ...multi.map(r => r.t.tz)]) };
+  },
+
+  /** ממוצע שווה-משקל לחניכים עם ציון; תקינים הם בעלי ציון וללא מקצוע בסיכון. */
+  sadinSummary(sheet) {
+    const graded = sheet.filter(r => r.overall != null);
+    return {
+      avg: graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null,
+      gradedCount: graded.length,
+      cleanCount: graded.filter(r => !GroupAnalyzer.riskSubjects(r).length).length,
+      totalCount: sheet.length
+    };
+  },
+
   /** כל המדדים של חדר הבקרה על החניכים שבסינון הגלובלי; ממוצע ומקצועות חוסמים מחושבים מגיליון הסדין */
   overviewModel() {
     const list = this.filtered();
@@ -786,17 +824,16 @@ const App = {
     const stats = bench.pace ? BagrutAdvisor.summarizePace(benchEvals) : BagrutAdvisor.summarize(benchEvals);
     const sheet = Store.loaded.grades ? GroupAnalyzer.sadinSheet(list, {}) : [];
     const benchSheet = !Store.loaded.grades ? [] : bench.rows.length === rows.length ? sheet : GroupAnalyzer.sadinSheet(bench.rows.map(r => r.t), {});
-    const analysis = Store.loaded.groups ? GroupAnalyzer.analyzeGroupAnomalies(list, 'all') : null;
-    const bagrutRisk = rows.filter(r => r.ev.atRisk);
-    const multi = sheet.filter(r => GroupAnalyzer.riskSubjects(r).length >= 2);
+    const anomaliesModel = this.placementAnomaliesModel(list);
+    const { bagrutRisk, multi, tzSet } = this.attentionModel(list, rows, sheet);
+    const summary = this.sadinSummary(sheet);
     const graded = sheet.filter(r => r.overall != null);
     return {
-      list, rows, bench, stats, sheet, benchSheet, analysis, bagrutRisk, multi, graded,
+      list, rows, bench, stats, sheet, benchSheet, anomaliesModel, bagrutRisk, multi, graded,
       bagrutOn: Store.loaded.bagrut && stats.counted > 0,
-      anomalies: analysis ? GroupAnalyzer.anomaliesByTrainee(analysis) : new Map(),
-      attention: new Set([...bagrutRisk.map(r => r.t.tz), ...multi.map(r => r.t.tz)]),
-      avg: graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null,
-      clean: graded.filter(r => !GroupAnalyzer.riskSubjects(r).length).length
+      attention: tzSet,
+      avg: summary.avg,
+      clean: summary.cleanCount
     };
   },
 
@@ -849,7 +886,7 @@ const App = {
   overviewIssues(m) {
     const issues = new Map();
     const entry = (t, rank) => issues.get(t.tz) || { t, rank, parts: [] };
-    m.anomalies.forEach(a => {
+    m.anomaliesModel.byTrainee.forEach(a => {
       const t = Store.trainees.get(a.tz);
       if (t) issues.set(a.tz, { t, rank: a.severe ? 0 : 1, parts: [{ text: a.text, severe: a.severe }] });
     });
@@ -910,10 +947,10 @@ const App = {
       : `ללא חנ"מ: ${st.eligibilityExSpecialEd}% • כולל חנ"מ: ${st.eligibilityInclSpecialEd}%<br>${st.singleBlocker} חניכים במרחק מקצוע אחד מזכאות`;
     const card3 = card(`data-go="bagrut" data-chip="all" data-scope="${bench.scope}"`, kpiTitle, '', bagrutOn ? kpiSub : notLoaded,
       `<span class="flex items-center justify-between gap-3"><span class="ov-value">${bagrutOn ? `${kpiPct}%` : '—'}</span>${bagrutOn ? donut(kpiPct, bench.pace ? 'תקינות צבירה' : 'צפי זכאות') : ''}</span>`, ICONS.grad);
-    const c = m.analysis ? m.analysis.counts : null;
+    const am = m.anomaliesModel, c = am.byCategory;
     const card4 = card('data-go="groups" data-view="anomalies"', 'חריגות שיבוץ בקבוצות', '',
-      m.analysis ? `${m.anomalies.size} חניכים · חוסר ${c.none} • כפילות ${c.dup} • ללא מגמה ${c.nomajor}` : notLoaded,
-      `<span class="ov-value warm">${m.analysis ? m.analysis.items.length : '—'}</span>`, ICONS.alert);
+      am.ready ? `${am.studentsCount} חניכים · חוסר ${c.missing} • כפילות ${c.duplicate} • חשודים ${c.suspect}` : notLoaded,
+      `<span class="ov-value warm">${am.ready ? am.total : '—'}</span>`, ICONS.alert);
 
     /* אחוז זכאות / תקינות צבירה לפי כיתות של אוכלוסיית הייחוס (או ממוצע שוטף כשקובץ הבגרות טרם נטען); הסינון לפי כיתה אינו מצמצם את הגרף כדי שאפשר יהיה לעבור בין כיתות */
     const pool = f.cls === 'all' ? m.list : this.filtered(true, true);
@@ -955,7 +992,7 @@ const App = {
     const issueHtml = issues.length
       ? `<table class="ov-table"><thead><tr><th>תלמידים (שם + כיתה)</th><th>תיאור החריגה / חסם</th></tr></thead><tbody>${issueRows}</tbody></table>
         ${issues.length > SHOWN ? `<div class="pt-2 text-xs text-slate-500">מוצגים ${SHOWN} מתוך ${issues.length} · <button type="button" class="underline text-[#75977D]" data-act="ovGo" data-go="groups" data-view="anomalies">כל חריגי השיבוץ</button></div>` : ''}`
-      : `<div class="text-sm text-slate-500 py-3">${m.analysis || bagrutOn ? 'אין חניכים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות בסינון הנוכחי.' : notLoaded}</div>`;
+      : `<div class="text-sm text-slate-500 py-3">${am.ready || bagrutOn ? 'אין חניכים בחריגת שיבוץ או במרחק מקצוע אחד מזכאות בסינון הנוכחי.' : notLoaded}</div>`;
 
     /* חיווי ההיקף הפעיל: כדור ההיקף (כיתה / שכבה) וכדור "חזרה" בהיר לצידו */
     const capIcon = '<svg class="scope-cap" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>';
@@ -1074,20 +1111,20 @@ const App = {
 
   /** חניכים הדורשים תשומת לב: סיכון בבגרות או 2+ מקצועות בסיכון בסדין (אותה הגדרה כמו כרטיס חדר הבקרה) */
   attentionTzs() {
-    const list = this.filtered();
-    const set = new Set(list.filter(t => this.getEval(t.tz).atRisk).map(t => t.tz));
-    if (Store.loaded.grades) GroupAnalyzer.sadinSheet(list, {}).forEach(r => { if (GroupAnalyzer.riskSubjects(r).length >= 2) set.add(r.t.tz); });
-    return set;
+    return this.attentionModel().tzSet;
   },
 
   filterByChip(rows, chip) {
-    if (chip === 'attention') this._att = this.attentionTzs();
-    try { return rows.filter(r => this.chipMatch(r, chip)); } finally { this._att = null; }
+    if (chip === 'attention') {
+      const { tzSet } = this.attentionModel(rows.map(r => r.t), rows);
+      return rows.filter(r => tzSet.has(r.t.tz));
+    }
+    return rows.filter(r => this.chipMatch(r, chip));
   },
 
   chipMatch(r, chip) {
     const ev = r.ev;
-    if (chip === 'attention') return (this._att || this.attentionTzs()).has(r.t.tz);
+    if (chip === 'attention') return this.attentionTzs().has(r.t.tz);
     if (chip === 'exception') return ev.manual;
     if (chip === 'suspect') return !ev.manual && ev.isPotentialException;
     if (chip === 'manualReview') return !!(ev.manualReview && ev.manualReview.required);
@@ -1175,7 +1212,7 @@ const App = {
       sw('ignoreInternals', 'התעלם מחוסר יחידות פנימיות (חנ"ג, מעורבות, השכלה כללית ומדעים)') + sw('plus5', 'תוספת +5 לגבוליים 50-54') + sw('useCurrent', 'שלב ציונים שוטפים כתחזית (תצוגה מקדימה)'));
 
     this.renderCohortInfo(rows, fullMode);
-    this.renderBagrutKpis(stats, tierCount, TT, paceRows);
+    this.renderBagrutKpis(stats, tierCount, TT, paceRows, rows);
     const drillOpts = BagrutAdvisor.drillOptions();
     if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
     setHtml('bagrutSubjectDrillSelect',
@@ -1187,7 +1224,7 @@ const App = {
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
-  renderBagrutKpis(stats, tierCount, TT, paceRows = []) {
+  renderBagrutKpis(stats, tierCount, TT, paceRows = [], rows = this.dashRows()) {
     const box = $('bagrut-kpis');
     if (!box) return;
     if (!Store.hasData() || !Store.loaded.bagrut) { box.classList.add('hidden'); box.innerHTML = ''; return; }
@@ -1225,7 +1262,9 @@ const App = {
       </div>`;
     }
     box.classList.remove('hidden');
-    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}</div>`;
+    const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
+    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}
+      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${attention.bagrutRisk.length} בסיכון בבגרות · ${attention.multi.length} עם 2+ שליליים/חסרים בשוטף</div>` : ''}</div>`;
   },
 
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
@@ -1677,15 +1716,11 @@ const App = {
       this._explorerView = []; this._boardMissing = [];
       return this.renderStudentGroupsMap(lockT.tz);
     }
-    const ready = Store.loaded.groups || Store.loaded.grades;
     const list = this.filtered();
-    const am = ready ? GroupAnalyzer.placementAnomalies(list) : { rows: [], outside: { unmatched: 0, unmatchedList: [] } };
-    /* כפילויות שגרתיות מוסתרות מכל המונים והטבלה, אלא אם הופעל המתג */
-    am.hiddenRoutineCount = am.rows.filter(r => r.isRoutineDuplicate).length;
-    if (!this.state.showRoutineDuplicates) am.rows = am.rows.filter(r => !r.isRoutineDuplicate);
-    this.renderGroupsModeBar(am.rows.length, this.visibleGroupCount());
+    const am = this.placementAnomaliesModel(list);
+    this.renderGroupsModeBar(am.total, this.visibleGroupCount());
     if (explorer && !Store.loaded.groups) return message('הסייר מציג את הרשימות השמיות כפי שנרשמו במשוב, ולכן נדרש קובץ קבוצות לימוד. אפשר לטעון אותו בכפתור שבראש הפאנל.');
-    if (!explorer && !ready) return message('נדרש קובץ קבוצות ושיבוצים לניתוח השיבוצים. אפשר לטעון אותו בכפתור שבראש הפאנל.');
+    if (!explorer && !am.ready) return message('נדרש קובץ קבוצות ושיבוצים לניתוח השיבוצים. אפשר לטעון אותו בכפתור שבראש הפאנל.');
 
     show('groups-head', true); show('groups-mode', true);
     show('groups-explorer', explorer); show('gctl-explorer', explorer);
@@ -1721,7 +1756,7 @@ const App = {
   renderAnomalyWorkspace(am) {
     const state = this.state, cat = state.anomalyCategoryFilter, rows = am.rows;
     const count = c => rows.filter(r => r.category === c).length;
-    const students = new Set(rows.map(r => r.tz)).size;
+    const students = am.studentsCount;
     const suspectKinds = ['outlier', 'grade', 'sadin'].map(k => rows.filter(r => r.kind === k).length);
     const subjects = [...new Set(rows.map(r => r.subject))].sort(natural);
     if (state.anomalySubject !== 'all' && !subjects.includes(state.anomalySubject)) state.anomalySubject = 'all';
@@ -1730,11 +1765,11 @@ const App = {
     const card = (id, cls, label, n, sub, title = '') => `<button type="button" class="an-card ${cls}" data-act="anCat" data-cat="${id}" aria-pressed="${cat === id}" title="${E(title || sub)}">
       <span class="top"><span class="t">${label}</span><span class="n">${n}</span></span><span class="s">${sub}</span></button>`;
     setHtml('groups-kpis',
-      card('all', 'an-forest', 'כל החריגות לטיפול', rows.length, `${students} חניכים`) +
+      card('all', 'an-forest', 'כל החריגות לטיפול', am.total, `${students} חניכים`) +
       card('missing', 'an-sage', 'היעדר מקצוע ליבה', count('missing'), 'חניכים ללא קבוצה במקצוע חובה') +
       card('missing_major', 'an-terra', 'ללא שיבוץ מגמה', count('missing_major'), 'חניכים ללא קבוצת מגמה (5 יח"ל)') +
-      card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', count('duplicate'), 'רשומים ב-2 קבוצות ויותר') +
-      card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', count('suspect'), `בודד ${suspectKinds[0]} · שכבה ${suspectKinds[1]} · סדין ${suspectKinds[2]}`,
+      card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', am.byCategory.duplicate, 'רשומים ב-2 קבוצות ויותר') +
+      card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', am.byCategory.suspect, `בודד ${suspectKinds[0]} · שכבה ${suspectKinds[1]} · סדין ${suspectKinds[2]}`,
         `בודד מכיתתו ${suspectKinds[0]} · חריג שכבה ${suspectKinds[1]} · פער מול סדין ${suspectKinds[2]}`));
 
     const shown = rows.filter(r => (cat === 'all' || r.category === cat) && (subject === 'all' || r.subject === subject));
@@ -2003,6 +2038,16 @@ const App = {
   renderSadinPanel() {
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
+    let summaryBox = $('sadin-summary');
+    if (!summaryBox) {
+      summaryBox = document.createElement('div');
+      summaryBox.id = 'sadin-summary';
+      summaryBox.className = 'card px-4 py-2.5 mb-3 flex flex-wrap gap-x-6 gap-y-1 text-sm';
+      summaryBox.setAttribute('role', 'status');
+      $('sadin-table').insertAdjacentElement('beforebegin', summaryBox);
+    }
+    summaryBox.innerHTML = '';
+    summaryBox.classList.add('hidden');
     $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sticky-scroll';
     document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sview === st.view)));
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
@@ -2032,18 +2077,21 @@ const App = {
         all.push({ ...r, subjects: new Map(), failing: 0, missed: 0 });
       });
     }
-    const graded = all.filter(r => r.overall != null);
-    const mean = graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null;
     const filters = [
       ['all', 'כל החניכים', all.length],
       ['fail', 'עם נכשל שוטף', all.filter(r => r.failing > 0).length],
-      ['multiple', 'ריבוי שליליים', all.filter(r => r.failing >= 2).length],
+      ['multiple', '2+ מקצועות בסיכון (שלילי/חסר)', all.filter(r => GroupAnalyzer.riskSubjects(r).length >= 2).length],
       ['missed', 'אירועים שהוחמצו', all.filter(r => r.missed > 0).length]
     ];
     setHtml('sadinFilterSelect', filters.map(([key, label, count]) => option(key, `${label} (${count})`, st.strip)).join(''));
     const selectedFilter = filters.find(([key]) => key === st.strip);
-    $('sadinFilterSelect').title = `${selectedFilter ? `${selectedFilter[1]} (${selectedFilter[2]}) · ` : ''}ממוצע כללי בסינון: ${Util.fmt(mean, 1)}`;
-    const rows = all.filter(r => st.strip === 'all' || (st.strip === 'fail' && r.failing > 0) || (st.strip === 'multiple' && r.failing >= 2) || (st.strip === 'missed' && r.missed > 0));
+    const rows = all.filter(r => st.strip === 'all' || (st.strip === 'fail' && r.failing > 0) || (st.strip === 'multiple' && GroupAnalyzer.riskSubjects(r).length >= 2) || (st.strip === 'missed' && r.missed > 0));
+    const summary = this.sadinSummary(rows);
+    $('sadinFilterSelect').title = `${selectedFilter ? `${selectedFilter[1]} (${selectedFilter[2]}) · ` : ''}ממוצע כללי בסינון: ${Util.fmt(summary.avg, 1)}`;
+    summaryBox.classList.remove('hidden');
+    summaryBox.innerHTML = `<span><strong>ממוצע כללי בסינון:</strong> ${Util.fmt(summary.avg, 1)}</span>
+      <span><strong>100% ציונים עוברים:</strong> ${summary.cleanCount} מתוך ${summary.gradedCount} עם ציונים</span>
+      <span>מוצגים ${summary.totalCount} מתוך ${roster.length} חניכים בחיתוך</span>`;
     if (st.view === 'flat') this.renderSadinFlat(rows);
     else this.renderSadinSheet(rows, st.subject !== 'all' || st.teacher !== 'all');
   },
@@ -2612,7 +2660,7 @@ const App = {
     const scores = sheet.filter(r => r.overall != null).map(r => r.overall);
     const classAvg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
     const own = mine ? mine.overall : null;
-    const anomalies = Store.loaded.groups ? GroupAnalyzer.analyzeGroupAnomalies([t], 'all') : null;
+    const anomalies = this.placementAnomaliesModel([t]);
     const delta = own != null && classAvg != null ? own - classAvg : null;
     const box = (label, value, sub, cls = '', title = '') => `<div class="prof-kpi"${title ? ` title="${E(title)}"` : ''}><div class="k">${label}</div><div class="v ${cls}">${value}</div><div class="s">${sub}</div></div>`;
     const names = list => { const n = list.map(r => r.name); return n.slice(0, 3).join(', ') + (n.length > 3 ? ` +${n.length - 3}` : ''); };
@@ -2622,9 +2670,9 @@ const App = {
       nm ? `${nm} ${nm === 1 ? 'חסר ציון' : 'חסרי ציון'} (${names(cur.missing)})` : ''
     ].filter(Boolean).join(' • '));
     const riskTitle = [...cur.failing.map(r => `נכשל: ${r.name}`), ...cur.missing.map(r => `חסר ציון: ${r.name}`)].join(' | ');
-    const placement = !anomalies ? ['—', 'לא נטען קובץ קבוצות', ''] :
-      !anomalies.items.length ? ['✓ תקין', 'משובץ בכל המקצועות הנדרשים', 'txt-ok'] :
-      [anomalies.items.length === 1 ? 'חריגה אחת' : `${anomalies.items.length} חריגות`, E(GroupAnalyzer.anomaliesByTrainee(anomalies).get(t.tz).text), anomalies.items.some(a => a.kind !== 'nomajor') ? 'txt-bad' : 'txt-warn'];
+    const placement = !anomalies.ready ? ['—', 'לא נטען קובץ קבוצות או ציונים שוטפים', ''] :
+      !anomalies.total ? ['✓ תקין', 'משובץ בכל המקצועות הנדרשים', 'txt-ok'] :
+      [anomalies.total === 1 ? 'חריגה אחת' : `${anomalies.total} חריגות`, E(anomalies.byTrainee.get(t.tz).text), anomalies.byTrainee.get(t.tz).severe ? 'txt-bad' : 'txt-warn'];
     setHtml('profKpis', [
       box('ממוצע חניך', own == null ? '—' : Util.fmt(own, 1),
         delta == null ? 'אין ציונים שוטפים' : `${delta >= 0 ? '+' : ''}${Util.fmt(delta, 1)} ביחס לכיתה`, own != null && delta != null && delta < 0 ? 'txt-warn' : ''),
@@ -3574,8 +3622,12 @@ const App = {
       const { go, chip, strip, view, scope } = el.dataset;
       if (go === 'bagrut') {
         this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut');
+        if (chip === 'attention') {
+          this.state.bagrutScope = this.scopeOfGrade(this.state.filters.grade);
+          this.state.bagrutScopeSet = true;
+        }
         /* "כל השכבות" מכרטיס כללי אינו מבטל שכבה שנבחרה במפורש בסינון העליון */
-        if (scope && (scope !== 'all' || this.state.filters.grade === 'all')) { this.applyBagrutScope(scope); this.alertOut = []; }
+        if (chip !== 'attention' && scope && (scope !== 'all' || this.state.filters.grade === 'all')) { this.applyBagrutScope(scope); this.alertOut = []; }
       }
       if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', subject: 'all', teacher: 'all' }); this.dirty.add('sadin'); }
       if (go === 'groups') {
