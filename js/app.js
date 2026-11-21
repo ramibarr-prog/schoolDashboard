@@ -2409,9 +2409,12 @@ const App = {
       <td class="${x.score == null || x.score === 0 ? 'text-amber-600' : x.score < rules.passGrade ? 'text-red-600 font-semibold' : ''}">${x.score == null ? 'חסר' : x.score}</td></tr>`).join('');
     const attRows = Store.attemptsOf(t.tz).sort((a, b) => natural(a.code, b.code) || natural(a.moed, b.moed)).map(a => {
       const exempt = a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt;
-      const internal = rules.internals.some(i => i.codes.includes(a.code));
+      const internalDef = rules.internals.find(i => i.codes.includes(a.code)), internal = !!internalDef;
+      /* כמו שער 3 במנוע: מעורבות חברתית בסולם 1–4 – 2–4 עבר, 0–1 לא עבר; ציון 0–100 נשפט לפי ציון עובר */
+      const social = internalDef ? internalDef.scale === '1-4' || internalDef.id === 'social' : String(a.code) === '86083' || /מעורבות חברתית/.test(a.subject || '');
+      const numPass = n => (social && n >= 2 && n <= 4) || n >= rules.passGrade;
       const cls = exempt ? (internal ? ['text-emerald-700 font-semibold', '✓ פטור'] : ['badge tier-3', 'פטור — נדרשת החלטת רכזת']) :
-        a.cls.kind === 'num' ? (a.cls.num >= rules.passGrade ? ['text-emerald-700 font-semibold', '✓ עבר'] : ['badge tier-4', 'נכשל']) : a.cls.kind === 'pass' ? ['text-emerald-700 font-semibold', '✓ עבר'] : a.cls.kind === 'fail' ? ['badge tier-4', 'לא עבר'] : ['text-slate-500', '—'];
+        a.cls.kind === 'num' ? (numPass(a.cls.num) ? ['text-emerald-700 font-semibold', '✓ עבר'] : social && a.cls.num <= 1 ? ['badge tier-4', 'לא עבר'] : ['badge tier-4', 'נכשל']) : a.cls.kind === 'pass' ? ['text-emerald-700 font-semibold', '✓ עבר'] : a.cls.kind === 'fail' ? ['badge tier-4', 'לא עבר'] : ['text-slate-500', '—'];
       return `<tr><td>${a.code}</td><td class="text-xs">${E((rules.questionnaires[a.code] || {}).name || '')}</td><td>${E(a.subject)}</td>
         <td>${E(a.submission || '—')}</td><td>${E(a.exam || '—')}</td><td class="font-medium">${E(a.final || '—')}</td><td>${E(a.moed || '—')}</td><td><span class="${cls[0]}">${cls[1]}</span></td></tr>`;
     }).join('');

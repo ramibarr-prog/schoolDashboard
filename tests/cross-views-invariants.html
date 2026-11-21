@@ -831,6 +831,31 @@ window.fetch = (input, options) => {
         } finally { console.error = originalError; }
         same(errors, [], 'No console errors in any edge state');
       });
+
+      await part('Regression: 360 bagrut table shows social involvement (86083) on the 1-4 scale like gate 3', async () => {
+        const statusOf = value => {
+          resetConfig();
+          world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(1), { '86083': value })) });
+          const app = newApp();
+          app.state.profileTz = T(1); app.state.profTab = 'bagrut';
+          app.renderTrainee360Panel();
+          const row = [...$id('profBody').querySelectorAll('tbody tr')].find(r => r.children[0] && r.children[0].textContent.trim() === '86083');
+          const social = BagrutEngine.evaluate(T(1), FULL).internals.find(i => i.id === 'social');
+          return { text: row ? row.lastElementChild.textContent.trim() : null, done: social.done, explicitFail: social.explicitFail };
+        };
+        for (const [value, text] of [[4, '✓ עבר'], [3, '✓ עבר'], [2, '✓ עבר'], [1, 'לא עבר'], [0, 'לא עבר'], [70, '✓ עבר'], [30, 'נכשל']]) {
+          const s = statusOf(value);
+          same(s.text, text, `Social ${value}: 360 status`);
+          check((text === '✓ עבר') === s.done, `Social ${value}: 360 status must agree with the engine (done ${s.done})`);
+        }
+        resetConfig();
+        world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(1), { '41083': 4 })) });
+        const app = newApp();
+        app.state.profileTz = T(1); app.state.profTab = 'bagrut';
+        app.renderTrainee360Panel();
+        const pe = [...$id('profBody').querySelectorAll('tbody tr')].find(r => r.children[0] && r.children[0].textContent.trim() === '41083');
+        same(pe && pe.lastElementChild.textContent.trim(), 'נכשל', 'Other internal units keep the 0-100 scale (4 is a failure)');
+      });
     });
   } catch (e) {
     outcome.push({ title: 'Test harness', failures: [`EXCEPTION ${e && e.stack ? e.stack : e}`] });
