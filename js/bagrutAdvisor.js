@@ -8,7 +8,16 @@
    ===================================================================== */
 
 const BagrutAdvisor = (() => {
-  const { activeOnly, detectLevel, enrolledInMajor, levelScope, reverseNeed, codeOfComp, compOrd, gradeRank, resolveTiming, cohortOf, COHORT_MAJOR_PCT } = BagrutEngine;
+  const { activeOnly, detectLevel, enrolledInMajor, levelScope, codeOfComp, compOrd, gradeRank, resolveTiming, cohortOf, COHORT_MAJOR_PCT } = BagrutEngine;
+
+  /**
+   * הציון הנדרש ברכיב החסר, חסום למינימום 1: ציון גבוה ברכיבים שדווחו נותן required30 של 0 או שלילי,
+   * ואז מספיק כל ציון חיובי (כמו "נדרש ציון חיובי (מינימום 1)" בפירוט המנוע). כשעובר אינו אפשרי מוצג הציון לקיזוז.
+   */
+  function reverseNeed(r) {
+    if (r.required30 > 100 && r.level === 'amber') return `${Math.max(1, r.requiredFor45)} ב-${r.pct}% (לקיזוז ${r.compMin})`;
+    return r.required30 <= 1 ? `ציון חיובי (1+) ב-${r.pct}%` : `${Math.max(1, r.required30)} ב-${r.pct}%`;
+  }
 
   const trackOf = tz => {
     const t = Store.trainees.get(tz);

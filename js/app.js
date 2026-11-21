@@ -486,6 +486,27 @@ const App = {
     this.renderTab(this.state.tab);
   },
 
+  /** שינוי שכבה בסינון העליון (#fGrade): בורר השכבות בלשונית הבגרות עובר לאותה שכבה */
+  changeGradeFilter(grade) {
+    const st = this.state;
+    st.filters.grade = grade;
+    st.filters.cls = 'all';
+    st.bagrutScope = this.scopeOfGrade(grade);
+    st.bagrutScopeSet = true;
+    this.onFilterChange();
+  },
+
+  /** "נקה": שכבה עליונה ובורר השכבות חוזרים יחד ל"הכל" / "כל השכבות" */
+  resetFilters() {
+    clearTimeout(this._searchTimer);
+    this.state.selectedSearchTz = null;
+    this.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '' };
+    this.state.bagrutScope = 'all';
+    this.state.bagrutScopeSet = true;
+    this.hideSuggestions();
+    this.onFilterChange();
+  },
+
   /* ------------------------------------------------------------------
      רמזור עדכניות + העלאה מבוזרת
      ------------------------------------------------------------------ */
@@ -990,13 +1011,54 @@ const App = {
   tierBased(ev) { return ev.rank >= 12 || ev.manual || ev.tier === 0; },
 
   /** היקף השכבות בלשונית הבגרות. סינון שכבה גלובלי קובע לבדו; חניך שננעל בחיפוש מוצג תמיד. אם אין חניכים בהיקף ברירת המחדל – השכבה הגבוהה הראשונה שיש בה חניכים */
+  /* מיפוי אחיד בין בורר השכבות בלשונית הבגרות לבין סינון השכבה העליון (#fGrade) */
+  BAGRUT_SCOPE_OF: { 'יב': '12', 'יא': '11', 'י': '10', all: 'all' },
+  scopeOfGrade(grade) { return this.BAGRUT_SCOPE_OF[grade] || 'all'; },
+  gradeOfScope(scope) { return Object.keys(this.BAGRUT_SCOPE_OF).find(g => this.BAGRUT_SCOPE_OF[g] === scope) || 'all'; },
+
+  /** ספירת החניכים לכל כפתור שכבה לפי יתר הסינונים, ללא חיתוך עצמי של סינון השכבה */
+  bagrutScopeCounts() {
+    const f = this.state.filters, grade = f.grade;
+    let list;
+    f.grade = 'all';
+    try { list = this.filtered(); } finally { f.grade = grade; }
+    const counts = { 12: 0, 11: 0, 10: 0, all: list.length };
+    list.forEach(t => { const k = this.scopeOfGrade(t.gradeKey); if (k !== 'all') counts[k]++; });
+    return counts;
+  },
+
+  /** קובע שכבה בבורר ובסינון העליון יחד; #fHomeroom מצטמצם לכיתות השכבה ושאר הלשוניות מסומנות לרינדור */
+  applyBagrutScope(scope) {
+    const st = this.state;
+    st.filters.grade = this.gradeOfScope(scope);
+    st.bagrutScope = this.scopeOfGrade(st.filters.grade);
+    st.bagrutScopeSet = true;
+    if (st.navOrigin) st.navOrigin.orderedTzList = null;
+    this.syncFilters();
+    st.bagrutScope = this.scopeOfGrade(st.filters.grade);
+    FILTERED_TABS.forEach(t => this.dirty.add(t));
+  },
+
+  /** כניסה ראשונה ללשונית: ברירת המחדל (י"ב או השכבה הגבוהה הזמינה) נכתבת גם לסינון העליון; אחרת הבורר תמיד משקף את #fGrade */
+  syncBagrutScope() {
+    const st = this.state;
+    if (st.filters.grade === 'all' && !st.bagrutScopeSet && !this.lockedTrainee() && Store.hasData()) {
+      const counts = this.bagrutScopeCounts();
+      if (counts.all) {
+        let scope = st.bagrutScope;
+        if (scope !== 'all' && !counts[scope]) scope = ['12', '11', '10'].find(k => counts[k]) || 'all';
+        this.applyBagrutScope(scope);
+        this.dirty.delete('bagrut');
+        this.alertOut = [];
+      }
+    }
+    st.bagrutScope = this.scopeOfGrade(st.filters.grade);
+  },
+
   bagrutScopeInfo(rows) {
-    const counts = { 12: 0, 11: 0, 10: 0, all: rows.length };
-    rows.forEach(r => { if (counts[r.ev.rank] !== undefined) counts[r.ev.rank]++; });
-    let scope = this.state.bagrutScope;
-    if (!this.state.bagrutScopeSet && scope !== 'all' && !counts[scope]) scope = ['12', '11', '10'].find(k => counts[k]) || 'all';
-    const show = this.state.filters.grade === 'all' && !this.lockedTrainee();
-    return { counts, scope, show, rows: show && scope !== 'all' ? rows.filter(r => r.ev.rank === +scope) : rows };
+    const scope = this.scopeOfGrade(this.state.filters.grade);
+    const show = !this.lockedTrainee();
+    return { counts: this.bagrutScopeCounts(), scope, show, rows };
   },
 
   renderBagrutScope(info) {
@@ -1076,6 +1138,7 @@ const App = {
 
   renderBagrutPanel() {
     this.renderFreshnessBar('bagrut');
+    this.syncBagrutScope();
     const scope = this.bagrutScopeInfo(this.dashRows());
     this.renderBagrutScope(scope);
     const rows = scope.rows;
@@ -2340,6 +2403,16 @@ const App = {
     try { this.renderTrainee360Inner(); } finally { restore(); }
   },
 
+  /** חיווי לקריאה בלבד: מצב ההערכה שבו מוצג כרטיס 360° (נגזר מהבחירה בלשונית צפי זכאות לבגרות) */
+  profileModeBadge(t, ev) {
+    const [cls, text, title] = t.gradeKey !== 'יב'
+      ? ['badge fresh-slate', '📅 קצב צבירה (מותאם לשלב בשנה)', 'שכבות י\' ו-י"א נשפטות תמיד לפי קצב צבירה (מותאם לשלב בשנה), ללא תלות בבחירה בלשונית "צפי זכאות לבגרות"']
+      : ev.adaptive
+        ? ['badge fresh-slate', '📅 צפי מותאם לשלב בשנה', 'מצב ההערכה נגזר מהבחירה בלשונית "צפי זכאות לבגרות": צפי מותאם לשלב בשנה']
+        : ['badge bg-indigo-50 text-indigo-800 border-indigo-200', '🎓 מצב תעודה סופית (סוף י"ב)', 'מצב ההערכה נגזר מהבחירה בלשונית "צפי זכאות לבגרות": מצב תעודה סופית — כל השאלונים והיחידות הפנימיות נדרשים'];
+    return `<span class="${cls}" data-eval-mode="${t.gradeKey !== 'יב' ? 'pace' : ev.adaptive ? 'adaptive' : 'final'}" title="${E(title)}">${text}</span>`;
+  },
+
   renderTrainee360Inner() {
     const list = this.profileList();
     const sel = $('profSelect');
@@ -2365,7 +2438,7 @@ const App = {
     setHtml('profBadges', `${ev.manualReview.required ? `<span class="badge tier-3 prof-status" title="${E(`חישוב אוטומטי: ${ev.tierText} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
       this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
       ${this.unitsBadge(ev)}
-      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${ev.manualReview.required ? '' : this.manualReviewBadge(ev)}`);
+      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${ev.manualReview.required ? '' : this.manualReviewBadge(ev)}${this.profileModeBadge(t, ev)}`);
     const cur = this.profileCurrentModel(t, ev, rules);
     this.renderProfileKpis(t, cur);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));
@@ -2955,13 +3028,7 @@ const App = {
     this.bindSadinColResize();
 
     /* סינון גלובלי */
-    on('fGrade', 'change', e => {
-      this.state.filters.grade = e.target.value;
-      this.state.filters.cls = 'all';
-      /* בחירת שכבה מפורשת מסנכרנת את היקף הבגרות אליה */
-      if (e.target.value !== 'all') { this.state.bagrutScope = String(Util.ord(e.target.value)); this.state.bagrutScopeSet = true; }
-      this.onFilterChange();
-    });
+    on('fGrade', 'change', e => this.changeGradeFilter(e.target.value));
     on('fHomeroom', 'change', e => { this.state.filters.cls = e.target.value; this.onFilterChange(); });
     on('fTrack', 'change', e => { this.state.filters.track = e.target.value; this.onFilterChange(); });
     on('globalSearch', 'input', e => {
@@ -2990,7 +3057,7 @@ const App = {
     });
     on('searchSuggestPopup', 'mousedown', e => e.preventDefault());
     document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) this.hideSuggestions(); });
-    on('fClear', 'click', () => { clearTimeout(this._searchTimer); this.state.selectedSearchTz = null; this.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '' }; this.hideSuggestions(); this.onFilterChange(); });
+    on('fClear', 'click', () => this.resetFilters());
     on('bagrutStatusSelect', 'change', e => {
       this.state.bagrut.chip = e.target.value;
       this.dirty.add('bagrut'); this.renderTab('bagrut');
@@ -3507,7 +3574,8 @@ const App = {
       const { go, chip, strip, view, scope } = el.dataset;
       if (go === 'bagrut') {
         this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut');
-        if (scope) { this.state.bagrutScope = scope; this.state.bagrutScopeSet = true; }
+        /* "כל השכבות" מכרטיס כללי אינו מבטל שכבה שנבחרה במפורש בסינון העליון */
+        if (scope && (scope !== 'all' || this.state.filters.grade === 'all')) { this.applyBagrutScope(scope); this.alertOut = []; }
       }
       if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', subject: 'all', teacher: 'all' }); this.dirty.add('sadin'); }
       if (go === 'groups') {
@@ -3630,11 +3698,10 @@ const App = {
       this.renderTab('bagrut');
     },
     bagrutScope(el) {
-      this.state.bagrutScope = el.dataset.scope;
-      this.state.bagrutScopeSet = true;
       this.state.bagrut.chip = 'all';
-      this.dirty.add('bagrut');
-      this.renderTab('bagrut');
+      this.applyBagrutScope(el.dataset.scope);
+      this.alertOut = [];
+      this.renderTab(this.state.tab);
     },
     excModal(el) { this.openExceptionModal(el.dataset.tz); },
     excModalSave(el) {

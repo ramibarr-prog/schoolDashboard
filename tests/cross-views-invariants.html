@@ -548,7 +548,8 @@ window.fetch = (input, options) => {
         let emptySlices = 0;
         combos.forEach(({ grade, cls, track, scope }) => {
           const label = `${grade}/${cls}/${track}/${scope}`;
-          app.state.filters = { grade, cls, track, q: '' };
+          /* הבורר והסינון העליון מסונכרנים: היקף שכבה בודדת זהה לסינון השכבה המתאים */
+          app.state.filters = { grade: grade === 'all' && scope && scope !== 'all' ? app.gradeOfScope(scope) : grade, cls, track, q: '' };
           app.state.bagrutScope = scope || 'all'; app.state.bagrutScopeSet = true; app.state.bagrut.chip = 'all'; app.state.bagrut.drill = 'all';
           app.evals.clear();
           app.renderBagrutPanel();
@@ -891,6 +892,88 @@ window.fetch = (input, options) => {
         check(!btn('final').disabled && btn('final').getAttribute('aria-pressed') === 'true' && /י"ב בלבד/.test(btn('final').title),
           'With grade 12 in scope the final toggle works and its title states it applies to grade 12 only');
         check(errorsOf(app).length === 0, 'No panel error');
+
+        const modeBadge = (tz, fullMode) => {
+          app.state.sim = { ...FULL, fullMode };
+          app.evals.clear();
+          app.state.profileTz = tz;
+          app.renderTrainee360Panel();
+          const badges = [...$id('profBadges').querySelectorAll('[data-eval-mode]')];
+          check(badges.length === 1, `360 mode badge appears exactly once (got ${badges.length})`);
+          check(!badges[0] || (!badges[0].closest('button,select') && badges[0].title.includes('צפי זכאות לבגרות')), '360 mode badge is read-only and explains its source');
+          check($id('profBadges').firstElementChild.classList.contains('prof-status'), 'Status badge stays first');
+          return badges[0] ? [badges[0].dataset.evalMode, badges[0].textContent.trim()] : null;
+        };
+        same(modeBadge(T(1), true), ['final', '🎓 מצב תעודה סופית (סוף י"ב)'], 'Grade 12 in final mode');
+        same(modeBadge(T(1), false), ['adaptive', '📅 צפי מותאם לשלב בשנה'], 'Grade 12 in adaptive mode');
+        for (const fullMode of [true, false]) same(modeBadge(T(3), fullMode), ['pace', '📅 קצב צבירה (מותאם לשלב בשנה)'], `Grade 11 is always pace (fullMode ${fullMode})`);
+      });
+
+      await part('Regression: bagrut grade selector and the top grade/class filters stay in two-way sync', async () => {
+        resetConfig();
+        world({
+          roster: [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב2'), stu(3, 'יא', 'יא1'), stu(4, 'יא', 'יא2'), stu(5, 'י', 'י1')],
+          bagrut: bagrutRows([...profile(T(1)), ...profile(T(2))])
+        });
+        const setup = () => {
+          const app = newApp();
+          $id('stage').insertAdjacentHTML('beforeend', '<select id="fGrade"></select><select id="fHomeroom"></select><div id="bagrut-scope"></div>');
+          app.state.tab = 'bagrut';
+          return app;
+        };
+        const pill = scope => $id('bagrut-scope').querySelector(`button[data-scope="${scope}"]`);
+        const pressed = () => [...$id('bagrut-scope').querySelectorAll('button[aria-pressed="true"]')].map(b => b.dataset.scope);
+        const homerooms = () => [...$id('fHomeroom').options].map(o => o.value).filter(v => v !== 'all');
+        const state = app => [app.state.filters.grade, $id('fGrade').value, app.state.bagrutScope, pressed()];
+
+        const first = setup();
+        first.state.bagrutScope = '12'; first.state.bagrutScopeSet = false;
+        first.syncFilters(); first.renderBagrutPanel();
+        same(state(first), ['יב', 'יב', '12', ['12']], 'First entry: the default grade-12 scope is also written to the top filter');
+
+        const app = setup();
+        app.syncFilters(); app.renderBagrutPanel();
+        same(state(app), ['all', 'all', 'all', ['all']], 'Initial: both on all');
+        app.state.filters.cls = 'יב1';
+        app.acts.bagrutScope.call(app, pill('11'));
+        same(state(app), ['יא', 'יא', '11', ['11']], 'Scope pill 11 updates the top grade filter');
+        same([app.state.filters.cls, homerooms()], ['all', ['יא1', 'יא2']], 'Homeroom list shrinks to grade 11 classes and an out-of-grade class resets');
+        same(['12', '11', '10', 'all'].map(s => (/\((\d+)\)/.exec(pill(s).textContent) || [])[1]), ['2', '2', '1', '5'], 'Pill counts ignore the grade filter itself');
+
+        $id('fGrade').value = 'יב';
+        app.changeGradeFilter($id('fGrade').value);
+        same(state(app), ['יב', 'יב', '12', ['12']], 'Top grade filter יב selects the grade-12 pill');
+        same(homerooms(), ['יב1', 'יב2'], 'Homeroom list follows the top grade filter');
+
+        app.acts.bagrutScope.call(app, pill('all'));
+        same(state(app), ['all', 'all', 'all', ['all']], 'All-grades pill resets the top filter to all');
+        $id('fGrade').value = 'יא';
+        app.changeGradeFilter('יא');
+        $id('fGrade').value = 'all';
+        app.changeGradeFilter('all');
+        same(state(app), ['all', 'all', 'all', ['all']], 'Top filter all resets the pill to all grades');
+        app.acts.bagrutScope.call(app, pill('10'));
+        app.resetFilters();
+        same(state(app), ['all', 'all', 'all', ['all']], 'Clear resets both the top filter and the bagrut scope');
+        check(errorsOf(app).length === 0 && errorsOf(first).length === 0, 'No panel error');
+      });
+
+      await part('Regression: advisor reverse-calculator target never shows a negative number or 0', async () => {
+        /* מספר שלילי אמיתי, לא "ב-30%" (מקף אחרי אות עברית) */
+        const negative = /(^|[^\u0590-\u05FF])-\d/;
+        for (const [internalWeight, expected] of [[30, -5], [10, -175]]) {
+          resetConfig();
+          if (internalWeight !== 30) check(Config.updateRules(r => { const h = r.coreSubjects.find(s => s.id === 'history'); h.components[0].weight = internalWeight; h.components[1].weight = 100 - internalWeight; }).ok, 'Weight change accepted');
+          world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(1), { '22283': null, '22261': 80 })) });
+          const ev = BagrutEngine.evaluate(T(1), FULL), s = ev.subjects.find(x => x.id === 'history'), cell = ev.cells.history;
+          same([s.reverse && s.reverse.required30, s.reverse && s.reverse.pct], [expected, internalWeight], `${internalWeight}%: required30 is non-positive in the engine`);
+          const shown = [cell.text, cell.sub, cell.tip, ...ev.focus.map(f => f.text)].join(' | ');
+          check(cell.state === 'reverse' && cell.sub === `צריך ציון חיובי (1+) ב-${internalWeight}%`, `${internalWeight}%: cell asks for a positive score (got "${cell.sub}")`);
+          check(!negative.test(shown) && !/צריך 0\b|\b0 ב-/.test(shown), `${internalWeight}%: no negative or zero target in cell, tip or focus: ${shown}`);
+          check(cell.tip.includes(s.reverse.text) && /מינימום 1\)/.test(s.reverse.text), `${internalWeight}%: the tip line below agrees (minimum 1)`);
+          check(!ev.focus.some(f => f.target && f.text.includes(s.name)), `${internalWeight}%: an info-level (1+) target is not pushed as a pedagogical focus item`);
+        }
+        resetConfig();
       });
     });
   } catch (e) {
