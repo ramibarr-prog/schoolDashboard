@@ -1020,6 +1020,7 @@ window.fetch = (input, options) => {
         check(full.anomaliesModel.byCategory.suspect > 0, 'Fixture exercises suspect anomalies');
         check(full.anomaliesModel.hiddenRoutineCount > 0, 'Fixture exercises routine anomalies');
         check(full.bagrutRisk.some(r => full.multi.some(s => s.t.tz === r.t.tz)), 'Fixture exercises overlap in attention union');
+        check(full.att.both > 0 && full.att.both < full.multi.length, 'Fixture exercises overlap and non-overlap in attention breakdown');
         check(full.multi.some(r => r.failing === 0 && GroupAnalyzer.riskSubjects(r).length >= 2), 'Fixture exercises 2+ missing subjects without failing averages');
         for (const grade of ['all', 'יב', 'יא', 'י']) {
           const cls = Store.traineeList().find(t => grade === 'all' || t.gradeKey === grade).classKey;
@@ -1058,15 +1059,23 @@ window.fetch = (input, options) => {
             const m = app.overviewModel(), attention = app.attentionModel(list, m.rows, m.sheet);
             same([...app.attentionTzs()].sort(), [...m.attention].sort(), `${label}: attentionTzs`);
             same([...m.attention].sort(), [...attention.tzSet].sort(), `${label}: attention model`);
+            const riskTzs = new Set(attention.bagrutRisk.map(r => r.t.tz));
+            same(attention.both, attention.multi.filter(r => riskTzs.has(r.t.tz)).length, `${label}: overlap count`);
+            same(attention.tzSet.size, attention.bagrutRisk.length + attention.multi.length - attention.both, `${label}: union = risk + multi - both`);
+            same(m.att.both, attention.both, `${label}: overview overlap from shared model`);
+            const overlapText = `(${attention.both} בשניהם)`;
             app.renderOverviewPanel();
             same(value(cards()[0]), String(m.attention.size), `${label}: card 1 count`);
+            check(cards()[0].textContent.includes(`${app.attentionBreakdownText(attention, '2+ שליליים או חסרים')} · מתוך ${list.length}`), `${label}: card 1 shared breakdown`);
+            check(cards()[0].textContent.includes(overlapText) === attention.both > 0, `${label}: card 1 overlap shown only when > 0`);
             same(value(cards()[1]), m.avg == null ? '—' : Util.fmt(m.avg, 1), `${label}: card 2 displayed average`);
             app.state.bagrutScope = '12'; app.state.bagrutScopeSet = false;
             app.acts.ovGo.call(app, cards()[0]);
             same([app.state.filters.grade, app.state.filters.cls, app.state.bagrutScope, app.state.bagrutScopeSet], [grade, homeroom, app.scopeOfGrade(grade), true], `${label}: card 1 preserves scope on first entry`);
             same(tzsIn($id('bagrut-table')), [...m.attention].sort(), `${label}: attention destination ID set`);
             same(app.bagrutList(app.dashRows()).length, m.attention.size, `${label}: attention row count`);
-            check($id('bagrut-kpis').textContent.includes(`במעקב: ${m.attention.size} · ${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ שליליים/חסרים בשוטף`), `${label}: visible attention breakdown`);
+            check($id('bagrut-kpis').textContent.includes(`במעקב: ${m.attention.size} · ${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both > 0 ? ` ${overlapText}` : ''}`), `${label}: visible attention breakdown`);
+            check($id('bagrut-kpis').textContent.includes(overlapText) === attention.both > 0, `${label}: bagrut-kpis overlap shown only when > 0`);
             const outside = Store.traineeList().filter(t => !list.includes(t)).map(t => ({ t, ev: app.getEval(t.tz) }));
             const expectedOutside = app.attentionModel(outside.map(r => r.t), outside).tzSet;
             same(app.filterByChip(outside, 'attention').map(r => r.t.tz).sort(), [...expectedOutside].sort(), `${label}: chip uses supplied rows, not global filters`);

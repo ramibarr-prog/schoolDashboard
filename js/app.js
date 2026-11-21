@@ -801,7 +801,14 @@ const App = {
   attentionModel(list = this.filtered(), rows, sheet) {
     const bagrutRisk = Store.loaded.bagrut ? (rows || list.map(t => ({ t, ev: this.getEval(t.tz) }))).filter(r => r.ev.atRisk) : [];
     const multi = Store.loaded.grades ? (sheet || GroupAnalyzer.sadinSheet(list, {})).filter(r => GroupAnalyzer.riskSubjects(r).length >= 2) : [];
-    return { bagrutRisk, multi, tzSet: new Set([...bagrutRisk.map(r => r.t.tz), ...multi.map(r => r.t.tz)]) };
+    const riskTzs = new Set(bagrutRisk.map(r => r.t.tz));
+    const both = new Set(multi.map(r => r.t.tz).filter(tz => riskTzs.has(tz))).size;
+    return { bagrutRisk, multi, both, tzSet: new Set([...riskTzs, ...multi.map(r => r.t.tz)]) };
+  },
+
+  /** פירוט אחיד של חניכים במעקב; החפיפה מוצגת רק כשיש חניכים בשתי הקבוצות */
+  attentionBreakdownText(att, multiLabel = '2+ שליליים/חסרים בשוטף') {
+    return `${att.bagrutRisk.length} בסיכון בבגרות · ${att.multi.length} עם ${multiLabel}${att.both > 0 ? ` (${att.both} בשניהם)` : ''}`;
   },
 
   /** ממוצע שווה-משקל לחניכים עם ציון; תקינים הם בעלי ציון וללא מקצוע בסיכון. */
@@ -825,11 +832,12 @@ const App = {
     const sheet = Store.loaded.grades ? GroupAnalyzer.sadinSheet(list, {}) : [];
     const benchSheet = !Store.loaded.grades ? [] : bench.rows.length === rows.length ? sheet : GroupAnalyzer.sadinSheet(bench.rows.map(r => r.t), {});
     const anomaliesModel = this.placementAnomaliesModel(list);
-    const { bagrutRisk, multi, tzSet } = this.attentionModel(list, rows, sheet);
+    const att = this.attentionModel(list, rows, sheet);
+    const { bagrutRisk, multi, tzSet } = att;
     const summary = this.sadinSummary(sheet);
     const graded = sheet.filter(r => r.overall != null);
     return {
-      list, rows, bench, stats, sheet, benchSheet, anomaliesModel, bagrutRisk, multi, graded,
+      list, rows, bench, stats, sheet, benchSheet, anomaliesModel, att, bagrutRisk, multi, graded,
       bagrutOn: Store.loaded.bagrut && stats.counted > 0,
       attention: tzSet,
       avg: summary.avg,
@@ -934,7 +942,7 @@ const App = {
     const notLoaded = 'טרם נטען קובץ';
     const attentionGo = Store.loaded.bagrut ? 'data-go="bagrut" data-chip="attention" data-scope="all"' : 'data-go="sadin" data-strip="multiple"';
     const card1 = card(attentionGo, 'חניכים במעקב / דורש תשומת לב', m.attention.size,
-      bagrutOn || sadinOn ? `${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ ציונים שליליים או חסרים · מתוך ${m.list.length}` : notLoaded, '', ICONS.attn);
+      bagrutOn || sadinOn ? `${this.attentionBreakdownText(m.att, '2+ שליליים או חסרים')} · מתוך ${m.list.length}` : notLoaded, '', ICONS.attn);
     const card2 = card('data-go="sadin" data-strip="all"', 'ממוצע הישגים שוטפים', m.avg == null ? '—' : Util.fmt(m.avg, 1),
       sadinOn ? `${m.clean} חניכים עם 100% ציונים עוברים (מתוך ${m.graded.length} עם ציונים)` : notLoaded, '', ICONS.trophy);
     const kpiPct = bench.pace ? st.pctInclSpecialEd : st.eligibilityInclSpecialEd;
@@ -1264,7 +1272,7 @@ const App = {
     box.classList.remove('hidden');
     const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
     box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}
-      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${attention.bagrutRisk.length} בסיכון בבגרות · ${attention.multi.length} עם 2+ שליליים/חסרים בשוטף</div>` : ''}</div>`;
+      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${this.attentionBreakdownText(attention)}</div>` : ''}</div>`;
   },
 
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
