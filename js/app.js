@@ -825,7 +825,7 @@ const App = {
   /** התאמת מקצוע וסדין בכללי המחזור של כל חניך, ללא שימוש בתחזית הבגרות. */
   subjectReadinessModel(sel, trainees, onlyPending = false) {
     const [kind, id] = String(sel).split(':');
-    const questionnaires = new Map(), all = [];
+    const questionnaires = new Map(), all = [], groupsOn = !!Store.loaded.groups;
     let name = '', pass = Number(Config.rules().passGrade) || 55;
     const grades = [...new Set(trainees.map(t => t.gradeKey))];
     (grades.length ? grades : ['יב']).forEach(grade => Config.withRulesForGrade(grade, () => {
@@ -857,25 +857,42 @@ const App = {
           : (GroupAnalyzer.coreOf(s.name) || {}).id === id || s.name === GroupAnalyzer.sadinSubject(def.name)) : [];
         // מגמות אינן מנורמלות בסדין; מאחדים עליאסים לפי אותן מילות מפתח של כללי הבגרות.
         const avg = subjects.length ? Store.weightedAverage(subjects.flatMap(s => s.events)).avg : null;
-        all.push({ ...r, pass, pending, currentAvg: avg, missed: subjects.reduce((n, s) => n + s.missed.size, 0) });
+        // שאלוני 30% יושבים בכספת י"ב; מי שלומד את המקצוע השנה מזוהה לפי שיבוץ בפועל ולא לפי expectedGrade.
+        const fileGroup = groupsOn ? Store.groupsOf(r.t.tz).find(g => g.inFile && !g.reinforcement && (kind === 'major'
+          ? Util.matchKeywords(g.subject, def.keywords)
+          : (GroupAnalyzer.coreOf(g.subject) || {}).id === id || Util.matchKeywords(g.subject, def.keywords))) : null;
+        const unitGroup = (fileGroup && fileGroup.groupId) || r.groupId || '';
+        const enrolled = !groupsOn || !!unitGroup || avg != null;
+        all.push({ ...r, pass, pending, enrolled, unitGroup, currentAvg: avg, missed: subjects.reduce((n, s) => n + s.missed.size, 0) });
       });
     }));
-    // יחידת ההשוואה: קבוצת הלימוד במקצוע, ואם אין – כיתת האם; מדווחת אם לפחות לחניך אחד בה יש ציון שוטף.
-    const gradedRows = all.filter(r => r.currentAvg != null);
-    const reportedGroups = new Set(gradedRows.map(r => r.groupId).filter(Boolean));
-    const reportedClasses = new Set(gradedRows.map(r => r.t.classKey || ''));
+    // יחידה מדווחת רק כשלחלק ממשי ממנה יש ציון שוטף (25% ולפחות 2, או כולם ביחידה של 1–2), כדי שציון בודד לא יהפוך את כל השאר ל"ללא ציון".
+    const units = new Map();
+    const tally = (key, r) => {
+      const u = units.get(key) || { size: 0, graded: 0 };
+      u.size++; if (r.currentAvg != null) u.graded++;
+      units.set(key, u);
+    };
+    all.filter(r => r.enrolled).forEach(r => {
+      r.unit = r.unitGroup ? `g:${r.unitGroup}` : groupsOn ? '' : `c:${r.t.classKey || ''}`;
+      if (r.unitGroup) tally(r.unit, r);
+      // נפילת חירום לכיתת אם (רק ללא קובץ קבוצות) נמדדת על כל חניכי הכיתה במקצוע.
+      if (!groupsOn) tally(`c:${r.t.classKey || ''}`, r);
+    });
+    const isReported = u => !!u && u.graded >= Math.min(u.size, Math.max(2, Math.ceil(u.size * 0.25)));
     all.forEach(r => {
       const avg = r.currentAvg;
-      const reported = r.groupId ? reportedGroups.has(r.groupId) : reportedClasses.has(r.t.classKey || '');
-      r.readiness = avg != null ? (avg < r.pass ? 'fail' : avg < 65 ? 'borderline' : 'ok') : reported ? 'noGrade' : 'unreported';
+      r.readiness = !r.enrolled ? 'notEnrolled'
+        : avg != null ? (avg < r.pass ? 'fail' : avg < 65 ? 'borderline' : 'ok')
+        : isReported(units.get(r.unit)) ? 'noGrade' : 'unreported';
     });
-    const rows = onlyPending ? all.filter(r => r.pending) : all;
+    const rows = all.filter(r => (!onlyPending || r.pending) && !(onlyPending && groupsOn && !r.enrolled));
     const summarize = members => {
       const count = s => members.filter(r => r.readiness === s).length;
-      const fail = count('fail'), borderline = count('borderline'), noGrade = count('noGrade'), ok = count('ok'), unreported = count('unreported');
-      const gradedRows = members.filter(r => r.currentAvg != null), total = members.length, graded = gradedRows.length;
+      const fail = count('fail'), borderline = count('borderline'), noGrade = count('noGrade'), ok = count('ok'), unreported = count('unreported'), notEnrolled = count('notEnrolled');
+      const gradedRows = members.filter(r => r.currentAvg != null), total = members.length - notEnrolled, graded = gradedRows.length;
       const assessed = total - unreported, offTrack = fail + borderline + noGrade;
-      return { total, assessed, graded, fail, borderline, noGrade, ok, unreported, offTrack,
+      return { total, assessed, graded, fail, borderline, noGrade, ok, unreported, notEnrolled, offTrack,
         offTrackPct: assessed ? Math.round(offTrack / assessed * 100) : 0,
         coveragePct: total ? Math.round(graded / total * 100) : 0,
         avg: graded ? gradedRows.reduce((n, r) => n + r.currentAvg, 0) / graded : null };
@@ -888,16 +905,27 @@ const App = {
     });
     const classes = [...byClass].map(([key, members]) => {
       const s = summarize(members);
-      return { key, ...s, offTrackCount: s.offTrack, failCount: s.fail, borderlineCount: s.borderline, noGradeCount: s.noGrade, unreportedOnly: s.graded === 0 };
-    }).sort((a, b) => a.unreportedOnly - b.unreportedOnly || b.offTrackPct - a.offTrackPct || (a.avg ?? -1) - (b.avg ?? -1) || b.offTrackCount - a.offTrackCount || natural(a.key, b.key));
+      // כיתה נכנסת לדירוג רק כשהיא מדווחת ממשית, כדי שציון 0 בודד לא יקבע "כיתה חלשה".
+      const reported = s.graded >= 2 || (s.graded > 0 && s.graded === s.total);
+      return { key, ...s, offTrackCount: s.offTrack, failCount: s.fail, borderlineCount: s.borderline, noGradeCount: s.noGrade, unreportedOnly: !reported };
+    }).filter(c => c.total > 0).sort((a, b) => a.unreportedOnly - b.unreportedOnly || b.offTrackPct - a.offTrackPct || (a.avg ?? -1) - (b.avg ?? -1) || b.offTrackCount - a.offTrackCount || natural(a.key, b.key));
     return { sel, name, pass, questionnaires: [...questionnaires.values()], rows, ...summarize(rows), classes, weakest: classes.find(c => !c.unreportedOnly) || null };
   },
 
   overviewReadinessModel(m) {
     if (!Store.loaded.grades) return { items: [], unreportedItems: [], message: 'טען ציונים שוטפים להצגת מוכנות לבגרויות השנה.' };
-    const scheduled = new Map();
+    const scheduled = new Map(), benchTrainees = m.bench.rows.map(r => r.t);
     [...m.bench.grades].forEach(grade => Config.withRulesForGrade(grade, () => {
       const rules = Config.rules();
+      if (Store.loaded.groups) {
+        // כשקובץ הקבוצות טעון: כל מקצוע בגרות פעיל שיש לו חניך משובץ בפועל באוכלוסיית הייחוס, גם אם שאלון ה-30% שלו בכספת י"ב.
+        const groups = benchTrainees.filter(t => t.gradeKey === grade).flatMap(t => Store.groupsOf(t.tz)).filter(g => g.inFile && !g.reinforcement);
+        GroupAnalyzer.coreSubjects().filter(s => s.enabled !== false).forEach(s => {
+          if (groups.some(g => (GroupAnalyzer.coreOf(g.subject) || {}).id === s.id || Util.matchKeywords(g.subject, s.keywords))) scheduled.set(`core:${s.id}`, s.name);
+        });
+        rules.majors.filter(s => s.enabled !== false && groups.some(g => Util.matchKeywords(g.subject, s.keywords))).forEach(s => scheduled.set(`major:${s.id}`, s.name));
+        return;
+      }
       const due = c => c.enabled !== false && Util.normGrade(c.expectedGrade || (rules.questionnaires[String((c.codes || [])[0])] || {}).expectedGrade) === grade;
       rules.coreSubjects.filter(s => s.enabled !== false).forEach(s => {
         const comps = s.variableUnits ? Object.values(s.levels || {}).flat() : s.components || [];
@@ -905,8 +933,8 @@ const App = {
       });
       rules.majors.filter(s => s.enabled !== false && due(s)).forEach(s => scheduled.set(`major:${s.id}`, s.name));
     }));
-    const models = [...scheduled].map(([sel, name]) => ({ ...this.subjectReadinessModel(sel, m.bench.rows.map(r => r.t), true), name }));
-    const active = r => r.graded >= 3 || r.coveragePct >= 15;
+    const models = [...scheduled].map(([sel, name]) => ({ ...this.subjectReadinessModel(sel, benchTrainees, true), name })).filter(r => r.total > 0);
+    const active = r => r.graded >= 3 || (r.total > 0 && r.coveragePct >= 25);
     const items = models.filter(active)
       .sort((a, b) => (b.fail + b.borderline) - (a.fail + a.borderline) || b.offTrack - a.offTrack || b.offTrackPct - a.offTrackPct || natural(a.name, b.name));
     const unreportedItems = models.filter(r => !active(r)).sort((a, b) => natural(a.name, b.name));
@@ -1419,7 +1447,7 @@ const App = {
           ${flt('borderline', 'gstat-amber', `גבוליים (${r.pass}–64)`, r.borderline)}
           ${r.noGrade > 0 ? flt('noGrade', 'gstat-violet', 'ללא ציון', r.noGrade) : ''}</div>`;
       if (r.classes.length > 1) classes = `<div class="w-full flex flex-wrap gap-2" aria-label="השוואת מוכנות לפי כיתות">${r.classes.map(c => `<button type="button" class="rounded-lg border px-2.5 py-1.5 text-right text-xs ${st.readinessClass === c.key ? 'bg-amber-100 border-amber-500' : c.unreportedOnly ? 'bg-slate-100 text-slate-400' : 'bg-slate-50'}" data-act="bagrutReadinessClass" data-class="${E(c.key)}" data-off-track="${c.offTrackCount}" data-total="${c.total}" data-unreported-only="${c.unreportedOnly}" aria-pressed="${st.readinessClass === c.key}">
-        <span class="block font-bold">${E(Config.classLabel(c.key))} · ${c.unreportedOnly ? 'טרם דווח' : `${c.offTrackPct}% לא בכיוון (${c.offTrackCount}/${c.assessed})`}</span>
+        <span class="block font-bold">${E(Config.classLabel(c.key))} · ${c.unreportedOnly ? (c.graded ? 'דיווח חלקי' : 'טרם דווח') : `${c.offTrackPct}% לא בכיוון (${c.offTrackCount}/${c.assessed})`}</span>
         <span class="block">${this.readinessBreakdown(c)} · ממוצע ${this.readinessAverage(c.avg)}</span></button>`).join('')}</div>`;
     }
     return `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2" data-subject-kpis>
@@ -1445,7 +1473,7 @@ const App = {
       return c && c.state === 'num' ? c.num : -1;
     };
     // במיון לפי שוטף: ציונים מספריים תמיד ראשונים (בכיוון המבוקש), אחריהם "ללא ציון" ולבסוף "טרם דווח".
-    const currentRank = r => r.currentAvg != null ? 0 : r.readiness === 'noGrade' ? 1 : 2;
+    const currentRank = r => r.currentAvg != null ? 0 : r.readiness === 'noGrade' ? 1 : r.readiness === 'unreported' ? 2 : 3;
     const list = m.rows.filter(r => !currentOn || ((!st.readinessClass || r.t.classKey === st.readinessClass) && this.readinessMatch(r, st.readinessFilter))).sort((a, b) => {
       if (sort === 'current' && currentRank(a) !== currentRank(b)) return currentRank(a) - currentRank(b);
       const x = val(a), y = val(b);
@@ -1474,7 +1502,7 @@ const App = {
       ? `<td class="${r.finalScore >= r.pass ? 'text-emerald-700' : 'text-rose-600'} font-bold">${r.finalScore}</td>`
       : `<td class="text-slate-300" title="${E(r.partialAvg != null ? `בתהליך – ממוצע חלקי נוכחי: ${r.partialAvg} (על ${r.doneW}% מהמשקל)` : 'טרם הושלם אף שאלון')}">–</td>`;
     const currentTd = r => `<td data-readiness="${r.readiness}" class="whitespace-nowrap ${r.readiness === 'fail' ? 'text-rose-600 font-bold' : r.readiness === 'borderline' ? 'text-orange-600 font-bold' : 'text-emerald-700'}">
-      <span${r.readiness === 'noGrade' ? ' class="badge bg-amber-100 text-amber-900"' : r.readiness === 'unreported' ? ' class="badge bg-slate-100 text-slate-500" title="בקבוצה/בכיתה טרם דווחו ציונים שוטפים במקצוע"' : ''}>${r.readiness === 'noGrade' ? 'ללא ציון' : r.readiness === 'unreported' ? 'טרם דווח' : this.readinessAverage(r.currentAvg)}</span>${r.missed ? ` <span class="block text-xs text-rose-600">${r.missed} אירועים שהוחמצו</span>` : ''}</td>`;
+      <span${r.readiness === 'noGrade' ? ' class="badge bg-amber-100 text-amber-900"' : r.readiness === 'unreported' ? ' class="badge bg-slate-100 text-slate-500" title="בקבוצה/בכיתה טרם דווחו ציונים שוטפים במקצוע"' : r.readiness === 'notEnrolled' ? ' class="text-slate-400" title="לא משובץ לקבוצת לימוד במקצוע השנה"' : ''}>${r.readiness === 'noGrade' ? 'ללא ציון' : r.readiness === 'unreported' ? 'טרם דווח' : r.readiness === 'notEnrolled' ? '—' : this.readinessAverage(r.currentAvg)}</span>${r.missed ? ` <span class="block text-xs text-rose-600">${r.missed} אירועים שהוחמצו</span>` : ''}</td>`;
     const body = list.map(r => `<tr>
       <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
       <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td>

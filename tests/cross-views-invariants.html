@@ -1304,44 +1304,147 @@ window.fetch = (input, options) => {
         }
       });
 
-      await part('Unreported groups and homerooms are separated from real no-grade risk', async () => {
+      await part('Group units: partial reporting, enrollment and current-sort order', async () => {
         resetConfig();
         const gA = 'היסטוריה יב1 דוד [7101]', gB = 'היסטוריה יב1 רות [7102]';
         world({
           roster: [1, 2, 3, 4, 5, 6].map(n => stu(n, 'יב', 'יב1')).concat([7, 8].map(n => stu(n, 'יב', 'יב2'))),
           bagrut: bagrutRows([1, 2, 3, 4, 5, 6, 7, 8].flatMap(n => partial(n, { '22283': 70 }))),
-          groups: groupRows([1, 2, 3].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: gA })).concat([4, 5].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: gB })))),
-          sadin: sadinRows([{ tz: T(1), ev: 'מבחן (100)', sc: 70, grp: gA, dt: '01/10/2026' }])
+          groups: groupRows([1, 2, 3, 4].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: gA })).concat([5, 6].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: gB })))),
+          sadin: sadinRows([[1, 70, gA], [2, 60, gA], [8, 50, 'היסטוריה יב2 שרה [7103]']].map(([n, sc, grp]) => ({ tz: T(n), ev: 'מבחן (100)', sc, grp, dt: '01/10/2026' })))
         });
         const app = newApp({ grade: 'יב' });
         const model = app.subjectReadinessModel('core:history', app.filtered(), true);
         same(model.rows.map(r => [r.t.tz, r.readiness]).sort(), [
-          [T(1), 'ok'], [T(2), 'noGrade'], [T(3), 'noGrade'], [T(4), 'unreported'], [T(5), 'unreported'],
-          [T(6), 'noGrade'], [T(7), 'unreported'], [T(8), 'unreported']
-        ], 'Reported group/homeroom -> noGrade; silent group/homeroom -> unreported');
-        same([model.total, model.graded, model.assessed, model.unreported, model.offTrack, model.offTrackPct, model.coveragePct], [8, 1, 4, 4, 3, 75, 13], 'offTrack excludes unreported and percent uses assessed');
+          [T(1), 'ok'], [T(2), 'borderline'], [T(3), 'noGrade'], [T(4), 'noGrade'], [T(5), 'unreported'], [T(6), 'unreported'], [T(8), 'fail']
+        ], 'Reported group (2/4) -> noGrade; silent group -> unreported; ungrouped pupil only via own grade');
+        same([model.total, model.graded, model.assessed, model.unreported, model.notEnrolled, model.offTrack, model.offTrackPct, model.coveragePct], [7, 3, 5, 2, 0, 4, 80, 43], 'offTrack excludes unreported and percent uses assessed');
         same(model.offTrack, model.fail + model.borderline + model.noGrade, 'offTrack formula');
-        same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב1', false, 4, 1, 2], ['יב2', true, 0, 0, 2]], 'Unreported-only homerooms go last');
+        same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב2', false, 1, 1, 0], ['יב1', false, 4, 2, 2]], 'Classes ranked without homeroom fallback');
+        const everyone = app.subjectReadinessModel('core:history', app.filtered(), false);
+        same([everyone.rows.length, everyone.total, everyone.notEnrolled, everyone.rows.find(r => r.t.tz === T(7)).readiness], [8, 7, 1, 'notEnrolled'], 'Ungrouped pupil without grade is notEnrolled, not homeroom no-grade');
+        Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, mxSort: 'current', mxDir: 1, readinessFilter: 'all', readinessClass: '' });
+        app.state.sim.useCurrent = true;
+        app.renderBagrutPanel();
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness),
+          ['fail', 'borderline', 'ok', 'noGrade', 'noGrade', 'unreported', 'unreported', 'notEnrolled'], 'Ascending current sort: numeric, no-grade, unreported, notEnrolled');
+        const dash = $id('bagrut-table').querySelector('[data-readiness="notEnrolled"] span');
+        check(dash && dash.textContent.trim() === '—' && dash.title === 'לא משובץ לקבוצת לימוד במקצוע השנה', 'notEnrolled shows a gray dash with explanation');
+        app.state.bagrut.mxDir = -1;
+        app.renderBagrutPanel();
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness).slice(-3), ['unreported', 'unreported', 'notEnrolled'], 'Descending sort keeps notEnrolled last');
+        same(errorsOf(app), [], 'No group-unit errors');
+      });
+
+      await part('Homeroom fallback without a groups file and the active-subject threshold', async () => {
+        resetConfig();
+        const g = 'היסטוריה יב דוד [7401]';
+        const scenario = (size, graded) => world({
+          roster: Array.from({ length: size }, (_, i) => stu(i + 1, 'יב', i < 6 ? 'יב1' : 'יב2')),
+          bagrut: bagrutRows(Array.from({ length: size }, (_, i) => partial(i + 1, { '22283': 70 })).flat()),
+          sadin: sadinRows(Array.from({ length: graded }, (_, i) => ({ tz: T(i + 1), ev: 'מבחן (100)', sc: 50 + i * 10, grp: g, dt: '01/10/2026' })))
+        });
+        scenario(8, 2);
+        const app = newApp({ grade: 'יב' });
+        const model = app.subjectReadinessModel('core:history', app.filtered(), true);
+        same(model.rows.map(r => [r.t.tz, r.readiness]).sort(), [
+          [T(1), 'fail'], [T(2), 'borderline'], [T(3), 'noGrade'], [T(4), 'noGrade'], [T(5), 'noGrade'], [T(6), 'noGrade'], [T(7), 'unreported'], [T(8), 'unreported']
+        ], 'No groups file: reported homeroom (2/6) -> noGrade; silent homeroom -> unreported');
+        same([model.total, model.graded, model.assessed, model.unreported, model.notEnrolled, model.offTrack, model.offTrackPct, model.coveragePct], [8, 2, 6, 2, 0, 6, 100, 25], 'Fallback counters');
+        same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב1', false, 6, 2, 0], ['יב2', true, 0, 0, 2]], 'Unreported-only homerooms go last');
         same(model.weakest.key, 'יב1', 'Unreported-only homeroom is never the weakest');
         app.renderOverviewPanel();
-        const ov = app.overviewReadinessModel(app.overviewModel());
-        check(!ov.items.some(r => r.sel === 'core:history') && ov.unreportedItems.some(r => r.sel === 'core:history'), '1 of 8 graded is an unreported subject');
-        const chip = $id('overview-readiness').querySelector('[data-sel="core:history"]');
-        check(chip && !chip.closest('.grid') && chip.textContent.includes('(1/8)'), 'Unreported subject shown as a gray chip outside the grid');
-        app.acts.ovReadiness.call(app, chip);
+        check($id('overview-readiness').querySelector('.grid [data-sel="core:history"]'), 'coveragePct 25% (2/8) makes the subject active');
+        app.acts.ovReadiness.call(app, $id('overview-readiness').querySelector('[data-sel="core:history"]'));
         const cards = [...$id('bagrut-kpis').querySelectorAll('[data-act="bagrutReadinessClass"]')];
         same(cards.map(c => [c.dataset.class, c.dataset.unreportedOnly]), [['יב1', 'false'], ['יב2', 'true']], 'Rendered unreported class last');
         check(cards[1].textContent.includes('טרם דווח'), 'Unreported class label');
-        same([...$id('bagrut-table').querySelectorAll('[data-readiness="unreported"]')].map(c => c.textContent.trim()), ['טרם דווח', 'טרם דווח', 'טרם דווח', 'טרם דווח'], 'Unreported cells are gray, not no-grade warnings');
-        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness), ['ok', 'noGrade', 'noGrade', 'noGrade', 'unreported', 'unreported', 'unreported', 'unreported'], 'Default ascending current sort: numeric, no-grade, unreported');
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness), ['fail', 'borderline', 'noGrade', 'noGrade', 'noGrade', 'noGrade', 'unreported', 'unreported'], 'Default ascending current sort: numeric, no-grade, unreported');
+        check($id('bagrut-kpis').querySelector('[data-readiness-summary]').textContent.includes('+ 2 טרם דווח'), 'Strip mentions unreported separately');
+        scenario(10, 2);
+        app.renderOverviewPanel();
+        const chip = $id('overview-readiness').querySelector('[data-sel="core:history"]');
+        check(chip && !chip.closest('.grid') && chip.textContent.includes('(2/10)'), '2 graded at 20% coverage is an unreported subject');
+        scenario(20, 3);
+        app.renderOverviewPanel();
+        check($id('overview-readiness').querySelector('.grid [data-sel="core:history"]'), 'Three graded pupils make the subject active in the compact grid (15% coverage)');
+        same(errorsOf(app), [], 'No fallback/threshold errors');
+      });
+
+      await part('Single grade in a group of 6 does not turn the rest into no-grade', async () => {
+        resetConfig();
+        const g = 'היסטוריה יב דוד [7111]';
+        world({
+          roster: [1, 2, 3].map(n => stu(n, 'יב', 'יב1')).concat([4, 5, 6].map(n => stu(n, 'יב', 'יב2'))),
+          bagrut: bagrutRows([1, 2, 3, 4, 5, 6].flatMap(n => partial(n, { '22283': 70 }))),
+          groups: groupRows([1, 2, 3, 4, 5, 6].map(n => ({ tz: T(n), grade: 'יב', cls: n < 4 ? 'יב1' : 'יב2', gid: g }))),
+          sadin: sadinRows([{ tz: T(1), ev: 'מבחן (100)', sc: 0, grp: g, dt: '01/10/2026' }])
+        });
+        const app = newApp({ grade: 'יב' });
+        const model = app.subjectReadinessModel('core:history', app.filtered(), true);
+        same(model.rows.map(r => [r.t.tz, r.readiness]).sort(), [[T(1), 'fail'], [T(2), 'unreported'], [T(3), 'unreported'], [T(4), 'unreported'], [T(5), 'unreported'], [T(6), 'unreported']], '1/6 graded -> 5 unreported');
+        same([model.noGrade, model.unreported, model.offTrack, model.assessed], [0, 5, 1, 1], 'Counters');
+        same(model.classes.map(c => [c.key, c.unreportedOnly]), [['יב1', true], ['יב2', true]], 'Single zero grade is not a reported class');
+        same(model.weakest, null, 'No weakest class from a single grade');
+        app.renderOverviewPanel();
+        const ov = app.overviewReadinessModel(app.overviewModel());
+        check(!ov.items.some(r => r.sel === 'core:history') && ov.unreportedItems.some(r => r.sel === 'core:history'), '1 of 6 graded is an unreported subject');
+        const chip = $id('overview-readiness').querySelector('[data-sel="core:history"]');
+        check(chip && !chip.closest('.grid') && chip.textContent.includes('(1/6)'), 'Unreported subject shown as a gray chip outside the grid');
+        app.acts.ovReadiness.call(app, chip);
+        const cards = [...$id('bagrut-kpis').querySelectorAll('[data-act="bagrutReadinessClass"]')];
+        same(cards.map(c => c.dataset.unreportedOnly), ['true', 'true'], 'Rendered classes are both unranked');
+        check(cards[0].textContent.includes('דיווח חלקי') && cards[1].textContent.includes('טרם דווח'), 'Partial vs unreported class labels');
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness="unreported"]')].map(c => c.textContent.trim()), Array(5).fill('טרם דווח'), 'Unreported cells are gray, not no-grade warnings');
         const summary = $id('bagrut-kpis').querySelector('[data-readiness-summary]');
         same(Number(summary.dataset.offTrack), Number(chip.dataset.offTrack), 'Overview/matrix parity for unreported subject');
-        check(summary.textContent.includes('+ 4 טרם דווח'), 'Strip mentions unreported separately');
-        world({ roster: [1, 2, 3].map(n => stu(n, 'יב', 'יב1')), bagrut: bagrutRows([1, 2, 3].flatMap(n => partial(n, { '22283': 70 }))),
-          sadin: sadinRows([1, 2, 3].map(n => ({ tz: T(n), ev: 'מבחן (100)', sc: 60, grp: gA, dt: '01/10/2026' }))) });
+        check(summary.textContent.includes('+ 5 טרם דווח'), 'Strip mentions unreported separately');
+        same(errorsOf(app), [], 'No single-grade errors');
+      });
+
+      await part('Vault 30%: only pupils in a completion group are pending examinees', async () => {
+        resetConfig();
+        const g = 'היסטוריה יב השלמה [7201]';
+        Config.withRulesForGrade('יב', () => Config.rules().coreSubjects.find(s => s.id === 'history').components.forEach(c => { c.expectedGrade = 'יב'; }));
+        world({
+          roster: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => stu(n, 'יב', 'יב1')),
+          bagrut: bagrutRows([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].flatMap(n => partial(n, { '22283': 70 }))),
+          groups: groupRows([1, 2].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: g }))),
+          sadin: sadinRows([[1, 50], [2, 80]].map(([n, sc]) => ({ tz: T(n), ev: 'מבחן (100)', sc, grp: g, dt: '01/10/2026' })))
+        });
+        const app = newApp({ grade: 'יב' });
+        const everyone = app.subjectReadinessModel('core:history', app.filtered(), false);
+        same([everyone.rows.length, everyone.notEnrolled, everyone.noGrade, everyone.unreported, everyone.total], [10, 8, 0, 0, 2], '8 ungrouped pupils are notEnrolled');
+        same(everyone.rows.filter(r => r.readiness === 'notEnrolled').map(r => r.t.tz).sort(), [3, 4, 5, 6, 7, 8, 9, 10].map(T), 'Exactly the ungrouped pupils');
+        const pending = app.subjectReadinessModel('core:history', app.filtered(), true);
+        same([pending.rows.map(r => r.t.tz).sort(), pending.notEnrolled, pending.offTrack], [[T(1), T(2)], 0, 1], 'Pending examinees are only the completion group');
         app.renderOverviewPanel();
-        check($id('overview-readiness').querySelector('.grid [data-sel="core:history"]'), 'Three graded pupils make the subject active in the compact grid');
-        same(errorsOf(app), [], 'No unreported readiness errors');
+        const card = $id('overview-readiness').querySelector('.grid [data-sel="core:history"]');
+        check(card && card.dataset.total === '2' && !$id('overview-readiness').textContent.includes('טרם דווח'), 'No "+8 טרם דווח" in the overview');
+        Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, readinessFilter: 'all', readinessClass: '' });
+        app.state.sim.useCurrent = true;
+        app.renderBagrutPanel();
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness="notEnrolled"]')].map(c => c.textContent.trim()), Array(8).fill('—'), 'All-pupils view shows dashes for notEnrolled');
+        check(!$id('bagrut-kpis').textContent.includes('טרם דווח'), 'Strip has no unreported count');
+        same(errorsOf(app), [], 'No vault errors');
+      });
+
+      await part('Grade 11 subject taught this year appears despite its 30% being in the grade-12 vault', async () => {
+        resetConfig();
+        const g = 'היסטוריה יא1 דוד [7301]';
+        Config.withRulesForGrade('יא', () => Config.rules().coreSubjects.find(s => s.id === 'history').components.forEach(c => { c.expectedGrade = 'יב'; }));
+        world({
+          roster: [1, 2, 3].map(n => stu(n, 'יא', 'יא1')),
+          bagrut: bagrutRows([1, 2, 3].flatMap(n => partial(n, { '16382': 70 }))),
+          groups: groupRows([1, 2, 3].map(n => ({ tz: T(n), grade: 'יא', cls: 'יא1', gid: g }))),
+          sadin: sadinRows([[1, 70], [2, 60], [3, 40]].map(([n, sc]) => ({ tz: T(n), ev: 'מבחן (100)', sc, grp: g, dt: '01/10/2026' })))
+        });
+        const app = newApp({ grade: 'יא' });
+        const ov = app.overviewReadinessModel(app.overviewModel());
+        const history = ov.items.find(r => r.sel === 'core:history');
+        check(history && history.total === 3 && history.offTrack === 2, 'Enrolled grade-11 history is an active readiness subject');
+        check(![...ov.items, ...ov.unreportedItems].some(r => r.sel === 'core:english'), 'Subjects without enrolled groups are not candidates');
+        same(errorsOf(app), [], 'No grade-11 vault errors');
       });
 
       await part('Grade-cohort schedules, empty schedules and unloading clear stale readiness', async () => {
