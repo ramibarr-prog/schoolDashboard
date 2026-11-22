@@ -605,6 +605,40 @@ window.fetch = (input, options) => {
       });
     });
 
+    await group('GroupAnalyzer — suppress homeroom outlier alerts for majors only', async () => {
+      resetConfig();
+      const roster = [
+        ...[201, 202, 203, 204, 205].map(n => stu(n, 'יב', 'יב1')),
+        stu(206, 'יב', 'יב2'),
+        stu(207, 'יא', 'יא1')
+      ];
+      const major1 = "מג' ביולוגיה יב1-יב6 מורה א [7401]";
+      const major2 = "מג' ביולוגיה יב1-יב6 מורה ב [7402]";
+      const gender = 'מגדר יב1-יב6 מורה ג [7403]';
+      world({ roster, groups: groupRows([
+        ...[201, 202, 203, 204, 205, 206, 207].map(n => ({ tz: T(n), grade: n === 207 ? 'יא' : 'יב', cls: n === 206 ? 'יב2' : n === 207 ? 'יא1' : 'יב1', gid: major1 })),
+        { tz: T(201), grade: 'יב', cls: 'יב1', gid: major2 },
+        { tz: T(206), grade: 'יב', cls: 'יב2', gid: gender }
+      ]) });
+
+      const model = GroupAnalyzer.explorerModel();
+      const mag = model.groups.find(g => g.groupId === '7401');
+      const magOutliers = mag.members.filter(m => m.diag.some(d => d.kind === 'outlier'));
+      check(GroupAnalyzer.isMajorGroup(mag) && mag.cat.kind === 'major', 'A group prefixed with מג\' is consistently classified as a major');
+      same(mag.counts.outlier, 0, 'Major group has no outlier count');
+      same(magOutliers.length, 0, 'The same-grade pupil from another homeroom has no outlier diagnosis');
+      check(mag.members.find(m => m.t.tz === T(207)).diag.some(d => d.kind === 'grade'), 'A different-grade pupil still receives a grade diagnosis in a major');
+      check(mag.members.find(m => m.t.tz === T(201)).diag.some(d => d.kind === 'dup'), 'Duplicate diagnosis remains active in a major');
+      check(!GroupAnalyzer.isMajorGroup({ subject: gender }) && GroupAnalyzer.categoryOf({ subject: gender }).kind !== 'major', 'מגדר is not mistaken for a major');
+      check(GroupAnalyzer.isMajorGroup({ subject: 'ביולוגיה', name: "מג' ביולוגיה" }), 'The major prefix is recognized in the group name');
+      check(GroupAnalyzer.isMajorGroup({ subject: 'מגמת מוזיקה' }), 'The מגמת prefix is recognized');
+
+      const anomalies = GroupAnalyzer.placementAnomalies(roster).rows;
+      check(!anomalies.some(r => r.tz === T(206) && r.kind === 'outlier'), 'Placement anomalies do not surface a major homeroom-outlier alert');
+      check(anomalies.some(r => r.tz === T(207) && r.kind === 'grade'), 'Placement anomalies still surface a major grade alert');
+      check(anomalies.some(r => r.tz === T(201) && r.category === 'duplicate'), 'Placement anomalies still surface a major duplicate');
+    });
+
     /* ====================================================================
        קבוצה C — אגרגציות חדר בקרה והצלבה משולשת 360
        INV-3 / QA-12.3, QA-12.4, QA-12.2, INV-5 / QA-10.2, QA-10.3, QA-10.7

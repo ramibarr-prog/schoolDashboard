@@ -329,15 +329,21 @@ const GroupAnalyzer = {
     return m;
   },
 
+  isMajorGroup(group) {
+    if (!group || typeof group !== 'object') return false;
+    const hasMajorPrefix = value => /^(?:מג['׳]|מגמת)/.test(String(value || '').trim());
+    return group.major === true || !!this.majorOf(group) || hasMajorPrefix(group.subject) || hasMajorPrefix(group.name);
+  },
+
   /**
    * קטגוריית מקצוע לקבוצה (לכפתורי המקצוע ולזיהוי שיבוץ כפול): מקצוע ליבה / מגמה / יחידה פנימית / אחר.
    * שתי קבוצות באותו key הן "אותו מקצוע". order קובע את סדר התצוגה.
    */
   categoryOf(g) {
+    if (this.isMajorGroup(g)) return { key: `major:${g.subject}`, label: g.subject || 'מגמה', kind: 'major', order: 100 };
     const core = this.coreSubjects();
     const ci = core.findIndex(s => Util.matchKeywords(g.subject, s.keywords));
     if (ci >= 0) return { key: `core:${core[ci].id}`, label: core[ci].name, kind: 'core', order: ci };
-    if (g.major || this.majorOf(g)) return { key: `major:${g.subject}`, label: g.subject || 'מגמה', kind: 'major', order: 100 };
     const internal = (Config.rules().internals || []).some(i => i.enabled !== false && i.groupKeywords && Util.matchKeywords(g.subject, i.groupKeywords));
     if (internal) return { key: `int:${g.subject}`, label: g.subject, kind: 'internal', order: 200 };
     return { key: `other:${g.subject}`, label: g.subject || 'ללא מקצוע', kind: 'other', order: 300 };
@@ -397,7 +403,7 @@ const GroupAnalyzer = {
           .forEach(o => diag.push({ kind: 'dup', other: o.groupId, text: `כפול: רשום גם אצל ${o.teacher || 'ללא מורה'} [${o.groupId}]`, title: 'רשום ביותר מקבוצה אחת באותו מקצוע במשוב' }));
         const k = kindOf.get(t.classKey);
         if (k === 'straggler') diag.push({ kind: 'grade', text: `חריג שכבה (משובץ מ-${t.classKey})`, title: `חניך משכבה ${Util.gl(t.gradeKey)} בקבוצה של שכבה ${Util.gl(domGrade)} – ייתכן מעבר שלא עודכן במשוב` });
-        else if (k === 'minor') diag.push({ kind: 'outlier', text: `בודד מכיתה ${t.classKey} בקבוצה של ${mainLabel}`, title: 'חניך בודד מכיתת אם שונה מרוב הקבוצה – ייתכן מעבר שלא עודכן במשוב' });
+        else if (k === 'minor' && cat.kind !== 'major') diag.push({ kind: 'outlier', text: `בודד מכיתה ${t.classKey} בקבוצה של ${mainLabel}`, title: 'חניך בודד מכיתת אם שונה מרוב הקבוצה – ייתכן מעבר שלא עודכן במשוב' });
         /* הצלבה מול הסדין: מוצגת רק כשהחניך מקבל ציונים בקבוצה אחרת באותו מקצוע */
         if (sadinLoaded && sadinGrades.has(t.gradeKey)) {
           const entries = Store.currentOf(t.tz).filter(e => e.groupId && e.events.length);
