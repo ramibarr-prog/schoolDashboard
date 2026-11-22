@@ -590,8 +590,12 @@ window.fetch = (input, options) => {
         try {
           app.evals.clear();
           app.renderBagrutPanel(); app.renderOverviewPanel(); app.renderSadinPanel(); app.renderGroupsPanel(); app.renderTrainee360Panel();
+          same(app.overviewModel().list.map(t => t.tz), [T(33)], 'Overview ignores the track filter: grade/homeroom slice only');
+          app.state.filters.cls = 'יב1';
+          app.renderOverviewPanel();
           const model = app.overviewModel();
           same([model.stats.total, model.stats.counted, model.avg, model.attention.size], [0, 0, null, 0], 'Empty overview model');
+          app.state.filters.cls = 'י2';
           same([BagrutAdvisor.summarize([]).eligibilityInclSpecialEd, BagrutAdvisor.summarize([]).eligibilityExSpecialEd, BagrutAdvisor.summarizePace([]).pctInclSpecialEd], [0, 0, 0], 'Empty summaries');
         } finally { console.error = originalError; }
         same(errors, [], 'No console errors');
@@ -1132,8 +1136,11 @@ window.fetch = (input, options) => {
         }
         build();
         const app = newApp({ grade: 'י', cls: 'י2', track: 'חנ"מ' });
+        same(app.overviewModel().list.map(t => t.tz), [T(33)], 'Overview ignores the track filter');
+        app.state.filters.cls = 'יב1';
         const m = app.overviewModel();
         same([m.anomaliesModel.total, m.anomaliesModel.studentsCount, m.attention.size, m.multi.length, m.avg, m.clean], [0, 0, 0, 0, null, 0], 'Empty overview metrics');
+        app.state.filters.cls = 'י2';
         app.renderSadinPanel();
         hasSummary(app.sadinSummary([]), 0, 'Empty slice');
       });
@@ -1168,6 +1175,60 @@ window.fetch = (input, options) => {
         same(app.state.bagrut.chip, 'all', 'Attention reset');
         same(tzsIn($id('bagrut-table')), app.filtered().map(t => t.tz).sort(), 'All pupils restored');
         same(errorsOf(app), [], 'No panel error without status select');
+      });
+
+      await part('Overview ignores track/search, hides them, and drill-down resets them 1:1', async () => {
+        resetConfig();
+        const fx = fixture();
+        fx.roster[4].track = 'אתגר';
+        world(fx);
+        const html = await (await window.fetch('../index.html')).text();
+        const bar = new DOMParser().parseFromString(html, 'text/html').getElementById('globalFilterBar');
+        const app = newApp({ grade: 'יב', track: 'אתגר', q: T(5) });
+        $id('stage').appendChild(document.importNode(bar, true));
+        const f = app.state.filters, isHidden = el => el.classList.contains('hidden');
+        const trackBox = $id('fTrack').closest('[data-hide-overview]'), searchBox = $id('globalSearch').closest('[data-hide-overview]');
+        same([...document.querySelectorAll('[data-hide-overview]')], [trackBox, searchBox], 'Exactly track and search are overview-hidden');
+        app.showTab('bagrut');
+        same(app.filtered().map(t => t.tz), [T(5)], 'Precondition: search + track narrow bagrut to one pupil');
+        app.showTab('overview');
+        check(isHidden(trackBox) && isHidden(searchBox), 'Overview hides track and search');
+        check(!isHidden($id('fGrade').closest('label')) && !isHidden($id('fHomeroom').closest('label')) && !isHidden($id('fClear')), 'Overview keeps grade, homeroom and clear');
+        const grade12 = Store.traineeList().filter(t => t.gradeKey === 'יב').map(t => t.tz).sort();
+        same(app.overviewModel().list.map(t => t.tz).sort(), grade12, 'Overview model is the whole grade, not one pupil');
+        same([f.track, f.q], ['אתגר', T(5)], 'Peeking at the overview keeps track and search');
+        app.state.selectedSearchTz = T(5);
+        same(app.overviewModel().list.length, grade12.length, 'A locked trainee is ignored by the overview');
+        app.state.selectedSearchTz = null;
+        app.showTab('bagrut');
+        check(!isHidden(trackBox) && !isHidden(searchBox), 'Other tabs show track and search again');
+        same(app.filtered().map(t => t.tz), [T(5)], 'Returning keeps the previous search');
+        app.showTab('profile');
+        check(isHidden(trackBox) && !isHidden(searchBox), 'Profile keeps its own track hiding');
+
+        const narrow = () => {
+          Object.assign(f, { track: 'אתגר', q: T(5) });
+          $id('fTrack').value = 'אתגר'; $id('globalSearch').value = T(5);
+          app.showTab('overview');
+        };
+        const isReset = label => same([f.track, f.q, app.state.selectedSearchTz, $id('fTrack').value, $id('globalSearch').value], ['all', '', null, 'all', ''], `${label}: track and search reset`);
+        narrow();
+        const m = app.overviewModel();
+        app.acts.ovGo.call(app, $id('overview-body').querySelectorAll('button.ov-card')[2]);
+        isReset('ovGo');
+        same(tzsIn($id('bagrut-table')), m.bench.rows.map(r => r.t.tz).sort(), 'ovGo destination equals the overview population');
+        narrow();
+        app.state.selectedSearchTz = T(5);
+        app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'all' } });
+        isReset('ovGo sadin');
+        same(tzsIn($id('sadin-table')), m.list.map(t => t.tz).sort(), 'Sadin destination equals the overview population');
+        narrow();
+        const expected = app.overviewReadinessModel(app.overviewModel()).items.find(r => r.sel === 'core:history');
+        app.acts.ovReadiness.call(app, $id('overview-readiness').querySelector('[data-sel="core:history"]'));
+        isReset('ovReadiness');
+        same(Number($id('bagrut-kpis').querySelector('[data-readiness-summary]').dataset.total), expected.total, 'Readiness strip total equals the overview card');
+        same(tzsIn($id('bagrut-table')), expected.rows.map(r => r.t.tz).sort(), 'Readiness destination rows equal the overview card');
+        same(errorsOf(app), [], 'No overview filter errors');
       });
 
       await part('Exact boundaries, no-grade denominator, pending and homeroom ranking', async () => {

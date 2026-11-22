@@ -259,6 +259,8 @@ const App = {
     toggle('[data-bagrut-only]', name === 'bagrut');
     toggle('[data-profile-only]', name === 'profile');
     toggle('[data-profile-exclude]', name !== 'profile');
+    /* חדר הבקרה מסונן לפי שכבה וכיתת אם בלבד; מסלול וחיפוש מוסתרים בו (בלי לדרוס את ההסתרה שבכרטיס 360°) */
+    document.querySelectorAll('[data-hide-overview]').forEach(el => el.classList.toggle('hidden', name === 'overview' || (name === 'profile' && el.hasAttribute('data-profile-exclude'))));
     [['groupActions', 'groups'], ['sadinActions', 'sadin'], ['bagrutActions', 'bagrut'], ['profileSwitcher', 'profile']].forEach(([id, tab]) => {
       const el = $(id);
       if (el) el.classList.toggle('flex', name === tab);
@@ -323,6 +325,26 @@ const App = {
       if (lock) return t.tz === lock;
       return !q || this.matchTrainee(t, q);
     }));
+  },
+
+  /** אוכלוסיית חדר הבקרה: שכבה וכיתת אם בלבד, ללא מסלול, חיפוש או חניך נעול */
+  overviewList(ignoreClass = false) {
+    const f = this.state.filters;
+    return this.sortTrainees(Store.traineeList().filter(t =>
+      (f.grade === 'all' || t.gradeKey === f.grade) && (ignoreClass || f.cls === 'all' || t.classKey === f.cls)));
+  },
+
+  /** מעבר מחדר הבקרה ללשונית יעד: מאפס מסלול וחיפוש כדי שהיעד יציג את אותה אוכלוסייה שנספרה בכרטיס */
+  resetOverviewDrillFilters() {
+    const st = this.state;
+    clearTimeout(this._searchTimer);
+    st.filters.track = 'all';
+    st.filters.q = '';
+    st.selectedSearchTz = null;
+    setVal('fTrack', 'all');
+    setVal('globalSearch', '');
+    FILTERED_TABS.forEach(tab => this.dirty.add(tab));
+    this.renderSearchChrome();
   },
 
   /** בונה את רשימות הסינון הגלובלי; כיתת אם מוצגת עם הכינוי (שם הכיתה מהמצבת או כינוי שהוגדר) */
@@ -951,9 +973,9 @@ const App = {
 
   readinessAverage(avg) { return avg == null ? '—' : Util.fmt(avg, 1); },
 
-  /** כל המדדים של חדר הבקרה על החניכים שבסינון הגלובלי; ממוצע ומקצועות חוסמים מחושבים מגיליון הסדין */
+  /** כל המדדים של חדר הבקרה על החניכים שבשכבה / כיתת האם שבסינון; ממוצע ומקצועות חוסמים מחושבים מגיליון הסדין */
   overviewModel() {
-    const list = this.filtered();
+    const list = this.overviewList();
     const rows = list.map(t => ({ t, ev: this.getEval(t.tz) }));
     const bench = this.bagrutBenchmark(rows);
     const benchEvals = bench.rows.map(r => r.ev);
@@ -1104,7 +1126,7 @@ const App = {
       `<span class="ov-value warm">${am.ready ? am.total : '—'}</span>`, ICONS.alert);
 
     /* אחוז זכאות / תקינות צבירה לפי כיתות של אוכלוסיית הייחוס (או ממוצע שוטף כשקובץ הבגרות טרם נטען); הסינון לפי כיתה אינו מצמצם את הגרף כדי שאפשר יהיה לעבור בין כיתות */
-    const pool = f.cls === 'all' ? m.list : this.filtered(true, true);
+    const pool = f.cls === 'all' ? m.list : this.overviewList(true);
     let poolRows = f.cls === 'all' ? m.rows : pool.map(t => ({ t, ev: this.getEval(t.tz) }));
     if (bagrutOn) poolRows = poolRows.filter(r => bench.grades.has(r.t.gradeKey));
     const poolGraded = f.cls === 'all' ? m.graded : (sadinOn ? GroupAnalyzer.sadinSheet(pool, {}).filter(r => r.overall != null) : []);
@@ -3786,6 +3808,7 @@ const App = {
     /** ניווט מכרטיסי חדר הבקרה ללשונית מסוננת מראש */
     ovGo(el) {
       const { go, chip, strip, view, scope } = el.dataset;
+      this.resetOverviewDrillFilters();
       if (go === 'bagrut') {
         this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut');
         if (chip === 'attention') {
@@ -3804,6 +3827,7 @@ const App = {
       this.showTab(go);
     },
     ovReadiness(el) {
+      this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
       Object.assign(this.state.bagrut, { drill: el.dataset.sel, chip: 'all', onlyPending: true, readinessClass: '', readinessFilter: 'all', mxSort: 'current', mxDir: 1 });
       this.state.sim.useCurrent = true;

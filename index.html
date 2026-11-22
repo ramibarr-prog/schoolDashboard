@@ -565,7 +565,7 @@
         </select></label>
       <label data-profile-exclude class="flex items-center gap-1"><span class="text-slate-600">כיתת אם</span>
         <select id="fHomeroom" class="inp"><option value="all">כל הכיתות</option></select></label>
-      <label data-profile-exclude class="flex items-center gap-1"><span class="text-slate-600">מסלול</span>
+      <label data-profile-exclude data-hide-overview class="flex items-center gap-1"><span class="text-slate-600">מסלול</span>
         <select id="fTrack" class="inp">
           <option value="all">הכל</option><option value="רגילה">רגילה</option><option value="אתגר">אתגר</option><option value="מב&quot;ר">מב"ר</option><option value="חנ&quot;מ">חנ"מ</option>
         </select></label>
@@ -587,7 +587,7 @@
       <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1" role="group" aria-label="בחירת חניך">
         <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
       </div>
-      <div id="searchWrap" class="relative flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
+      <div id="searchWrap" data-hide-overview class="relative flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
         <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
         <div class="relative">
           <input id="globalSearch" type="search" class="inp w-44 lg:w-52 pl-7" placeholder="חיפוש חניך לפי שם או ת.ז" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchSuggestPopup">
