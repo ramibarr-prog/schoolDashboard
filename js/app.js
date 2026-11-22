@@ -2996,15 +2996,15 @@ const App = {
   /* ==================================================================
      פאנל 5 – הגדרות ומצבת חניכים
      ================================================================== */
-  /** תתי-לשוניות ההגדרות: מציג חלונית אחת ומעדכן את מוני התגיות (דריסות + סתירות שיוך, שאלונים שטרם שויכו) */
+  /** תתי-לשוניות ההגדרות: מציג חלונית אחת ומעדכן את מוני התגיות (דריסות שיוך, שאלונים שטרם שויכו) */
   renderSettingsNav() {
     const view = ['roster', 'overrides', 'rules', 'system'].includes(this.state.settingsView) ? this.state.settingsView : 'roster';
     this.state.settingsView = view;
     document.querySelectorAll('[data-settings-pane]').forEach(p => { p.hidden = p.dataset.settingsPane !== view; });
     document.querySelectorAll('#settingsTabs [data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
     const badge = (id, n, title) => { const el = $(id); if (el) { el.classList.toggle('hidden', !n); el.textContent = n; el.title = title; } };
-    const overrides = Object.keys(Config.getRosterOverrides()).length, mismatches = Config.detectRosterMismatches().length;
-    badge('setBadgeOverrides', overrides + mismatches, `${overrides} דריסות פעילות · ${mismatches} סתירות שיוך`);
+    const overrides = Object.keys(Config.getRosterOverrides()).length;
+    badge('setBadgeOverrides', overrides, `${overrides} דריסות שיוך פעילות`);
     const unmapped = this.unrecognizedCodes().length;
     badge('setBadgeRules', unmapped, `${unmapped} שאלונים שטרם שויכו`);
   },
@@ -3112,27 +3112,6 @@ const App = {
     const track = $('ovTrack');
     if (track && track.options.length < 2) track.innerHTML += Config.TRACKS.map(t => `<option value="${E(t)}">${E(t)}</option>`).join('');
 
-    const mm = Config.detectRosterMismatches();
-    const srcName = { groups: 'קבוצות', bagrut: 'בגרות' };
-    const adoptable = mm.filter(m => m.adopt), unnamed = adoptable.filter(m => this.isUnnamedClass(m.homeroom));
-    setHtml('ovConflicts', mm.length ? `
-      <div class="rounded-lg bg-amber-50 p-3">
-        <div class="font-medium text-amber-800 mb-2">סתירות שיוך בין המצבת לקובצי המשוב (${mm.length})</div>
-        <div class="flex flex-wrap items-center gap-2 mb-3" role="group" aria-label="פעולות קבוצתיות לסתירות שיוך">
-          <button type="button" class="btn btn-primary btn-sm" data-act="ovAdoptAll" data-scope="unnamed" ${unnamed.length ? '' : 'disabled'}>העבר את כל החניכים מקבוצות ללא שם לכיתה הנכונה (${unnamed.length})</button>
-          <button type="button" class="btn btn-sm bg-white text-slate-800 hover:bg-indigo-100" data-act="ovAdoptAll" data-scope="all" ${adoptable.length ? '' : 'disabled'}>אמץ שיוך משו"ב לכל הסתירות (${adoptable.length})</button>
-        </div>
-        <div class="tbl-wrap"><table class="grid w-full bg-white">
-          <thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">חניך</th><th class="text-right">במצבת</th><th class="text-right">במשו"ב</th><th class="text-right">פעולה</th></tr></thead>
-          <tbody>${mm.slice(0, 300).map(m => `<tr>
-            <td class="tz-col text-right">${E(m.tz)}</td><td class="text-right font-medium">${E(m.name)}</td>
-            <td class="text-right whitespace-nowrap">${E(m.homeroom)}</td>
-            <td class="text-right">${m.sources.map(s => `<span class="whitespace-nowrap">${E(s.homeroom || Util.gl(s.grade))} <span class="text-xs text-slate-400">(${srcName[s.source]})</span></span>`).join(' · ')}</td>
-            <td class="text-right whitespace-nowrap">
-              <button type="button" class="btn btn-primary btn-sm" data-act="ovAdopt" data-tz="${E(m.tz)}" ${m.adopt ? '' : 'disabled title="במשו&quot;ב אין כיתת אם לאימוץ"'}>אמץ שיוך משו"ב</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-act="ovKeep" data-tz="${E(m.tz)}">השאר לפי מצבת</button></td></tr>`).join('')}</tbody></table></div>
-      </div>` : '');
-
     const byTz = new Map(Config.getRosterAll().map(r => [r.tz, r]));
     const ovs = Object.values(Config.getRosterOverrides()).sort((a, b) => b.updatedAt - a.updatedAt);
     setText('ovCount', `(${ovs.length})`);
@@ -3185,9 +3164,6 @@ const App = {
     setChecked('ovHidden', o && o.hidden);
     setVal('ovNote', (o && o.note) || '');
   },
-
-  /** כיתה ללא שם: אין לה שם במצבת ואין לה כינוי */
-  isUnnamedClass(classKey) { return !classKey || !(Config.rosterClassNames()[classKey] || Config.nickname(classKey)); },
 
   /** חלון שיוך מהיר: חניכי כיתת אם אחת, עם שינוי כיתה / מסלול מיידי */
   openClassRoster(classKey) {
@@ -3865,33 +3841,7 @@ const App = {
       this.toast(res.removed ? 'הדריסה זהה לשיוך שבקובץ ולכן לא נשמרה' : 'הדריסה נשמרה והופעלה בכל הפאנלים', res.removed ? 'info' : 'ok');
       this.afterDataChange();
     },
-    ovAdopt(el) {
-      const m = Config.detectRosterMismatches().find(x => x.tz === el.dataset.tz);
-      if (!m || !m.adopt) return;
-      const res = Config.setRosterOverride(m.tz, { grade: m.adopt.grade, homeroom: m.adopt.homeroom });
-      if (res.ok === false) return this.toast(res.error, 'error');
-      this.toast(`${m.name}: אומץ השיוך ${m.adopt.homeroom} לפי המשו"ב`, 'ok');
-      this.afterDataChange();
-    },
-    ovAdoptAll(el) {
-      const unnamedOnly = el.dataset.scope === 'unnamed';
-      const items = Config.detectRosterMismatches().filter(m => m.adopt && (!unnamedOnly || this.isUnnamedClass(m.homeroom)));
-      if (!items.length) return;
-      const what = unnamedOnly ? 'מקבוצות ללא שם לכיתה שלפי המשו"ב' : 'לשיוך לפי המשו"ב';
-      if (!confirm(`להעביר ${items.length} חניכים ${what}? הפעולה נשמרת כדריסות וניתנת לביטול.`)) return;
-      const res = Config.setRosterOverridesBatch(items.map(m => ({ tz: m.tz, patch: { grade: m.adopt.grade, homeroom: m.adopt.homeroom } })));
-      if (res.ok === false) return this.toast(res.error || 'ההעברה הקבוצתית נכשלה', 'error');
-      this.toast(res.failed ? `הועברו ${res.applied} חניכים; ${res.failed} דולגו (${res.error})` : `הועברו ${res.applied} חניכים לכיתה הנכונה`, res.failed ? 'warn' : 'ok');
-      this.afterDataChange();
-    },
     classRoster(el) { this.openClassRoster(el.dataset.class); },
-    ovKeep(el) {
-      const m = Config.detectRosterMismatches().find(x => x.tz === el.dataset.tz);
-      if (!m) return;
-      Config.dismissRosterMismatch(m.tz, m.signature);
-      this.renderRosterOverrides();
-      this.renderSettingsNav();
-    },
     ovRemove(el) {
       const res = Config.removeRosterOverride(el.dataset.tz);
       if (res.ok === false) return this.toast(res.error || 'ביטול הדריסה נכשל', 'error');

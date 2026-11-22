@@ -707,7 +707,7 @@
       <h2 class="text-xl font-semibold text-[#355747]">הגדרות ומצבת</h2>
       <div id="settingsTabs" class="settings-seg" role="tablist" aria-label="תתי-לשוניות הגדרות">
         <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="roster" aria-selected="true">📋 מצבת וכיתות אם</button>
-        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="overrides" aria-selected="false">🔀 דריסות שיוך וסתירות <span id="setBadgeOverrides" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="overrides" aria-selected="false">🔀 דריסות שיוך <span id="setBadgeOverrides" class="seg-badge hidden"></span></button>
         <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="rules" aria-selected="false">🎓 חוקי בגרות ושאלונים <span id="setBadgeRules" class="seg-badge hidden"></span></button>
         <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="system" aria-selected="false">☁️ ענן, גיבוי ותחזוקה</button>
       </div>
@@ -738,8 +738,6 @@
         <div class="card p-4 space-y-3 xl:col-span-2" id="rosterOverridesCard">
           <div class="font-semibold flex items-center gap-2"><i data-lucide="shuffle" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>🔀 דריסת שיוך שכבה וכיתת אם (Roster Overrides)</div>
           <p class="text-xs text-slate-500">תיקון שיוך חניך בלי לגעת בקובץ המצבת: הדריסה נשמרת בנפרד ומונחת מעל הנתונים שבקובץ, ואפשר לבטל אותה בכל עת. חניך מוסתר (עזב / לא פעיל) אינו מופיע בפאנלים אך נשמר כאן לשחזור.</p>
-
-          <div id="ovConflicts"></div>
 
           <form id="ovForm" class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end text-sm" autocomplete="off">
             <div class="relative flex flex-col gap-1 md:col-span-2" id="ovSearchWrap">
