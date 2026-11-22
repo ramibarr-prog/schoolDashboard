@@ -700,6 +700,90 @@ window.fetch = (input, options) => {
       });
     });
 
+    await group('Groups — sortable placement-anomaly columns', async () => {
+      resetConfig();
+      const roster = [];
+      for (let n = 101; n <= 110; n++) roster.push(stu(n, 'יב', 'יב1'));
+      for (let n = 111; n <= 120; n++) roster.push(stu(n, 'יב', 'יב2'));
+      const LIT1 = 'ספרות יב1 רינה בדיקה [7300]', LIT2 = 'ספרות יב2 דנה בדיקה [7301]';
+      const H854 = 'היסטוריה יב1-יב2 מורה א [854]', H855 = 'היסטוריה יב1-יב2 מורה ב [855]';
+      const H856 = 'היסטוריה יב1-יב2 מורה ג [856]', H857 = 'היסטוריה יב1-יב2 מורה ד [857]';
+      const rows = [];
+      for (let n = 101; n <= 108; n++) rows.push({ tz: T(n), grade: 'יב', cls: 'יב1', gid: LIT1 });
+      for (let n = 111; n <= 118; n++) rows.push({ tz: T(n), grade: 'יב', cls: 'יב2', gid: LIT2 });
+      [101, 111, 113].forEach(n => [H854, H855].forEach(gid => rows.push({ tz: T(n), grade: 'יב', cls: n <= 110 ? 'יב1' : 'יב2', gid })));
+      [H856, H857].forEach(gid => rows.push({ tz: T(105), grade: 'יב', cls: 'יב1', gid }));
+      world({ roster, groups: groupRows(rows) });
+
+      const app = newApp({ grade: 'יב' });
+      const am = app.overviewModel().anomaliesModel;
+      app.renderOverviewPanel();
+      const card4Total = () => Number([...$id('overview-body').querySelectorAll('.ov-card')][3].querySelector('.ov-value').textContent);
+      const baseCard4 = card4Total();
+      same(baseCard4, am.total, 'Card 4 equals the anomaly total before sorting');
+      app.renderGroupsPanel();
+      const table = () => $id('groups-table');
+      const domRows = () => [...table().querySelectorAll('tbody tr')].filter(tr => tr.querySelector('[data-act="openProfile"]')).map(tr => {
+        const c = tr.children;
+        const ids = [...c[4].querySelectorAll('div')].filter(d => !/בסדין/.test(d.textContent)).map(d => (/\[([^\]]+)\]/.exec(d.textContent) || [])[1]).filter(Boolean).sort(natural);
+        return {
+          id: `${tr.querySelector('[data-act="openProfile"]').dataset.tz}|${c[2].textContent.trim()}|${c[3].querySelector('span').textContent.trim()}|${ids.join('+')}`,
+          name: c[0].textContent.trim(), cls: c[1].textContent.trim(), subject: c[2].textContent.trim(),
+          kind: c[3].querySelector('span').textContent.trim(), current: ids.length ? ids.map(id => `[${id}]`).join('+') : 'ללא שיבוץ'
+        };
+      });
+      const baseline = domRows();
+      same(baseline.length, am.total, 'Default table shows every anomaly');
+      check(baseline.some(r => r.current === '[854]+[855]') && baseline.some(r => r.current === '[856]+[857]'), 'Fixture contains duplicate group pairs');
+      const cmp = {
+        name: (a, b) => a.name.localeCompare(b.name, 'he'), cls: (a, b) => natural(a.cls, b.cls),
+        subject: (a, b) => natural(a.subject, b.subject), kind: (a, b) => natural(a.kind, b.kind), current: (a, b) => natural(a.current, b.current)
+      };
+      const sortBtn = col => table().querySelector(`[data-act="grpAnomSort"][data-col="${col}"]`);
+      const ariaOf = col => sortBtn(col).closest('th').getAttribute('aria-sort');
+      const contiguous = (list, key) => {
+        const seen = new Set();
+        return list.every((r, i) => {
+          if (i && list[i - 1][key] === r[key]) return true;
+          if (seen.has(r[key])) return false;
+          seen.add(r[key]); return true;
+        });
+      };
+      const cols = ['name', 'cls', 'subject', 'kind', 'current'];
+      cols.forEach(col => check(sortBtn(col) && ariaOf(col) === 'none', `${col}: sortable header starts with aria-sort=none`));
+      check(!table().querySelectorAll('thead th')[5].querySelector('[data-act="grpAnomSort"]'), 'The target-group column is not sortable');
+
+      for (const col of cols) {
+        app.acts.grpAnomSort.call(app, sortBtn(col));
+        const asc = domRows();
+        check(asc.every((r, i) => !i || cmp[col](asc[i - 1], r) <= 0), `${col}: first click sorts ascending`);
+        same(ariaOf(col), 'ascending', `${col}: aria-sort=ascending`);
+        check(cols.filter(c => c !== col).every(c => ariaOf(c) === 'none'), `${col}: other headers are aria-sort=none`);
+        check(sortBtn(col).textContent.includes('▲'), `${col}: ascending arrow`);
+        same(asc.map(r => r.id).sort(), baseline.map(r => r.id).sort(), `${col}: sorting keeps the same rows`);
+        if (col === 'subject') check(contiguous(asc, 'subject'), 'Subject sort groups rows of the same subject');
+        if (col === 'current') {
+          check(contiguous(asc, 'current'), 'Current sort groups identical group pairs');
+          const pair = asc.map((r, i) => r.current === '[854]+[855]' ? i : -1).filter(i => i >= 0);
+          check(pair.length >= 3 && pair[pair.length - 1] - pair[0] === pair.length - 1, 'Rows of [854]+[855] are consecutive');
+        }
+        app.acts.grpAnomSort.call(app, sortBtn(col));
+        const desc = domRows();
+        check(desc.every((r, i) => !i || cmp[col](desc[i - 1], r) >= 0), `${col}: second click sorts descending`);
+        same(ariaOf(col), 'descending', `${col}: aria-sort=descending`);
+        check(sortBtn(col).textContent.includes('▼'), `${col}: descending arrow`);
+        same(desc.length, am.total, `${col}: total unchanged after sorting`);
+      }
+
+      same(Number($id('groups-kpis').querySelector('[data-cat="all"] .n').textContent), am.total, 'All-anomalies KPI is unchanged by sorting');
+      same(app.overviewModel().anomaliesModel.total, am.total, 'Overview anomaly model is unchanged by sorting');
+      app.renderOverviewPanel();
+      same(card4Total(), baseCard4, 'Card 4 still matches 1:1 after sorting');
+      same(GroupAnalyzer.placementAnomalies(Store.traineeList()).rows.map(r => `${r.tz}|${r.subject}|${r.kind}`),
+        am.rows.map(r => `${r.tz}|${r.subject}|${r.kind}`), 'Source anomaly order is not mutated by sorting');
+      check(errorsOf(app).length === 0, 'No render errors while sorting');
+    });
+
     /* ====================================================================
        קבוצה C — אגרגציות חדר בקרה והצלבה משולשת 360
        INV-3 / QA-12.3, QA-12.4, QA-12.2, INV-5 / QA-10.2, QA-10.3, QA-10.7

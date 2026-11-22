@@ -39,7 +39,7 @@ const App = {
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
     bagrutScopeSet: false,
-    groups: { subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false, rosterSort: 'room' },
+    groups: { subject: 'all', teacher: 'all', subjectKey: 'all', strip: 'all', groupId: '', missingSelected: false, rosterSort: 'room', anomSort: '', anomDir: 1 },
     /* בקרת קבוצות: 'anomalies' (מוקד חריגי שיבוץ, ברירת מחדל) / 'explorer' (סייר קבוצות ובדיקת תפוסה) */
     groupsViewMode: 'anomalies',
     /* קטגוריית חריגים במוקד: 'all' / 'missing' / 'duplicate' / 'suspect', וסינון מקצוע (תווית מקצוע או 'all') */
@@ -1986,7 +1986,9 @@ const App = {
       card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', am.byCategory.suspect, `בודד ${suspectKinds[0]} · שכבה ${suspectKinds[1]} · סדין ${suspectKinds[2]}`,
         `בודד מכיתתו ${suspectKinds[0]} · חריג שכבה ${suspectKinds[1]} · פער מול סדין ${suspectKinds[2]}`));
 
-    const shown = rows.filter(r => (cat === 'all' || r.category === cat) && (subject === 'all' || r.subject === subject));
+    const filteredRows = rows.filter(r => (cat === 'all' || r.category === cat) && (subject === 'all' || r.subject === subject));
+    const { anomSort: sortCol, anomDir: sortDir } = state.groups;
+    const shown = this.sortAnomalyRows(filteredRows, sortCol, sortDir);
     setHtml('groups-mode-extra', `<label class="flex items-center gap-2 text-xs font-semibold text-[#355747]">סינון לפי מקצוע
         <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${rows.filter(r => r.subject === s).length})</option>`).join('')}</select></label>
       <button type="button" class="routine-toggle" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount})</button>
@@ -2008,12 +2010,41 @@ const App = {
           <button type="button" class="text-xs text-[#75977D] underline mr-2" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button></td></tr>`;
     }).join('');
     const out = am.outside;
+    const th = (col, label) => {
+      const active = sortCol === col;
+      return `<th class="text-right cursor-pointer select-none" aria-sort="${active ? (sortDir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="font-semibold cursor-pointer select-none" data-act="grpAnomSort" data-col="${col}" title="מיון לפי ${E(label)}">${E(label)}<span class="${active ? '' : 'opacity-40'}" aria-hidden="true"> ${active ? (sortDir > 0 ? '▲' : '▼') : '⇅'}</span></button></th>`;
+    };
     setHtml('groups-table', `<table class="grid w-full" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
-        <th class="text-right">שם החניך</th><th class="text-right">כיתת אם</th><th class="text-right">מקצוע</th><th class="text-right">סוג החריגה</th>
-        <th class="text-right">מצב נוכחי (קבוצות רשומות / סדין)</th><th class="text-right">בדיקת קבוצת יעד</th></tr></thead>
+        ${th('name', 'שם החניך')}${th('cls', 'כיתת אם')}${th('subject', 'מקצוע')}${th('kind', 'סוג החריגה')}
+        ${th('current', 'מצב נוכחי (קבוצות רשומות / סדין)')}<th class="text-right">בדיקת קבוצת יעד</th></tr></thead>
         <tbody>${body || '<tr><td colspan="6" class="text-center text-[#355747] py-8">לא נמצאו חריגות שיבוץ בסינון הנוכחי</td></tr>'}</tbody></table>
       ${out.unmatchedList && out.unmatchedList.length ? `<details class="px-4 py-2 border-t border-[#E6ECE6] text-sm"><summary class="cursor-pointer font-semibold text-[#355747]">ת.ז בקובצי המשנה שאינן במצבת (${out.unmatchedList.length})</summary>
         <ul class="mt-1 text-xs leading-5">${out.unmatchedList.map(u => `<li><span class="tz-col">${E(u.tz)}</span> ${E(u.name || '—')} <span class="text-slate-500">· ${E(u.sources.join(' • '))}</span></li>`).join('')}</ul></details>` : ''}`);
+  },
+
+  /** מיון עותק של שורות חריגי השיבוץ לפי עמודה; ללא עמודה נשמר סדר placementAnomalies */
+  sortAnomalyRows(rows, col, dir = 1) {
+    if (!col) return rows;
+    const name = (a, b) => String(a.t.name || '').localeCompare(String(b.t.name || ''), 'he');
+    const cls = (a, b) => Util.ord(a.t.gradeKey) - Util.ord(b.t.gradeKey) || natural(a.t.classKey, b.t.classKey);
+    const subject = (a, b) => natural(a.subject, b.subject);
+    const kind = (a, b) => natural(a.kindLabel, b.kindLabel);
+    const currentKey = r => {
+      const ids = [...r.groups.map(g => g.groupId)].sort(natural).map(id => `[${id}]`).join('+');
+      const sadin = [...r.sadinGroups.map(g => g.groupId)].sort(natural).map(id => `[${id}]`).join('+');
+      return `${ids || 'ללא שיבוץ'}${sadin ? ` / ${sadin}` : ''}`;
+    };
+    const current = (a, b) => natural(currentKey(a), currentKey(b));
+    const chains = {
+      name: [name, subject, kind], cls: [cls, name, subject], subject: [subject, kind, cls, name],
+      kind: [kind, subject, cls, name], current: [current, subject, cls, name]
+    };
+    const chain = chains[col];
+    if (!chain) return rows;
+    return [...rows].sort((a, b) => {
+      for (const cmp of chain) { const v = cmp(a, b); if (v) return v * dir; }
+      return 0;
+    });
   },
 
   /** גובה הכותרת הדביקה (סרגל + כרטיסים) נמדד ומועבר ל-CSS כדי שכותרות העמודות ידבקו מתחתיה */
@@ -4025,6 +4056,12 @@ const App = {
       this.renderTab('groups');
       const active = document.querySelector(`#groups-kpis [data-cat="${el.dataset.cat}"]`);
       if (active) active.focus();
+    },
+    grpAnomSort(el) {
+      const st = this.state.groups, col = el.dataset.col;
+      if (st.anomSort === col) st.anomDir = -st.anomDir; else { st.anomSort = col; st.anomDir = 1; }
+      this.dirty.add('groups');
+      this.renderTab('groups');
     },
     inspectGroups(el) { this.openTargetGroupInspector(el.dataset.tz, el.dataset.subject); },
     sadinSort(el) {
