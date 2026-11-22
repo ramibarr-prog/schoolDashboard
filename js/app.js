@@ -1980,7 +1980,7 @@ const App = {
       <span class="top"><span class="t">${label}</span><span class="n">${n}</span></span><span class="s">${sub}</span></button>`;
     setHtml('groups-kpis',
       card('all', 'an-forest', 'כל החריגות לטיפול', am.total, `${students} חניכים`) +
-      card('missing', 'an-sage', 'היעדר מקצוע ליבה', count('missing'), 'חניכים ללא קבוצה במקצוע חובה') +
+      card('missing', 'an-sage', 'היעדר מקצוע ליבה', count('missing'), 'חסר במקצוע שבו לפחות 30% מהכיתה משובצים') +
       card('missing_major', 'an-terra', 'ללא שיבוץ מגמה', count('missing_major'), 'חניכים ללא קבוצת מגמה (5 יח"ל)') +
       card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', am.byCategory.duplicate, 'רשומים ב-2 קבוצות ויותר') +
       card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', am.byCategory.suspect, `בודד ${suspectKinds[0]} · שכבה ${suspectKinds[1]} · סדין ${suspectKinds[2]}`,
@@ -1996,7 +1996,7 @@ const App = {
     const body = shown.slice(0, 1500).map(r => {
       const major = r.category === 'missing_major';
       const current = r.groups.length ? r.groups.map(g => groupTxt(g)).join('') + (major ? '<div class="text-xs text-slate-500">מגמה חלקית (פחות מ-5 יח"ל)</div>' : '')
-        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>`;
+        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>${r.category === 'missing' && r.classTotal ? `<div class="text-xs text-slate-500" data-class-coverage>(בכיתה: ${r.classEnrolled} מתוך ${r.classTotal})</div>` : ''}`;
       const sadin = r.sadinGroups.map(g => `<div class="text-xs text-slate-600">בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}</div>`).join('');
       return `<tr>
         <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>

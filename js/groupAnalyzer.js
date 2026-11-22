@@ -393,10 +393,8 @@ const GroupAnalyzer = {
 
       const members = people.map(t => {
         const diag = [];
-        if (!g.reinforcement) {
-          Store.groupsOf(t.tz).filter(o => o.groupId !== g.groupId && o.inFile && !o.reinforcement && (cats.get(o.groupId) || {}).key === cat.key)
-            .forEach(o => diag.push({ kind: 'dup', other: o.groupId, text: `כפול: רשום גם אצל ${o.teacher || 'ללא מורה'} [${o.groupId}]`, title: 'רשום ביותר מקבוצה אחת באותו מקצוע במשוב' }));
-        }
+        Store.groupsOf(t.tz).filter(o => o.groupId !== g.groupId && o.inFile && (cats.get(o.groupId) || {}).key === cat.key)
+          .forEach(o => diag.push({ kind: 'dup', other: o.groupId, text: `כפול: רשום גם אצל ${o.teacher || 'ללא מורה'} [${o.groupId}]`, title: 'רשום ביותר מקבוצה אחת באותו מקצוע במשוב' }));
         const k = kindOf.get(t.classKey);
         if (k === 'straggler') diag.push({ kind: 'grade', text: `חריג שכבה (משובץ מ-${t.classKey})`, title: `חניך משכבה ${Util.gl(t.gradeKey)} בקבוצה של שכבה ${Util.gl(domGrade)} – ייתכן מעבר שלא עודכן במשוב` });
         else if (k === 'minor') diag.push({ kind: 'outlier', text: `בודד מכיתה ${t.classKey} בקבוצה של ${mainLabel}`, title: 'חניך בודד מכיתת אם שונה מרוב הקבוצה – ייתכן מעבר שלא עודכן במשוב' });
@@ -431,7 +429,7 @@ const GroupAnalyzer = {
    * כאשר לא נבחרה שכבה מפורשת, רק שכבות שיש בהן קבוצות נכללות באוכלוסייה.
    */
   subjectHealth(cat, groups, pop, explicitGrade = false) {
-    const rel = groups.filter(g => g.cat.key === cat.key && !g.reinforcement);
+    const rel = groups.filter(g => g.cat.key === cat.key);
     const covered = new Set(rel.map(g => g.domGrade).filter(Boolean));
     const byTz = new Map(), stray = [], population = new Set(pop.map(t => t.tz));
     rel.forEach(g => g.members.forEach(m => {
@@ -439,8 +437,12 @@ const GroupAnalyzer = {
       byTz.get(m.t.tz).push(g);
       if (population.has(m.t.tz) && m.diag.some(d => d.kind === 'grade' || d.kind === 'outlier')) stray.push({ t: m.t, g });
     }));
-    const people = explicitGrade ? pop : pop.filter(t => covered.has(t.gradeKey));
     const gs = t => byTz.get(t.tz) || [];
+    /* מקצוע ליבה: חסרי שיבוץ נספרים רק בכיתות אם שלפחות 30% מהן משובצות למקצוע (אותו מקור כמו חריגי השיבוץ) */
+    const coreId = cat.kind === 'core' ? String(cat.key).replace(/^core:/, '') : null;
+    const coverage = coreId ? this.coreClassCoverage() : null;
+    const people = coreId ? pop.filter(t => gs(t).length || (coverage.get(`${t.classKey}|${coreId}`) || {}).expected)
+      : explicitGrade ? pop : pop.filter(t => covered.has(t.gradeKey));
     return {
       total: people.length,
       ok: people.filter(t => gs(t).length === 1).length,
@@ -468,29 +470,57 @@ const GroupAnalyzer = {
   },
 
   /**
+   * חובת שיבוץ במקצועות ליבה לפי כיתת אם, תמיד מול כלל המצבת הפעילה (לא מול הסינון), כדי שהתוצאה לחניך בודד תהיה זהה לתוצאה בבית הספר כולו.
+   * מפתח: `${classKey}|${subjectId}` → { classSize, enrolled, expected }. כל קבוצה מקובץ הקבוצות נספרת כקבוצת לימוד במקצוע.
+   * expected: לפחות 30% מחניכי הכיתה משובצים לקבוצה במקצוע.
+   */
+  CORE_CLASS_SHARE: 0.3,
+  coreClassCoverage() {
+    const roster = Store.traineeList(), sizes = new Map(), out = new Map();
+    roster.forEach(t => sizes.set(t.classKey, (sizes.get(t.classKey) || 0) + 1));
+    const groupsOf = new Map(roster.map(t => [t.tz, Store.groupsOf(t.tz).filter(g => g.inFile)]));
+    this.coreSubjects().forEach(s => {
+      const enrolled = new Map();
+      roster.forEach(t => { if (groupsOf.get(t.tz).some(g => Util.matchKeywords(g.subject, s.keywords))) enrolled.set(t.classKey, (enrolled.get(t.classKey) || 0) + 1); });
+      sizes.forEach((classSize, classKey) => {
+        const n = enrolled.get(classKey) || 0;
+        out.set(`${classKey}|${s.id}`, { classKey, subjectId: s.id, classSize, enrolled: n, expected: classSize > 0 && n / classSize >= this.CORE_CLASS_SHARE });
+      });
+    });
+    return out;
+  },
+
+  classCoreExpectation(classKey, coreSubject, coverage = this.coreClassCoverage()) {
+    const id = coreSubject && typeof coreSubject === 'object' ? coreSubject.id : coreSubject;
+    return coverage.get(`${classKey}|${id}`) || { classKey, subjectId: id, classSize: 0, enrolled: 0, expected: false };
+  },
+
+  /**
    * חריגות שיבוץ לחניכי המצבת שבסינון:
-   *  none – חוסר שיבוץ (0 קבוצות במקצוע), dup – כפילות שיבוץ (2+ קבוצות באותו מקצוע),
+   *  none – חוסר שיבוץ במקצוע ליבה, רק כשלפחות 30% מכיתת האם משובצים למקצוע (classEnrolled / classTotal),
+   *  dup – כפילות שיבוץ (2+ קבוצות באותו מקצוע ליבה, בכל מקצוע שיש לו קבוצות),
    *  nomajor – ללא מגמה 5 יח"ל, וכן unmatched – ת.ז שאינן במצבת.
-   * נבדקים רק מקצועות (ומגמות) שיש להם קבוצות בקובץ הקבוצות, ורק בשכבות שבהן נטענו קבוצות כאלה.
    * subjectId: 'all' | מזהה מקצוע ליבה | 'major'
    */
   analyzeGroupAnomalies(filteredRoster, subjectId = 'all') {
     const roster = Array.isArray(filteredRoster) ? filteredRoster : Store.traineeList();
     const sid = (subjectId && typeof subjectId === 'object' ? subjectId.subject : subjectId) || 'all';
-    const allGroups = [...Store.groups.values()].filter(g => g.inFile && !g.reinforcement);
+    const allGroups = [...Store.groups.values()].filter(g => g.inFile);
     const gradesOf = pred => new Set(allGroups.filter(g => pred(g)).map(g => g.gradeKey));
     const active = this.coreSubjects()
-      .map(s => ({ s, grades: gradesOf(g => Util.matchKeywords(g.subject, s.keywords)) }))
-      .filter(x => x.grades.size && (sid === 'all' || x.s.id === sid));
+      .filter(s => allGroups.some(g => Util.matchKeywords(g.subject, s.keywords)) && (sid === 'all' || s.id === sid));
+    const coverage = active.length ? this.coreClassCoverage() : new Map();
     const majorGrades = gradesOf(g => !!this.majorOf(g));
     const items = [];
     roster.forEach(t => {
-      const groups = Store.groupsOf(t.tz).filter(g => !g.reinforcement);
-      active.forEach(({ s, grades }) => {
-        if (!grades.has(t.gradeKey)) return;
+      const groups = Store.groupsOf(t.tz).filter(g => g.inFile);
+      active.forEach(s => {
         const matched = groups.filter(g => Util.matchKeywords(g.subject, s.keywords));
-        if (!matched.length) items.push({ tz: t.tz, kind: 'none', subject: s.name, groups: [] });
-        else if (matched.length > 1) items.push({ tz: t.tz, kind: 'dup', subject: s.name, groups: matched });
+        if (matched.length > 1) items.push({ tz: t.tz, kind: 'dup', subject: s.name, groups: matched });
+        else if (!matched.length) {
+          const c = this.classCoreExpectation(t.classKey, s, coverage);
+          if (c.expected) items.push({ tz: t.tz, kind: 'none', subject: s.name, groups: [], classEnrolled: c.enrolled, classTotal: c.classSize });
+        }
       });
       if ((sid === 'all' || sid === 'major') && majorGrades.has(t.gradeKey) && !/צירוף/.test(t.majorName || '') && !groups.some(g => this.majorOf(g))) {
         items.push({ tz: t.tz, kind: 'nomajor', subject: 'מגמה 5 יח"ל', groups: [] });
@@ -619,22 +649,22 @@ const GroupAnalyzer = {
    */
   placementAnomalies(roster) {
     const people = new Map(roster.map(t => [t.tz, t]));
-    const enrolled = (tz, catKey) => Store.groupsOf(tz).filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).key === catKey)
+    const enrolled = (tz, catKey) => Store.groupsOf(tz).filter(g => g.inFile && this.categoryOf(g).key === catKey)
       .map(g => ({ groupId: g.groupId, teacher: g.teacher || '', subject: g.subject }));
     const brief = gs => gs.map(g => ({ groupId: g.groupId, teacher: g.teacher || '', subject: g.subject }));
     const rows = [];
-    const add = (t, category, kind, kindLabel, subject, groups, sadinGroups = []) =>
-      rows.push({ tz: t.tz, t, category, kind, kindLabel, subject, groups, sadinGroups, isRoutineDuplicate: category === 'duplicate' && isRoutineDuplicateSubject(subject) });
+    const add = (t, category, kind, kindLabel, subject, groups, sadinGroups = [], extra = {}) =>
+      rows.push({ tz: t.tz, t, category, kind, kindLabel, subject, groups, sadinGroups, isRoutineDuplicate: category === 'duplicate' && isRoutineDuplicateSubject(subject), ...extra });
 
     const analysis = this.analyzeGroupAnomalies(roster, 'all');
     analysis.items.forEach(a => {
       const t = people.get(a.tz);
       if (!t) return;
-      if (a.kind === 'none') add(t, 'missing', 'none', 'היעדר מקצוע ליבה', a.subject, []);
+      if (a.kind === 'none') add(t, 'missing', 'none', 'היעדר מקצוע ליבה', a.subject, [], [], { classEnrolled: a.classEnrolled, classTotal: a.classTotal });
       else if (a.kind === 'dup') add(t, 'duplicate', 'dup', 'כפילות קבוצה', a.subject, brief(a.groups));
       else if (a.kind === 'nomajor') {
         /* מגמה חלקית: קבוצת מגמה שיח"ל המוצהרות בה מתחת לדרישה, ולכן אינה נחשבת מגמה 5 יח"ל */
-        const partial = Store.groupsOf(t.tz).filter(g => g.inFile && !g.reinforcement && this.categoryOf(g).kind === 'major');
+        const partial = Store.groupsOf(t.tz).filter(g => g.inFile && this.categoryOf(g).kind === 'major');
         add(t, 'missing_major', 'nomajor', 'ללא שיבוץ מגמה', this.MAJOR_LABEL, brief(partial));
       }
     });
@@ -736,7 +766,8 @@ const GroupAnalyzer = {
       return rows.get(cat.key);
     };
     if (Store.loaded.groups) {
-      this.coreSubjects().forEach((s, i) => { if (Store.groupsLoaded(s.keywords, t.gradeKey)) rowOf({ key: `core:${s.id}`, label: s.name, kind: 'core', order: i }); });
+      const coverage = this.coreClassCoverage();
+      this.coreSubjects().forEach((s, i) => { if (this.classCoreExpectation(t.classKey, s, coverage).expected) rowOf({ key: `core:${s.id}`, label: s.name, kind: 'core', order: i }); });
     }
     Store.groupsOf(tz).forEach(g => {
       rowOf(this.categoryOf(g)).enrolled.push({ groupId: g.groupId, subject: g.subject, teacher: g.teacher || '', reinforcement: g.reinforcement, inFile: g.inFile, diag: diagByGroup.get(g.groupId) || [] });
@@ -748,7 +779,7 @@ const GroupAnalyzer = {
     if (items.some(a => a.kind === 'nomajor')) rowOf({ key: 'major:none', label: 'מגמה 5 יח"ל', kind: 'major', order: 100 });
 
     rows.forEach(r => {
-      const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => !g.reinforcement && g.inFile);
+      const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => g.inFile);
       if (r.kind === 'core' && !r.enrolled.length && items.some(a => a.kind === 'none' && a.subject === r.label)) r.issues.push({ level: 'severe', text: 'חסר שיבוץ' });
       if (r.key === 'major:none') r.issues.push({ level: 'warn', text: 'חסר שיבוץ: ללא מגמה 5 יח"ל' });
       if (regular.length >= 2) r.issues.push({ level: 'severe', text: `כפול: רשום ב-${regular.length} קבוצות` });

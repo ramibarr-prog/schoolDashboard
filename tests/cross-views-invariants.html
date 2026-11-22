@@ -503,29 +503,105 @@ window.fetch = (input, options) => {
         const everyone = Store.traineeList();
         const analysis = GroupAnalyzer.analyzeGroupAnomalies(everyone, 'all');
         same(analysis.items.filter(i => i.kind === 'none').map(i => i.tz), [T(8)], 'QA-11.5: only the student without a math group is missing a mandatory placement');
-        same(analysis.items.filter(i => i.kind === 'dup').map(i => [i.tz, i.groups.map(g => g.groupId).sort()]), [[T(2), ['9001', '9002']]], 'QA-11.3: duplicate placement in the same subject');
-        check(!analysis.items.some(i => i.tz === T(3)), 'QA-11.4: parent group + reinforcement group must not be a false duplicate');
+        same(analysis.items.filter(i => i.kind === 'dup').map(i => [i.tz, i.groups.map(g => g.groupId).sort()]), [[T(2), ['9001', '9002']], [T(3), ['9001', '9003']]], 'QA-11.3: duplicate placement in the same subject (every file group counts, including one named "תגבור")');
+        check(analysis.items.filter(i => i.tz === T(3)).every(i => i.kind === 'dup'), 'QA-11.4: a "תגבור" group is a regular study group — no reinforcement exemption');
         check(!analysis.items.some(i => i.tz === T(31)), 'A student from another grade is not "missing" the 12th-grade group');
         const model = GroupAnalyzer.explorerModel().groups;
         const g9001 = model.find(g => g.groupId === '9001'), g9003 = model.find(g => g.groupId === '9003');
         const diag = tz => (g9001.members.find(m => m.t.tz === tz) || { diag: [] }).diag.map(d => d.kind).sort();
-        same([diag(T(7)), diag(T(31)), diag(T(2)), diag(T(3)), diag(T(1))], [['outlier'], ['grade'], ['dup'], [], []], 'QA-11.2: outlier (single student from another class), grade straggler, duplicate, reinforcement, regular student');
-        check(g9003.reinforcement === true && g9003.members.every(m => !m.diag.some(d => d.kind === 'dup')), 'QA-11.4: the reinforcement group must not carry duplicate marks');
+        same([diag(T(7)), diag(T(31)), diag(T(2)), diag(T(3)), diag(T(1))], [['outlier'], ['grade'], ['dup'], ['dup'], []], 'QA-11.2: outlier (single student from another class), grade straggler, duplicate, "תגבור" duplicate, regular student');
+        check(g9003.members.every(m => m.diag.some(d => d.kind === 'dup')), 'QA-11.4: the "תגבור" group carries the same duplicate marks as any group');
         check(g9001.declared === 29 && g9001.total === 8, `QA-11.6: declared 29 vs actual 8 (got ${g9001.declared} / ${g9001.total})`);
         check(Store.groups.get('9001').teacher === 'דוד בדיקה' && !Store.groups.get('9001').members.has(T(900)) && Store.groups.get('9001').actual === 8, 'QA-11.7: a teacher row names the teacher but is not a member');
         check(!Store.unknown.groups.includes(T(900)) && Store.trainees.size === 13 && g9001.members.every(m => m.t.tz !== T(900)), 'QA-11.7: teacher rows must not become trainees or unknown IDs');
         const am = GroupAnalyzer.placementAnomalies(everyone);
         const byCategory = category => am.rows.filter(r => r.category === category).map(r => `${r.tz}:${r.kind}`).sort();
-        same([byCategory('missing'), byCategory('duplicate'), byCategory('suspect')], [[`${T(8)}:none`], [`${T(2)}:dup`], [`${T(7)}:outlier`, `${T(31)}:grade`]], 'Placement anomaly table by category');
+        same([byCategory('missing'), byCategory('duplicate'), byCategory('suspect')], [[`${T(8)}:none`], [`${T(2)}:dup`, `${T(3)}:dup`], [`${T(7)}:outlier`, `${T(31)}:grade`]], 'Placement anomaly table by category');
+        const miss8 = am.rows.find(r => r.tz === T(8));
+        check(miss8.classEnrolled === 5 && miss8.classTotal === 6, `Missing row explains the class coverage 5/6 (got ${miss8.classEnrolled}/${miss8.classTotal})`);
 
         const app = newApp();
         app.renderGroupsPanel();
         const count = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
-        same([count('all'), count('missing'), count('missing_major'), count('duplicate'), count('suspect')], [4, 1, 0, 1, 2], 'Anomaly cards on the screen');
+        same([count('all'), count('missing'), count('missing_major'), count('duplicate'), count('suspect')], [5, 1, 0, 2, 2], 'Anomaly cards on the screen');
         check(count('all') === am.rows.length, 'The "all" card must equal the table rows');
         app.renderGroupDetail(g9001, [], () => false, g9001.cat);
         check(/מוצהר 29/.test($id('groups-detail').textContent) && /תפוסה: 8/.test($id('groups-detail').textContent), 'QA-11.6: the declared-count mismatch badge must be shown');
         noGarbage('groups');
+      });
+    });
+
+    /* ====================================================================
+       GroupAnalyzer — חובת שיבוץ במקצוע ליבה לפי 30% מכיתת האם
+       ==================================================================== */
+    await group('GroupAnalyzer — core placement by 30% homeroom coverage', async () => {
+      const HIST = n => `היסטוריה יב1 מורה${n} בדיקה [72${n}0]`, LIT = 'ספרות יב1 רינה בדיקה [7300]';
+      const build = members => {
+        resetConfig();
+        const roster = [];
+        for (let n = 101; n <= 110; n++) roster.push(stu(n, 'יב', 'יב1'));
+        for (let n = 111; n <= 120; n++) roster.push(stu(n, 'יב', 'יב2'));
+        world({ roster, groups: groupRows(members.map(([n, gid]) => ({ tz: T(n), grade: 'יב', cls: n <= 110 ? 'יב1' : 'יב2', gid }))) });
+      };
+      const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+      const ofKind = (items, kind, subject) => items.filter(i => i.kind === kind && i.subject === subject).map(i => i.tz).sort();
+      const histName = () => GroupAnalyzer.coreSubjects().find(s => s.keywords.some(k => /היסטור/.test(k))).name;
+      const litName = () => GroupAnalyzer.coreSubjects().find(s => s.keywords.some(k => /ספרות/.test(k))).name;
+
+      await part('Small / completion group (20%): no missing alerts; a duplicate there is still caught', async () => {
+        build([[101, HIST(1)], [102, HIST(1)], [101, HIST(2)], ...range(101, 108).map(n => [n, LIT])]);
+        const items = GroupAnalyzer.analyzeGroupAnomalies(Store.traineeList(), 'all').items;
+        same(ofKind(items, 'none', histName()), [], '2 of 10 in history (20%) → 0 missing for the other 8');
+        same(ofKind(items, 'dup', histName()), [T(101)], 'Two history groups in a 20% class are still a duplicate');
+        const c = GroupAnalyzer.classCoreExpectation('יב1', GroupAnalyzer.coreSubjects().find(s => s.name === histName()));
+        check(c.classSize === 10 && c.enrolled === 2 && c.expected === false, `History coverage of יב1 is 2/10, not expected (got ${c.enrolled}/${c.classSize})`);
+      });
+
+      await part('Real gap (80%): exactly the 2 remaining pupils are missing, with classEnrolled=8 / classTotal=10', async () => {
+        build([...range(101, 108).map(n => [n, LIT])]);
+        const items = GroupAnalyzer.analyzeGroupAnomalies(Store.traineeList(), 'all').items;
+        const lit = items.filter(i => i.kind === 'none' && i.subject === litName());
+        same(lit.map(i => [i.tz, i.classEnrolled, i.classTotal]).sort(), [[T(109), 8, 10], [T(110), 8, 10]], 'Only the 2 unplaced pupils of a class at 80% are missing');
+        check(!lit.some(i => Number(i.tz.slice(-3)) > 110), 'Class יב2 (0% literature) is never flagged');
+        const am = GroupAnalyzer.placementAnomalies(Store.traineeList());
+        same(am.rows.filter(r => r.category === 'missing').map(r => [r.tz, r.classEnrolled, r.classTotal]).sort(), [[T(109), 8, 10], [T(110), 8, 10]], 'placementAnomalies carries classEnrolled / classTotal');
+        const app = newApp({ grade: 'יב' });
+        app.renderGroupsPanel();
+        const card = $id('groups-kpis').querySelector('.an-card[data-cat="missing"]');
+        check(card && /חסר במקצוע שבו לפחות 30% מהכיתה משובצים/.test(card.textContent), 'The missing card explains the 30% rule');
+        check(/\(בכיתה: 8 מתוך 10\)/.test($id('groups-table').textContent), 'The anomalies table shows "(בכיתה: 8 מתוך 10)"');
+        check(errorsOf(app).length === 0, 'No render errors');
+      });
+
+      await part('Unique class vs the rest of the grade: only class A (80%) is flagged, never class B (0%)', async () => {
+        build(range(101, 108).map(n => [n, HIST(1)]));
+        const items = GroupAnalyzer.analyzeGroupAnomalies(Store.traineeList(), 'all').items;
+        same(ofKind(items, 'none', histName()), [T(109), T(110)], 'Only the 2 missing pupils of יב1');
+        const g = GroupAnalyzer.explorerModel().groups.find(x => x.groupId === '7210');
+        const health = GroupAnalyzer.subjectHealth(g.cat, GroupAnalyzer.explorerModel().groups, Store.traineeList(), true);
+        check(health.missing.length === 2 && health.total === 10 && health.missing.every(x => (x.t || x).classKey === 'יב1'), `Group explorer health counts only יב1 (missing ${health.missing.length}, total ${health.total})`);
+      });
+
+      await part('Determinism 1:1: single pupil, whole roster, student map and overview card 4 agree', async () => {
+        build(range(101, 108).map(n => [n, HIST(1)]));
+        const pick = rows => rows.filter(r => r.category === 'missing').map(r => [r.tz, r.subject, r.classEnrolled, r.classTotal]);
+        [109, 105, 115].forEach(n => {
+          const t = Store.trainees.get(T(n));
+          const single = pick(GroupAnalyzer.placementAnomalies([t]).rows);
+          const all = pick(GroupAnalyzer.placementAnomalies(Store.traineeList()).rows).filter(r => r[0] === t.tz);
+          same(single, all, `T(${n}): single-pupil and whole-roster results are identical`);
+          const map = GroupAnalyzer.studentPlacementMap(t.tz);
+          const mapMissing = map.rows.filter(r => r.issues.some(i => i.text === 'חסר שיבוץ')).map(r => r.label);
+          same(mapMissing, single.map(r => r[1]), `T(${n}): student map flags exactly the same subjects`);
+          check(map.counts.missingCore === single.length, `T(${n}): student map missingCore count`);
+          const app = newApp({ grade: 'יב', cls: t.classKey, q: t.tz });
+          const om = app.overviewModel().anomaliesModel;
+          same(pick(om.rows).filter(r => r[0] === t.tz), single, `T(${n}): overview card 4 rows match`);
+          app.renderOverviewPanel();
+          const card4 = [...$id('overview-body').querySelectorAll('.ov-card')][3];
+          check(card4 && card4.textContent.includes(`חוסר ${om.byCategory.missing}`), `T(${n}): card 4 shows the same missing count`);
+        });
+        same(pick(GroupAnalyzer.placementAnomalies([Store.trainees.get(T(109))]).rows), [[T(109), histName(), 8, 10]], 'The single pupil sees 8 of 10');
       });
     });
 
