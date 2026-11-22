@@ -639,6 +639,67 @@ window.fetch = (input, options) => {
       check(anomalies.some(r => r.tz === T(201) && r.category === 'duplicate'), 'Placement anomalies still surface a major duplicate');
     });
 
+    await group('GroupAnalyzer — any major group is valid placement', async () => {
+      await part('Prefix-only majors, gender-only missing placement and cross-view parity', async () => {
+        resetConfig();
+        const roster = [301, 302, 303].map(n => stu(n, 'יב', 'יב1'));
+        world({ roster, groups: groupRows([
+          { tz: T(301), grade: 'יב', cls: 'יב1', gid: "מג' גאוגרפיה יב1 מורה א [7501]" },
+          { tz: T(302), grade: 'יב', cls: 'יב1', gid: 'מג׳ כלכלה חברתית יב1 מורה ב [7502]' },
+          { tz: T(303), grade: 'יב', cls: 'יב1', gid: 'מגדר יב1 מורה ג [7503]' }
+        ]) });
+        const all = Store.traineeList();
+        const source = GroupAnalyzer.analyzeGroupAnomalies(all, 'major');
+        same(source.items.map(r => [r.tz, r.kind, r.subject]), [[T(303), 'nomajor', 'מגמת בחירה']], 'Only the gender-only pupil is missing a major, even when the grade has only prefix-identified majors');
+        const missing = GroupAnalyzer.placementAnomalies(all).rows.filter(r => r.kind === 'nomajor');
+        same(missing.map(r => [r.tz, r.subject, r.groups]), [[T(303), 'מגמת בחירה', []]], 'Missing-major rows have no partial group');
+        all.forEach(t => {
+          const rows = GroupAnalyzer.studentPlacementMap(t.tz).rows.filter(r => r.key === 'major:none');
+          same(rows.map(r => r.label), missing.filter(r => r.tz === t.tz).map(r => r.subject), `${t.tz}: student map and placement anomalies agree on missing major`);
+        });
+        const targets = GroupAnalyzer.targetGroupInspector(T(303), GroupAnalyzer.MAJOR_KEY);
+        same(targets.sameGrade.map(g => g.groupId).sort(), ['7501', '7502'], 'Major comparison includes both prefix-only majors and excludes gender');
+
+        const app = newApp({ grade: 'יב' });
+        const overview = app.overviewModel().anomaliesModel;
+        same(overview.rows.filter(r => r.kind === 'nomajor').map(r => r.tz), missing.map(r => r.tz), 'Overview uses exactly the same missing-major pupils');
+        app.renderOverviewPanel();
+        const card4 = [...$id('overview-body').querySelectorAll('.ov-card')][3];
+        same(Number(card4.querySelector('.ov-value').textContent), overview.total, 'Overview card 4 total matches placement anomalies');
+        check(card4.textContent.includes(`חוסר ${missing.length}`), 'Overview card 4 missing count matches the student maps');
+        app.renderGroupsPanel();
+        const card = $id('groups-kpis').querySelector('[data-cat="missing_major"]');
+        same(Number(card.querySelector('.n').textContent), missing.length, 'Group-control missing-major KPI matches overview');
+        same(card.querySelector('.s').textContent, 'חניכים ללא קבוצת מגמה', 'The placement subtitle does not impose a unit requirement');
+        check(!$id('groups-table').textContent.includes('מגמה חלקית'), 'No partial-major label appears in the placement table');
+        check(errorsOf(app).length === 0, 'No cross-view render errors');
+      });
+
+      await part('Three-unit and reinforcement majors count in placement, maps and target comparison', async () => {
+        resetConfig();
+        world({ roster: [321, 322, 323].map(n => stu(n, 'יב', 'יב1')), groups: groupRows([
+          { tz: T(321), grade: 'יב', cls: 'יב1', gid: 'פיזיקה 3 יח"ל יב1 מורה א [7521]' },
+          { tz: T(322), grade: 'יב', cls: 'יב1', gid: 'תגבור ביולוגיה 3 יח"ל יב1 מורה ב [7522]' },
+          { tz: T(323), grade: 'יב', cls: 'יב1', gid: 'פיזיקה 5 יח"ל יב1 מורה ג [7523]' }
+        ]) });
+        check(Number(Store.groups.get('7521').units) === 3 && Number(Store.groups.get('7522').units) === 3 && Store.groups.get('7522').reinforcement, 'Fixture contains actual three-unit groups, including a reinforcement-marked major');
+        same(GroupAnalyzer.analyzeGroupAnomalies(Store.traineeList(), 'major').counts.nomajor, 0, 'All major-group enrollments are valid regardless of units or reinforcement');
+        same(GroupAnalyzer.placementAnomalies(Store.traineeList()).rows.filter(r => r.kind === 'nomajor').length, 0, 'No false missing-major placement rows');
+        [321, 322].forEach((n, i) => {
+          const g = Store.groups.get(String(7521 + i));
+          const map = GroupAnalyzer.studentPlacementMap(T(n));
+          check(!map.rows.some(r => r.key === 'major:none') && map.rows.some(r => r.kind === 'major' && r.enrolled.some(e => e.groupId === g.groupId)), `${n}: student map accepts the three-unit major`);
+          [GroupAnalyzer.MAJOR_KEY, GroupAnalyzer.categoryOf(g).label].forEach(subject => {
+            same(GroupAnalyzer.targetGroupInspector(T(n), subject).current.map(r => r.groupId), [g.groupId], `${n}: comparison retains the current major in both navigation modes`);
+          });
+        });
+        const app = newApp({ grade: 'יב' });
+        same(app.overviewModel().anomaliesModel.total, 0, 'Overview has no false anomalies for three-unit majors');
+        app.renderGroupsPanel();
+        check(!$id('groups-table').textContent.includes('מגמה חלקית'), 'Three-unit majors do not produce a partial-major label');
+      });
+    });
+
     /* ====================================================================
        קבוצה C — אגרגציות חדר בקרה והצלבה משולשת 360
        INV-3 / QA-12.3, QA-12.4, QA-12.2, INV-5 / QA-10.2, QA-10.3, QA-10.7

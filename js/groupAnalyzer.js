@@ -332,7 +332,8 @@ const GroupAnalyzer = {
   isMajorGroup(group) {
     if (!group || typeof group !== 'object') return false;
     const hasMajorPrefix = value => /^(?:מג['׳]|מגמת)/.test(String(value || '').trim());
-    return group.major === true || !!this.majorOf(group) || hasMajorPrefix(group.subject) || hasMajorPrefix(group.name);
+    return group.major === true || hasMajorPrefix(group.subject) || hasMajorPrefix(group.name) ||
+      Config.rules().majors.some(m => m.enabled !== false && Util.matchKeywords(group.subject, m.keywords));
   },
 
   /**
@@ -505,7 +506,7 @@ const GroupAnalyzer = {
    * חריגות שיבוץ לחניכי המצבת שבסינון:
    *  none – חוסר שיבוץ במקצוע ליבה, רק כשלפחות 30% מכיתת האם משובצים למקצוע (classEnrolled / classTotal),
    *  dup – כפילות שיבוץ (2+ קבוצות באותו מקצוע ליבה, בכל מקצוע שיש לו קבוצות),
-   *  nomajor – ללא מגמה 5 יח"ל, וכן unmatched – ת.ז שאינן במצבת.
+   *  nomajor – ללא מגמת בחירה, וכן unmatched – ת.ז שאינן במצבת.
    * subjectId: 'all' | מזהה מקצוע ליבה | 'major'
    */
   analyzeGroupAnomalies(filteredRoster, subjectId = 'all') {
@@ -516,7 +517,7 @@ const GroupAnalyzer = {
     const active = this.coreSubjects()
       .filter(s => allGroups.some(g => Util.matchKeywords(g.subject, s.keywords)) && (sid === 'all' || s.id === sid));
     const coverage = active.length ? this.coreClassCoverage() : new Map();
-    const majorGrades = gradesOf(g => !!this.majorOf(g));
+    const majorGrades = gradesOf(g => this.isMajorGroup(g));
     const items = [];
     roster.forEach(t => {
       const groups = Store.groupsOf(t.tz).filter(g => g.inFile);
@@ -528,8 +529,8 @@ const GroupAnalyzer = {
           if (c.expected) items.push({ tz: t.tz, kind: 'none', subject: s.name, groups: [], classEnrolled: c.enrolled, classTotal: c.classSize });
         }
       });
-      if ((sid === 'all' || sid === 'major') && majorGrades.has(t.gradeKey) && !/צירוף/.test(t.majorName || '') && !groups.some(g => this.majorOf(g))) {
-        items.push({ tz: t.tz, kind: 'nomajor', subject: 'מגמה 5 יח"ל', groups: [] });
+      if ((sid === 'all' || sid === 'major') && majorGrades.has(t.gradeKey) && !/צירוף/.test(t.majorName || '') && !groups.some(g => this.isMajorGroup(g))) {
+        items.push({ tz: t.tz, kind: 'nomajor', subject: this.MAJOR_LABEL, groups: [] });
       }
     });
     const unmatched = this.unmatchedIds();
@@ -668,11 +669,7 @@ const GroupAnalyzer = {
       if (!t) return;
       if (a.kind === 'none') add(t, 'missing', 'none', 'היעדר מקצוע ליבה', a.subject, [], [], { classEnrolled: a.classEnrolled, classTotal: a.classTotal });
       else if (a.kind === 'dup') add(t, 'duplicate', 'dup', 'כפילות קבוצה', a.subject, brief(a.groups));
-      else if (a.kind === 'nomajor') {
-        /* מגמה חלקית: קבוצת מגמה שיח"ל המוצהרות בה מתחת לדרישה, ולכן אינה נחשבת מגמה 5 יח"ל */
-        const partial = Store.groupsOf(t.tz).filter(g => g.inFile && this.categoryOf(g).kind === 'major');
-        add(t, 'missing_major', 'nomajor', 'ללא שיבוץ מגמה', this.MAJOR_LABEL, brief(partial));
-      }
+      else if (a.kind === 'nomajor') add(t, 'missing_major', 'nomajor', 'ללא שיבוץ מגמה', this.MAJOR_LABEL, []);
     });
 
     const KIND_LABEL = { outlier: 'חשד לשיבוץ שגוי: בודד מכיתתו', grade: 'חריג שכבה', 'sadin-other': 'פער מול סדין' };
@@ -700,13 +697,13 @@ const GroupAnalyzer = {
   },
 
   /** תווית "מקצוע" לחריגת היעדר מגמה, ומפתח המקצוע המיוחד שמעביר את בדיקת קבוצת היעד למצב השוואת מגמות */
-  MAJOR_LABEL: 'מגמת בחירה (5 יח"ל)',
+  MAJOR_LABEL: 'מגמת בחירה',
   MAJOR_KEY: '__MAJOR__',
 
   /**
    * "בדיקת קבוצת יעד ותפוסה": כל קבוצות המקצוע (לפי תווית הקטגוריה) להשוואה עבור חניך:
    * תפוסה, מספר חניכי כיתת האם של החניך בקבוצה, הרכב כיתות ורשימה שמית. קבוצות שכבת החניך קודם, ובתוכן לפי ההתאמה לכיתת האם;
-   * שאר השכבות בנפרד. קבוצות תגבור אינן יעד שיבוץ ואינן נכללות.
+   * שאר השכבות בנפרד. קבוצות תגבור שאינן מגמות אינן נכללות.
    */
   targetGroupInspector(tz, subjectName) {
     const t = Store.trainees.get(tz);
@@ -728,7 +725,11 @@ const GroupAnalyzer = {
         enrolled: g.members.has(tz), inSadin: sadinIds.has(g.groupId), members
       };
     };
-    const all = [...Store.groups.values()].filter(g => g.inFile && !g.reinforcement && (isMajor ? this.categoryOf(g).kind === 'major' : this.categoryOf(g).label === subjectName)).map(card);
+    const all = [...Store.groups.values()].filter(g => {
+      if (!g.inFile) return false;
+      const cat = this.categoryOf(g);
+      return (cat.kind === 'major' || !g.reinforcement) && (isMajor ? cat.kind === 'major' : cat.label === subjectName);
+    }).map(card);
     const rank = (a, b) => b.homeroomN - a.homeroomN || b.total - a.total || natural(a.teacher, b.teacher) || natural(a.groupId, b.groupId);
     const sameGrade = all.filter(g => g.gradeKey === t.gradeKey).sort(rank);
     const otherGrades = all.filter(g => g.gradeKey !== t.gradeKey)
@@ -782,12 +783,12 @@ const GroupAnalyzer = {
       const g = e.groupId ? Store.groups.get(e.groupId) : null;
       rowOf(this.categoryOf(g || { subject: e.subject })).sadin.push({ groupId: e.groupId || '', teacher: (g && g.teacher) || e.teacher || '', avg: e.avg });
     });
-    if (items.some(a => a.kind === 'nomajor')) rowOf({ key: 'major:none', label: 'מגמה 5 יח"ל', kind: 'major', order: 100 });
+    if (items.some(a => a.kind === 'nomajor')) rowOf({ key: 'major:none', label: this.MAJOR_LABEL, kind: 'major', order: 100 });
 
     rows.forEach(r => {
       const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => g.inFile);
       if (r.kind === 'core' && !r.enrolled.length && items.some(a => a.kind === 'none' && a.subject === r.label)) r.issues.push({ level: 'severe', text: 'חסר שיבוץ' });
-      if (r.key === 'major:none') r.issues.push({ level: 'warn', text: 'חסר שיבוץ: ללא מגמה 5 יח"ל' });
+      if (r.key === 'major:none') r.issues.push({ level: 'warn', text: 'חסר שיבוץ: ללא מגמת בחירה' });
       if (regular.length >= 2) r.issues.push({ level: 'severe', text: `כפול: רשום ב-${regular.length} קבוצות` });
       if (r.enrolled.some(g => g.diag.some(d => d.kind === 'grade'))) r.issues.push({ level: 'severe', text: 'חריג שכבה' });
       if (r.enrolled.some(g => g.diag.some(d => d.kind === 'outlier'))) r.issues.push({ level: 'warn', text: 'בודד מכיתתו' });
