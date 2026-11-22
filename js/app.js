@@ -35,7 +35,7 @@ const App = {
     tab: 'overview',
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
     sim: { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false },
-    bagrut: { chip: 'all', sort: 'class', dir: 1, drill: 'all', mxSort: 'class', mxDir: 1 },
+    bagrut: { chip: 'all', sort: 'class', dir: 1, drill: 'all', mxSort: 'class', mxDir: 1, onlyPending: false, readinessClass: '' },
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
     bagrutScopeSet: false,
@@ -822,6 +822,92 @@ const App = {
     };
   },
 
+  /** התאמת מקצוע וסדין בכללי המחזור של כל חניך, ללא שימוש בתחזית הבגרות. */
+  subjectReadinessModel(sel, trainees, onlyPending = false) {
+    const [kind, id] = String(sel).split(':');
+    const questionnaires = new Map(), rows = [];
+    let name = '', pass = Number(Config.rules().passGrade) || 55;
+    const grades = [...new Set(trainees.map(t => t.gradeKey))];
+    (grades.length ? grades : ['יב']).forEach(grade => Config.withRulesForGrade(grade, () => {
+      const rules = Config.rules();
+      const def = (kind === 'major' ? rules.majors : GroupAnalyzer.coreSubjects()).find(s => s.id === id && s.enabled !== false);
+      const matrix = BagrutAdvisor.subjectMatrix(sel, trainees.filter(t => t.gradeKey === grade));
+      if (!def || !matrix) return;
+      name = matrix.name; pass = Number(rules.passGrade) || 55;
+      matrix.questionnaires.forEach(q => { if (!questionnaires.has(q.key)) questionnaires.set(q.key, q); });
+      const sheet = new Map((Store.loaded.grades ? GroupAnalyzer.sadinSheet(matrix.rows.map(r => r.t), {}) : []).map(r => [r.t.tz, r]));
+      matrix.rows.forEach(r => {
+        const comps = kind === 'major'
+          ? (def.codeMode === 'any' ? [{ codes: def.codes, expectedGrade: def.expectedGrade }] : def.codes.map(code => ({ codes: [code], expectedGrade: def.expectedGrade })))
+          : (def.variableUnits ? def.levels[r.level] : def.components) || [];
+        const active = comps.filter(c => c.enabled !== false);
+        const passed = c => {
+          const cell = r.cells[c.codes.join(',')];
+          return cell && (cell.state === 'pass' || (cell.state === 'num' && cell.num >= pass));
+        };
+        const dueNow = active.some(c => {
+          const expected = c.expectedGrade || (rules.questionnaires[String(c.codes[0])] || {}).expectedGrade;
+          return Util.normGrade(expected) === grade && !passed(c);
+        });
+        const finalPassed = r.finalScore != null ? r.finalScore >= pass : active.length > 0 && active.every(passed);
+        const pending = !finalPassed || dueNow;
+        if (onlyPending && !pending) return;
+        const sr = sheet.get(r.t.tz);
+        const subjects = sr ? [...sr.subjects.values()].filter(s => kind === 'major'
+          ? Util.matchKeywords(s.name, def.keywords)
+          : (GroupAnalyzer.coreOf(s.name) || {}).id === id || s.name === GroupAnalyzer.sadinSubject(def.name)) : [];
+        // מגמות אינן מנורמלות בסדין; מאחדים עליאסים לפי אותן מילות מפתח של כללי הבגרות.
+        const avg = subjects.length ? Store.weightedAverage(subjects.flatMap(s => s.events)).avg : null;
+        const status = avg == null ? 'noGrade' : avg < pass ? 'fail' : avg < 65 ? 'borderline' : 'ok';
+        rows.push({ ...r, pending, currentAvg: avg, missed: subjects.reduce((n, s) => n + s.missed.size, 0), readiness: status });
+      });
+    }));
+    const summarize = members => {
+      const fail = members.filter(r => r.readiness === 'fail').length;
+      const borderline = members.filter(r => r.readiness === 'borderline').length;
+      const noGrade = members.filter(r => r.readiness === 'noGrade').length;
+      const graded = members.filter(r => r.currentAvg != null), total = members.length;
+      const offTrack = fail + borderline + noGrade;
+      return { total, fail, borderline, noGrade, ok: total - offTrack, offTrack,
+        offTrackPct: total ? Math.round(offTrack / total * 100) : 0,
+        avg: graded.length ? graded.reduce((n, r) => n + r.currentAvg, 0) / graded.length : null };
+    };
+    const byClass = new Map();
+    rows.forEach(r => {
+      const key = r.t.classKey || '';
+      if (!byClass.has(key)) byClass.set(key, []);
+      byClass.get(key).push(r);
+    });
+    const classes = [...byClass].map(([key, members]) => {
+      const s = summarize(members);
+      return { key, ...s, offTrackCount: s.offTrack, failCount: s.fail, borderlineCount: s.borderline, noGradeCount: s.noGrade };
+    }).sort((a, b) => b.offTrackPct - a.offTrackPct || (a.avg ?? -1) - (b.avg ?? -1) || b.offTrackCount - a.offTrackCount || natural(a.key, b.key));
+    return { sel, name, pass, questionnaires: [...questionnaires.values()], rows, ...summarize(rows), classes, weakest: classes[0] || null };
+  },
+
+  overviewReadinessModel(m) {
+    if (!Store.loaded.grades) return { items: [], message: 'טען ציונים שוטפים להצגת מוכנות לבגרויות השנה.' };
+    const scheduled = new Map();
+    [...m.bench.grades].forEach(grade => Config.withRulesForGrade(grade, () => {
+      const rules = Config.rules();
+      const due = c => c.enabled !== false && Util.normGrade(c.expectedGrade || (rules.questionnaires[String((c.codes || [])[0])] || {}).expectedGrade) === grade;
+      rules.coreSubjects.filter(s => s.enabled !== false).forEach(s => {
+        const comps = s.variableUnits ? Object.values(s.levels || {}).flat() : s.components || [];
+        if (comps.some(due)) scheduled.set(`core:${s.id}`, s.name);
+      });
+      rules.majors.filter(s => s.enabled !== false && due(s)).forEach(s => scheduled.set(`major:${s.id}`, s.name));
+    }));
+    const items = [...scheduled].map(([sel, name]) => ({ ...this.subjectReadinessModel(sel, m.bench.rows.map(r => r.t), true), name }))
+      .sort((a, b) => b.offTrack - a.offTrack || b.offTrackPct - a.offTrackPct || natural(a.name, b.name));
+    return { items, message: items.length ? '' : 'אין שאלוני בגרות מתוכננים לשנה זו באוכלוסיית הייחוס.' };
+  },
+
+  readinessBreakdown(m) {
+    return `${m.fail} נכשלים · ${m.borderline} גבוליים · ${m.noGrade} ללא ציון`;
+  },
+
+  readinessAverage(avg) { return avg == null ? '—' : Util.fmt(avg, 1); },
+
   /** כל המדדים של חדר הבקרה על החניכים שבסינון הגלובלי; ממוצע ומקצועות חוסמים מחושבים מגיליון הסדין */
   overviewModel() {
     const list = this.filtered();
@@ -949,6 +1035,13 @@ const App = {
     /* כשנבחרה כיתה, כותרות הכרטיס והגרפים נושאות את שם הכיתה ולא את תווית השכבה */
     const classOn = f.cls !== 'all';
     const scopeLabel = classOn ? Config.classLabel(f.cls) : bench.label;
+    const readiness = this.overviewReadinessModel(m);
+    const readinessHtml = readiness.items.map(r => {
+      const w = r.weakest;
+      return `<button type="button" class="block w-full text-right rounded-lg bg-slate-50 hover:bg-amber-50 px-3 py-2" data-act="ovReadiness" data-sel="${E(r.sel)}" data-scope="${E(bench.scope)}" data-off-track="${r.offTrack}" data-total="${r.total}">
+        <span class="font-bold">${E(r.name)}</span> · ממוצע שוטף ${this.readinessAverage(r.avg)} · <span class="txt-warn font-bold">${r.offTrack} לא בכיוון (${r.offTrackPct}%)</span>
+        <span class="block text-xs text-slate-600">${this.readinessBreakdown(r)}${w ? ` · הכיתה החלשה: ${E(Config.classLabel(w.key))} · ${this.readinessAverage(w.avg)} / ${w.offTrackPct}% לא בכיוון` : ' · אין ניגשים במקצוע'}</span></button>`;
+    }).join('') || `<p class="text-sm text-slate-500">${E(readiness.message)}</p>`;
     const kpiTitle = `${bench.pace ? 'תקינות צבירה לבגרות' : 'צפי זכאות לבגרות'} (${scopeLabel})`;
     const kpiSub = bench.pace
       ? `ללא חנ"מ: ${st.pctExSpecialEd}% • כולל חנ"מ: ${st.pctInclSpecialEd}%<br>${st.warning} בחסם צבירה יחיד · ${st.lag} בפיגור צבירה`
@@ -1028,6 +1121,7 @@ const App = {
       ${banner}
       ${missing.length ? `<div class="card px-4 py-2 flex flex-wrap items-center gap-2 text-sm"><span class="text-slate-500">טרם נטענו קבצים:</span>${missing.map(key => `<button type="button" class="btn btn-primary btn-sm" data-upload="${key}">📂 ${E(DATASETS[key].title)}</button>`).join('')}</div>` : ''}
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${card1}${card2}${card3}${card4}</div>
+      <div id="overview-readiness" class="card p-5"><h3 class="font-bold text-[#355747] mb-2">מוכנות לבגרויות השנה (לפי ציונים שוטפים) · ${E(scopeLabel)}</h3><div class="space-y-2">${readinessHtml}</div></div>
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <div class="card p-5 lg:col-span-7 space-y-5">
           <div><h3 class="font-bold text-[#355747] mb-2">${bagrutOn ? (bench.pace ? `תקינות צבירה לבגרות לפי כיתות (${E(bench.label)})` : `אחוז זכאות לבגרות לפי כיתות (${E(bench.label)})`) : 'ממוצע הישגים שוטפים לפי כיתות'}</h3>          ${classHtml}
@@ -1190,26 +1284,11 @@ const App = {
     const st = this.state.bagrut, sim = this.state.sim;
     const evalRows = rows.filter(r => this.tierBased(r.ev)), paceRows = rows.filter(r => !this.tierBased(r.ev));
     const stats = BagrutAdvisor.summarize(evalRows.map(r => r.ev));
-    const all = BagrutAdvisor.summarize(rows.map(r => r.ev));
     const list = this.bagrutList(rows);
     const tierCount = [0, 0, 0, 0, 0, 0];
     evalRows.forEach(r => { tierCount[r.ev.tier]++; });
     const hasGrade12 = rows.some(r => r.t.gradeKey === 'יב'), fullMode = hasGrade12 && !!sim.fullMode;
     const TT = BagrutEngine.TIER_TEXT[fullMode ? 'full' : 'adaptive'];
-    const option = (id, label) => `<option value="${id}" ${st.chip === id ? 'selected' : ''}>${E(label)}</option>`;
-    const paceCount = status => paceRows.filter(r => r.ev.paceStatus === status).length;
-    setHtml('bagrutStatusSelect',
-      option('all', `כל הסטטוסים (${rows.length})`) +
-      (evalRows.length || !paceRows.length ? option('eligible', `✅ זכאים (${tierCount[1] + tierCount[2]})`) +
-        [1, 2, 3, 4, 5, 0].map(i => option(`tier${i}`, `${['⚪', '🟢', '🟡', '🟠', '🔴', '⚪'][i]} ${i === 0 ? 'ללא נתוני בגרות' : TT[i]} (${tierCount[i]})`)).join('') : '') +
-      (paceRows.length ? [['on_track', '🟢 תקין לקצב שכבה'], ['not_started', '⚪ טרם החלו היבחנות'], ['pace_warning', '🟡 חסם צבירה יחיד'], ['pace_lag', '🔴 בפיגור צבירה']]
-        .map(([id, label]) => option(`pace:${id}`, `${label} (${paceCount(id)})`)).join('') : '') +
-      option('savable', `🎯 הצלה ב-30% (${all.savable})`) +
-      option('near', `חסם בודד (${all.singleBlocker})`) +
-      option('exception', `⚡ חריג ידני (${all.exceptions})`) +
-      option('suspect', `חשד לחריג (${all.potentialExceptions})`) +
-      option('manualReview', `🔎 נדרשת בדיקה ידנית (${all.manualReview})`) +
-      option('attention', `👀 דורשים תשומת לב (${this.filterByChip(rows, 'attention').length})`));
 
     const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
     const modeBtn = (full, label, title, off = false) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${fullMode === full}" title="${E(title)}"${off ? ' disabled class="opacity-50 cursor-not-allowed"' : ''}>${label}</button>`;
@@ -1222,7 +1301,11 @@ const App = {
     this.renderCohortInfo(rows, fullMode);
     this.renderBagrutKpis(stats, tierCount, TT, paceRows, rows);
     const drillOpts = BagrutAdvisor.drillOptions();
-    if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) st.drill = 'all';
+    if (st.drill !== 'all' && !drillOpts.some(o => o.value === st.drill)) {
+      const subject = this.subjectReadinessModel(st.drill, rows.map(r => r.t));
+      if (subject.name) drillOpts.push({ value: st.drill, label: subject.name });
+      else st.drill = 'all';
+    }
     setHtml('bagrutSubjectDrillSelect',
       `<option value="all" ${st.drill === 'all' ? 'selected' : ''}>📊 מבט על – כל המקצועות</option>` +
       drillOpts.map(o => `<option value="${E(o.value)}" ${st.drill === o.value ? 'selected' : ''}>${E(o.label)}</option>`).join(''));
@@ -1272,14 +1355,16 @@ const App = {
     box.classList.remove('hidden');
     const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
     box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}
-      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${this.attentionBreakdownText(attention)}</div>` : ''}</div>`;
+      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all">✕ הצג הכל</button></div>` : ''}</div>`;
   },
 
   /** מטריצת שאלונים למקצוע בודד: ציון לכל שאלון, 🧮 נצבר (משוקלל עד כה) וציון סופי */
   bagrutSubjectMatrix(rows) {
     const st = this.state.bagrut;
-    const m = BagrutAdvisor.subjectMatrix(st.drill, rows.map(r => r.t));
-    if (!m) return '<div class="text-center text-slate-400 py-8">המקצוע אינו פעיל בכללים</div>';
+    const currentOn = this.state.sim.useCurrent && Store.loaded.grades;
+    const readiness = currentOn || st.onlyPending ? this.subjectReadinessModel(st.drill, rows.map(r => r.t), st.onlyPending) : null;
+    const m = currentOn || st.onlyPending ? readiness : BagrutAdvisor.subjectMatrix(st.drill, rows.map(r => r.t));
+    if (!m || !m.name) return '<div class="text-center text-slate-400 py-8">המקצוע אינו פעיל בכללים</div>';
     const { mxSort: sort, mxDir: dir } = st;
     const qKey = q => `q:${q.key}`;
     const cellOf = (r, q) => r.cells[q.key];
@@ -1289,10 +1374,12 @@ const App = {
       if (sort === 'units') return r.level ? Number(r.level) : 0;
       if (sort === 'acc') return r.accumulated;
       if (sort === 'final') return r.finalScore == null ? -1 : r.finalScore;
+      if (sort === 'current') return r.currentAvg == null ? -1 : r.currentAvg;
       const q = m.questionnaires.find(x => qKey(x) === sort), c = q && cellOf(r, q);
       return c && c.state === 'num' ? c.num : -1;
     };
-    const list = m.rows.slice().sort((a, b) => {
+    if (currentOn && st.readinessClass && !readiness.classes.some(c => c.key === st.readinessClass)) st.readinessClass = '';
+    const list = m.rows.filter(r => !currentOn || !st.readinessClass || r.t.classKey === st.readinessClass).sort((a, b) => {
       const x = val(a), y = val(b);
       return ((typeof x === 'number' ? x - y : natural(x, y)) || natural(a.t.name, b.t.name)) * dir;
     });
@@ -1300,7 +1387,7 @@ const App = {
     const qCells = r => m.questionnaires.map(q => {
       const c = cellOf(r, q);
       if (!c) return '<td class="text-slate-300">–</td>';
-      if (c.state === 'num') return `<td class="${c.num >= m.pass ? 'text-emerald-700 font-semibold' : 'text-rose-600 font-bold'}">${c.num}</td>`;
+      if (c.state === 'num') return `<td class="${c.num >= r.pass ? 'text-emerald-700 font-semibold' : 'text-rose-600 font-bold'}">${c.num}</td>`;
       if (c.state === 'pass') return '<td class="text-emerald-700 font-semibold">עבר</td>';
       if (c.state === 'fail') return '<td class="text-rose-600 font-bold">נכשל</td>';
       if (c.state === 'missed') return '<td class="text-rose-600 font-bold">חסר</td>';
@@ -1309,25 +1396,33 @@ const App = {
     }).join('');
     const accTd = r => {
       const left = r.remainingW;
-      const tip = r.accumulated >= m.pass && !left ? `נצבר: ${r.accumulated} נק' מתוך 100` :
-        r.accumulated + left < m.pass - 0.5 ? `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (גם בציון 100 בשאלוני ההמשך לא יושג ציון עובר ${m.pass})` :
-        r.need > 0 ? `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (חסרות עוד ${r.need} נק' משאלוני ההמשך כדי להבטיח ציון סופי עובר ${m.pass})` :
-        `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (ציון עובר ${m.pass} כבר מובטח)`;
+      const tip = r.accumulated >= r.pass && !left ? `נצבר: ${r.accumulated} נק' מתוך 100` :
+        r.accumulated + left < r.pass - 0.5 ? `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (גם בציון 100 בשאלוני ההמשך לא יושג ציון עובר ${r.pass})` :
+        r.need > 0 ? `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (חסרות עוד ${r.need} נק' משאלוני ההמשך כדי להבטיח ציון סופי עובר ${r.pass})` :
+        `נצבר עד כה: ${r.accumulated} נק' מתוך 100 (ציון עובר ${r.pass} כבר מובטח)`;
       return `<td class="whitespace-nowrap text-slate-700" title="${E(tip)}">🧮 ${r.accumulated}</td>`;
     };
     const finalTd = r => r.finalScore != null
-      ? `<td class="${r.finalScore >= m.pass ? 'text-emerald-700' : 'text-rose-600'} font-bold">${r.finalScore}</td>`
+      ? `<td class="${r.finalScore >= r.pass ? 'text-emerald-700' : 'text-rose-600'} font-bold">${r.finalScore}</td>`
       : `<td class="text-slate-300" title="${E(r.partialAvg != null ? `בתהליך – ממוצע חלקי נוכחי: ${r.partialAvg} (על ${r.doneW}% מהמשקל)` : 'טרם הושלם אף שאלון')}">–</td>`;
+    const currentTd = r => `<td data-readiness="${r.readiness}" class="whitespace-nowrap ${r.readiness === 'fail' ? 'text-rose-600 font-bold' : r.readiness === 'borderline' ? 'text-orange-600 font-bold' : 'text-emerald-700'}">
+      <span${r.currentAvg == null ? ' class="badge bg-amber-100 text-amber-900"' : ''}>${r.currentAvg == null ? 'ללא ציון' : this.readinessAverage(r.currentAvg)}</span>${r.missed ? ` <span class="block text-xs text-rose-600">${r.missed} אירועים שהוחמצו</span>` : ''}</td>`;
+    const classStrip = currentOn ? `<div class="flex flex-wrap gap-2 mb-2" aria-label="השוואת מוכנות לפי כיתות">${readiness.classes.map(c => `<button type="button" class="rounded-lg border px-3 py-2 text-right text-xs ${st.readinessClass === c.key ? 'bg-amber-100 border-amber-500' : 'bg-slate-50'}" data-act="bagrutReadinessClass" data-class="${E(c.key)}" data-off-track="${c.offTrackCount}" data-total="${c.total}" aria-pressed="${st.readinessClass === c.key}">
+      <span class="block font-bold">${E(Config.classLabel(c.key))} · ${c.offTrackPct}% לא בכיוון (${c.offTrackCount}/${c.total})</span>
+      <span class="block">${this.readinessBreakdown(c)} · ממוצע ${this.readinessAverage(c.avg)}</span></button>`).join('')}</div>` : '';
     const body = list.map(r => `<tr>
       <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
       <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</span></td>
       <td class="whitespace-nowrap text-slate-700">${r.level ? `${E(r.level)} יח'` : ''}${r.teacher ? ` <span class="text-slate-500 text-xs">· ${E(r.teacher)}</span>` : ''}</td>
-      ${qCells(r)}${accTd(r)}${finalTd(r)}</tr>`).join('');
-    const cols = 5 + m.questionnaires.length;
+      ${qCells(r)}${accTd(r)}${finalTd(r)}${currentOn ? currentTd(r) : ''}</tr>`).join('');
+    const cols = 5 + m.questionnaires.length + (currentOn ? 1 : 0);
     return `<div class="flex items-center justify-between gap-2 flex-wrap px-3 py-2 mb-2 rounded-lg bg-slate-100 text-sm">
         <span class="font-bold text-slate-800">${E(m.name)} · ${list.length} חניכים · ${m.questionnaires.length} שאלונים</span>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutOnlyPending" aria-pressed="${!!st.onlyPending}">${st.onlyPending ? '✓ ' : ''}ניגשים בלבד</button>
+        ${!currentOn && Store.loaded.grades ? '<span class="text-xs text-slate-500">הפעל "שלב ציונים שוטפים" להצגת מוכנות לבגרות</span>' : ''}
         <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutDrillBack">← חזרה למבט על (כל המקצועות)</button></div>
-      <table class="grid mx w-full text-center"><thead><tr>${th('name', 'שם החניך')}${th('class', 'כיתה')}${th('units', 'יח"ל / קבוצה')}${m.questionnaires.map(q => th(qKey(q), `${E(q.code)} · ${E(q.weightText)}%`, q.names.join(' | '))).join('')}${th('acc', '🧮 נצבר')}${th('final', 'סופי')}</tr></thead>
+      ${currentOn ? `<div class="text-sm mb-2" data-readiness-summary data-off-track="${readiness.offTrack}" data-total="${readiness.total}">ממוצע שוטף ${this.readinessAverage(readiness.avg)} · ${readiness.offTrack} לא בכיוון (${readiness.offTrackPct}%) · ${this.readinessBreakdown(readiness)}</div>${classStrip}` : ''}
+      <table class="grid mx w-full text-center"><thead><tr>${th('name', 'שם החניך')}${th('class', 'כיתה')}${th('units', 'יח"ל / קבוצה')}${m.questionnaires.map(q => th(qKey(q), `${E(q.code)} · ${E(q.weightText)}%`, q.names.join(' | '))).join('')}${th('acc', '🧮 נצבר')}${th('final', 'סופי')}${currentOn ? th('current', 'שוטף (סדין)') : ''}</tr></thead>
       <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין חניכים להצגה במקצוע זה</td></tr>`}</tbody></table>`;
   },
 
@@ -3114,12 +3209,9 @@ const App = {
     on('searchSuggestPopup', 'mousedown', e => e.preventDefault());
     document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) this.hideSuggestions(); });
     on('fClear', 'click', () => this.resetFilters());
-    on('bagrutStatusSelect', 'change', e => {
-      this.state.bagrut.chip = e.target.value;
-      this.dirty.add('bagrut'); this.renderTab('bagrut');
-    });
     on('bagrutSubjectDrillSelect', 'change', e => {
       this.state.bagrut.drill = e.target.value;
+      this.state.bagrut.readinessClass = '';
       this.dirty.add('bagrut'); this.renderTab('bagrut');
     });
     on('sadinFilterSelect', 'change', e => {
@@ -3645,6 +3737,14 @@ const App = {
       }
       this.showTab(go);
     },
+    ovReadiness(el) {
+      if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
+      Object.assign(this.state.bagrut, { drill: el.dataset.sel, chip: 'all', onlyPending: true, readinessClass: '' });
+      this.state.sim.useCurrent = true;
+      this.evals.clear();
+      FILTERED_TABS.forEach(tab => this.dirty.add(tab));
+      this.showTab('bagrut');
+    },
     ovClass(el) {
       const f = this.state.filters, key = el.dataset.class;
       f.cls = f.cls === key ? 'all' : key;
@@ -3743,7 +3843,16 @@ const App = {
       this.dirty.add('bagrut');
       this.renderTab('bagrut');
     },
-    bagrutDrill(el) { this.state.bagrut.drill = el.dataset.sel; this.dirty.add('bagrut'); this.renderTab('bagrut'); },
+    bagrutDrill(el) { this.state.bagrut.drill = el.dataset.sel; this.state.bagrut.readinessClass = ''; this.dirty.add('bagrut'); this.renderTab('bagrut'); },
+    bagrutOnlyPending() {
+      this.state.bagrut.onlyPending = !this.state.bagrut.onlyPending;
+      this.dirty.add('bagrut'); this.renderTab('bagrut');
+    },
+    bagrutReadinessClass(el) {
+      const st = this.state.bagrut;
+      st.readinessClass = st.readinessClass === el.dataset.class ? '' : el.dataset.class;
+      this.dirty.add('bagrut'); this.renderTab('bagrut');
+    },
     bagrutDrillBack() { this.state.bagrut.drill = 'all'; this.dirty.add('bagrut'); this.renderTab('bagrut'); },
     bagrutMxSort(el) {
       const st = this.state.bagrut, k = el.dataset.key;
