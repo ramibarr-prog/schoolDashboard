@@ -187,7 +187,7 @@
           groupsOn ? `חריגות: חוסר ${am.byCategory.missing} · כפילות ${am.byCategory.duplicate} · חשודים ${am.byCategory.suspect} (חוסר לפי סף שיבוץ כיתתי)` : 'לא ניתן לקבוע — חסר קובץ קבוצות לשכבה', groupsOn)}
         ${card('data-go="bagrut" data-chip="notok" data-scope="all"',         'משימה 2 — זכאות לבגרות', `${risk.length} חניכים בסיכון`,
                   bagrutOn ? `${near} קרובים לסף · איתור חניכים בסיכון לטיפול שוטף` :  'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn)}
-        ${card('data-go="sadin" data-strip="all"', 'משימה 3 — איתור פדגוגי', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
+        ${card('data-go="sadin" data-strip="all"', 'משימה 3 — מוקדי חולשה', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
           sadinOn ? 'פתיחת מסך ההתראה המקדימה' : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה', sadinOn)}
       </div>
       ${quality.length ? `<button type="button" class="fresh-bar fresh-slate w-full text-right" data-act="openDataQuality">איכות נתונים והסגר קליטה: ${E(quality.join(' · '))}</button>` : ''}`);

@@ -1204,6 +1204,9 @@ const App = {
     closeModal() { this.closeModal(); },
     sadinAlerts() { this.openSadinAlerts(); },
     sadinMode(el) { return SadinView.sadinMode.call(this, el); },
+    sadinSelectCell(el) { return SadinView.selectWeakness.call(this, el); },
+    sadinCellEligibility(el) { return SadinView.openWeaknessEligibility.call(this, el); },
+    sadinCellAlerts(el) { return SadinView.openWeaknessAlerts.call(this, el); },
     generateAlerts() { this.generateAlerts(); },
     sadinPop(el) {
       if (this._sadinPinned === el) this.hideSadinPop();
