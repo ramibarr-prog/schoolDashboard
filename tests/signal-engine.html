@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Signal engine tests</title>
+<pre id="results">Running...</pre>
+<script>window.fetch = () => { throw new Error('Outbound network blocked'); };</script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/bagrutFacts.js"></script>
+<script src="../js/bagrutPolicies.js"></script>
+<script src="../js/bagrutEngine.js"></script>
+<script src="../js/groupAnalyzer.js"></script>
+<script src="../js/signalEngine.js"></script>
+<script>
+(async () => {
+  const output = document.getElementById('results'), logs = [];
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const same = (actual, expected, message) => assert(JSON.stringify(actual) === JSON.stringify(expected),
+    `${message}: ${JSON.stringify(actual)} != ${JSON.stringify(expected)}`);
+  const step = async (label, fn) => { await fn(); logs.push('PASS ' + label); };
+  const T = n => String(900000000 + n);
+  const student = (n, grade, homeroom) => ({ tz: T(n), firstName: 'Synthetic' + n, lastName: 'Test', grade, homeroom, track: 'רגילה' });
+  const bagrutMap = { tz: 'tz', questionnaireCode: 'code', finalGrade: 'final', moed: 'moed' };
+  const groupMap = { tz: 'tz', grade: 'grade', classNum: 'cls', groupId: 'gid' };
+  const sadinMap = { tz: 'tz', event: 'event', score: 'score', group: 'group', date: 'date' };
+  const normalize = (type, rows, mapping) => Parser.normalize(type, rows, mapping).rows;
+  const base = {
+    '22283': 70, '22261': 70, '34221': 70, '34225': 70, '8283': 70, '8281': 70, '1263': 70, '1264': 70,
+    '11283': 70, '11281': 70, '16382': 80, '16471': 80, '16483': 80, '16486': 80, '35471': 80, '35472': 80,
+    '36361': 80, '86083': 'עמד בדרישות', '41083': 'בוצע', '43183': 70, '82083': 'בוצע'
+  };
+  const profile = (n, extra = {}) => Object.entries({ ...base, ...extra }).map(([code, final]) => ({ tz: T(n), code, final }));
+  const reset = () => {
+    Config.data = Config.defaults();
+    Config._activeCohort = Config.data.gradeCohortMap['12'];
+    Config._rulesOverride = null;
+    Config._syncQuestionnaires();
+    Config._cache = {};
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+    SignalEngine.invalidate();
+  };
+  const world = ({ roster, bagrut = [], groups = [], sadin = [] }) => {
+    const norm = Config.normalizeRosterRows(roster);
+    Config._cache = { masterRoster: { data: norm.rows, ignoredIds: norm.ignoredIds, fileName: 'synthetic', uploadedAt: 1 } };
+    [['bagrutData', bagrut], ['groupsData', groups], ['sadinData', sadin]].forEach(([key, rows]) => {
+      if (rows.length) Config._cache[key] = { data: rows, fileName: 'synthetic', uploadedAt: 1 };
+    });
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+    Store.refresh();
+  };
+  const has = (result, id, key = 'pedagogical') => result[key].some(item => item.id === id);
+  try {
+    await step('catalog completeness and immutable fields', () => {
+      const required = ['bagrut.eligible', 'bagrut.watch', 'bagrut.risk', 'bagrut.twelve', 'bagrut.unknown', 'bagrut.noshow',
+        'bagrut.missing_enroll', 'placement.missing_core', 'placement.duplicate', 'placement.wrong_grade', 'placement.no_major',
+        'placement.unknown', 'sadin.fail', 'sadin.borderline', 'sadin.missed_event', 'sadin.unknown', 'data.manual_review',
+        'data.sadin_not_enrolled', 'data.not_in_roster'];
+      same(Object.keys(SignalEngine.CATALOG).sort(), required.sort(), 'Exact catalog');
+      required.forEach(id => {
+        const entry = SignalEngine.CATALOG[id];
+        assert(entry.id === id && entry.family === id.split('.')[0], 'Catalog family for ' + id);
+        assert(['ok', 'watch', 'risk', 'unknown', 'info'].includes(entry.severity), 'Severity for ' + id);
+        assert(entry.label && entry.badgeClass && Array.isArray(entry.requires), 'Catalog fields for ' + id);
+        assert(Object.isFrozen(entry) && Object.isFrozen(entry.requires), 'Immutable catalog entry');
+        if (entry.family === 'data') assert(entry.severity === 'info', 'Data flag is informational');
+      });
+    });
+    await step('grade-scoped prerequisites prevent false alarms', () => {
+      reset();
+      const roster = [student(1, 'יב', 'יב1'), student(2, 'יא', 'יא1')];
+      const groups = normalize('groups', [{ tz: T(1), grade: 'יב', cls: 'יב1', gid: 'אזרחות יב1 מורה [1111]' }], groupMap);
+      const bagrut = normalize('bagrut', profile(1), bagrutMap);
+      const sadin = normalize('grades', [{ tz: T(2), event: 'מבחן (100)', score: 80, group: 'אזרחות יא1 מורה [2222]', date: '01/01/2026' }], sadinMap);
+      world({ roster, groups, bagrut, sadin });
+      same(SignalEngine.prerequisitesFor('יא'), { hasBagrut: false, hasGroups: false, hasSadin: true }, 'Grade-specific prerequisites');
+      const r = SignalEngine.computeForTrainee(T(2));
+      same(r.overall, 'unknown', 'Overall remains unknown');
+      assert(has(r, 'bagrut.unknown') && has(r, 'placement.unknown'), 'Missing prerequisites are explicit');
+      assert(!has(r, 'placement.missing_core') && !has(r, 'placement.no_major') && !has(r, 'bagrut.missing_enroll'), 'No false placement alert');
+      assert(!has(r, 'data.sadin_not_enrolled', 'dataQuality'), 'No false unassigned-sadin warning');
+      assert(!r.pedagogical.some(f => f.severity === 'risk'), 'No false risk flag');
+      const missing = SignalEngine.computeForTrainee(T(999));
+      assert(missing.overall === 'unknown' && has(missing, 'data.not_in_roster', 'dataQuality'), 'Unknown student is informational');
+    });
+    await step('manual decision without grade-level bagrut and twelve-year track', () => {
+      Config.data.traineeExceptions[T(2)] = { isException: true, overrideStatus: 'twelve', reason: '', note: '' };
+      const r = SignalEngine.computeForTrainee(T(2));
+      assert(r.ev.manual && r.overall === 'twelve' && has(r, 'bagrut.twelve'), 'Manual twelve-year decision applies');
+      assert(!has(r, 'bagrut.unknown'), 'Manual decision is not unknown');
+    });
+    await step('data quality stays separate from pedagogical risk', () => {
+      reset();
+      const roster = [student(11, 'יב', 'יב1'), student(12, 'יב', 'יב1')];
+      const groups = normalize('groups', [
+        { tz: T(11), grade: 'יב', cls: 'יב1', gid: "מג' פיזיקה 5 יח\"ל יב1 מורה [1111]" },
+        { tz: T(12), grade: 'יב', cls: 'יב1', gid: "מג' פיזיקה 5 יח\"ל יב1 מורה [1111]" },
+        { tz: T(12), grade: 'יב', cls: 'יב1', gid: 'מקצוע בדיקה יב1 מורה [2222]' }
+      ], groupMap);
+      const bagrut = normalize('bagrut', [...profile(11, { '999999': 90 }), ...profile(12)], bagrutMap);
+      const sadin = normalize('grades', [
+        { tz: T(11), event: 'מבחן (100)', score: 58, group: 'מקצוע בדיקה יב1 מורה [2222]', date: '01/01/2026' },
+        { tz: T(12), event: 'מבחן (100)', score: 85, group: 'מקצוע בדיקה יב1 מורה [2222]', date: '01/01/2026' }
+      ], sadinMap);
+      world({ roster, groups, bagrut, sadin });
+      const r = SignalEngine.computeForTrainee(T(11));
+      assert(r.ev.manualReview.required, 'Fixture actually causes manual review');
+      assert(has(r, 'data.manual_review', 'dataQuality'), 'Foreign questionnaire is data quality');
+      assert(has(r, 'data.sadin_not_enrolled', 'dataQuality'), 'Unenrolled group is data quality');
+      assert(r.overall !== 'risk' && !r.pedagogical.some(f => f.severity === 'risk'), 'Data issues do not create risk');
+      assert(r.dataQuality.every(f => f.severity === 'info'), 'Data quality flags are informational');
+      assert(r.pedagogical.every(f => ['id', 'family', 'severity', 'label', 'detail'].every(k => k in f)), 'Flag output fields');
+    });
+    await step('KPI counts, threshold changes and cache invalidation', () => {
+      const first = SignalEngine.computeAll(), again = SignalEngine.computeAll();
+      assert(first === again, 'Identical request returns cached object');
+      const counts = first.counts;
+      same(counts.ok + counts.watch + counts.risk + counts.unknown + counts.twelve, counts.total, 'KPI sum');
+      same(counts.total, first.list.length, 'KPI total equals list length');
+      same(first.byTz.size, first.list.length, 'One entry per roster student');
+      assert(!has(first.byTz.get(T(11)), 'sadin.fail'), '58 passes at passGrade 55');
+      assert(SignalEngine.isPassingScore(58), '58 passes at current configured threshold');
+      assert(SignalEngine.isPassingScore(2, { social: true }) && SignalEngine.isPassingScore(4, { social: true }), 'Social 2..4 pass');
+      assert(!SignalEngine.isPassingScore(1, { social: true }) && !SignalEngine.isPassingScore(null), 'Social 1 and missing score fail');
+      Config.rulesForGrade('יב').passGrade = 60;
+      const changed = SignalEngine.computeAll();
+      assert(changed !== first && changed.version !== first.version, 'Changed rule invalidates cache');
+      assert(has(changed.byTz.get(T(11)), 'sadin.fail'), '58 fails at passGrade 60');
+      assert(has(changed.byTz.get(T(11)), 'sadin.borderline'), 'Borderline minimum comes from the cohort rules');
+      assert(!SignalEngine.isPassingScore(58), 'Passing helper follows updated threshold');
+      const other = SignalEngine.computeAll({ fullMode: true });
+      assert(other !== changed, 'Changed options invalidate cache');
+      SignalEngine.invalidate();
+      assert(SignalEngine.computeAll({ fullMode: true }) !== other, 'Explicit invalidate recomputes');
+      const before = SignalEngine.computeAll();
+      Store.raw.grades[0].score = 20;
+      Store.rebuild();
+      const after = SignalEngine.computeAll();
+      assert(after !== before && after.version !== before.version, 'Data mutation and rebuild invalidate cache');
+      assert(has(after.byTz.get(T(11)), 'sadin.fail'), 'Rebuilt score is reflected');
+    });
+    await step('placement and missed-event flags follow GroupAnalyzer', () => {
+      reset();
+      const roster = [student(21, 'יב', 'יב1'), student(22, 'יב', 'יב1'), student(23, 'יב', 'יב1'), student(24, 'יא', 'יא1'),
+        ...[25, 26, 27].map(n => student(n, 'יב', 'יב1'))];
+      const firstGroup = 'אזרחות יב1 מורה [3333]', secondGroup = 'אזרחות יב1 מורה אחרת [3334]';
+      const groups = normalize('groups', [
+        ...[21, 22, 24, 25, 26, 27].map(n => ({ tz: T(n), grade: n === 24 ? 'יא' : 'יב', cls: n === 24 ? 'יא1' : 'יב1', gid: firstGroup })),
+        { tz: T(21), grade: 'יב', cls: 'יב1', gid: secondGroup },
+        { tz: T(21), grade: 'יב', cls: 'יב1', gid: "מג' פיזיקה 5 יח\"ל יב1 מורה [3335]" }
+      ], groupMap);
+      const bagrut = normalize('bagrut', [21, 22, 23, 24, 25, 26, 27].flatMap(n => profile(n)), bagrutMap);
+      const sadin = normalize('grades', [21, 24, 25].map(n => ({ tz: T(n), event: 'מבחן (100)', score: 80, group: firstGroup, date: '01/01/2026' })), sadinMap);
+      world({ roster, groups, bagrut, sadin });
+      const all = SignalEngine.computeAll(), anomalyRows = GroupAnalyzer.placementAnomalies(Store.traineeList()).rows;
+      const checkParity = (n, kind, id) => {
+        assert(anomalyRows.some(row => row.tz === T(n) && row.kind === kind), `Fixture has ${kind}`);
+        assert(has(all.byTz.get(T(n)), id), `Signal exposes ${kind}`);
+      };
+      checkParity(21, 'dup', 'placement.duplicate');
+      checkParity(23, 'none', 'placement.missing_core');
+      checkParity(23, 'nomajor', 'placement.no_major');
+      checkParity(24, 'grade', 'placement.wrong_grade');
+      assert(Store.missed.some(row => row.tz === T(22)) && has(all.byTz.get(T(22)), 'sadin.missed_event'), 'Missed event follows Store');
+    });
+    document.title = 'PASS - Signal engine tests';
+  } catch (e) {
+    logs.push('FAIL ' + (e && e.stack || e));
+    document.title = 'FAIL - Signal engine tests';
+  }
+  output.textContent = logs.join('\n');
+})();
+</script>
+</html>
