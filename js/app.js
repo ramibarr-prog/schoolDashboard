@@ -1274,6 +1274,7 @@ const App = {
     openProfile(el) { this.openProfile(el.dataset.tz, el); },
     profBack() { this.profBack(); },
     bagrutSort(el) { return BagrutView.bagrutSort.call(this, el); },
+    bagrutPin(el) { return BagrutView.bagrutPin.call(this, el); },
     bagrutDrill(el) { return BagrutView.bagrutDrill.call(this, el); },
     readinessFilter(el) { return BagrutView.readinessFilter.call(this, el); },
     bagrutReadinessClass(el) { return BagrutView.bagrutReadinessClass.call(this, el); },

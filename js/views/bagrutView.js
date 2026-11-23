@@ -8,6 +8,21 @@
   const noBagrutData = (signal, sim) =>
     !signal.prereqs.hasBagrut && !(sim.useCurrent && signal.prereqs.hasSadin);
 
+  const PINS_KEY = 'schoolDashboard.bagrut.pins.v1';
+  let pinsCache = null;
+  function loadPins() {
+    if (pinsCache) return pinsCache;
+    pinsCache = new Set();
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(PINS_KEY) || '[]');
+      if (Array.isArray(saved)) saved.forEach(tz => pinsCache.add(String(tz)));
+    } catch (e) { /* אחסון חסום או נתון פגום: ממשיכים בלי סיכות שמורות */ }
+    return pinsCache;
+  }
+  function savePins() {
+    try { window.localStorage.setItem(PINS_KEY, JSON.stringify([...loadPins()])); } catch (e) { /* האחסון לא זמין: הסיכות תקפות לסשן הנוכחי */ }
+  }
+
   function signalsFor(rows, sim) {
     const adaptive = sim.fullMode && rows.some(r => r.t.gradeKey !== 'יב')
       ? SignalEngine.computeAll({ ...sim, fullMode: false }).byTz : null;
@@ -93,6 +108,13 @@
   bagrutSort(el) {
     const st = this.state.bagrut, key = el.dataset.key;
     if (st.sort === key) st.dir *= -1; else { st.sort = key; st.dir = 1; }
+    this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
+  bagrutPin(el) {
+    const pins = loadPins(), tz = el.dataset.tz;
+    if (pins.has(tz)) pins.delete(tz); else pins.add(tz);
+    savePins();
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
@@ -678,9 +700,10 @@
   bagrutList(rows, signals) {
     const { chip, sort, dir } = this.state.bagrut;
     const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: this.tierBased(r.ev) ? r.ev.tier : BagrutEngine.PACE_TIER[r.ev.paceStatus], tz: r.t.tz, diag: r.ev.diagnostic })[sort];
+    const pins = loadPins();
     return this.filterByChip(rows, chip, signals).sort((a, b) => {
       const x = val(a), y = val(b);
-      return ((typeof x === 'number' ? x - y : natural(x, y)) || natural(a.t.name, b.t.name)) * dir;
+      return (pins.has(b.t.tz) - pins.has(a.t.tz)) || ((typeof x === 'number' ? x - y : natural(x, y)) || natural(a.t.name, b.t.name)) * dir;
     });
   },
 
@@ -803,14 +826,16 @@
         ${review}`;
     };
 
+    const pins = loadPins();
     const cols = 6 + coreCols.length;
-    const body = this.homeroomRows(list.slice(0, 1500), cols, ({ t, ev }) => {
+    const renderRow = ({ t, ev }) => {
       const track = this.trackOf(t);
       const signal = signals.get(t.tz), unknown = noBagrutData(signal, sim);
       const noDataCell = '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>';
       return `
       <tr>
-        <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
+        <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}"         title="ת.ז ${E(t.tz)}">${E(t.name)}</button>
+                  <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" title="${pins.has(t.tz) ? 'הסר נעיצה' : 'נעץ לראש הרשימה'}">${pins.has(t.tz) ? 'נעוץ • הסר' : 'נעץ'}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}${track && track !== 'רגילה' ? ` <span class="badge fresh-slate border">${E(track)}</span>` : ''}</span></td>
         <td>${pill(ev, signal)}</td>
         ${coreCols.map(([id, label]) => unknown ? noDataCell : subjectTd(this.subjectDisplayCell(ev, id), label, ev.subjects.find(s => s.id === id), ev, t.gradeKey)).join('')}
@@ -818,7 +843,10 @@
         ${unknown ? noDataCell : internalsTd(ev)}
         ${focusTd(ev, unknown)}
       </tr>`;
-    });
+    };
+    const visible = list.slice(0, 1500), pinnedRows = visible.filter(r => pins.has(r.t.tz));
+    const body = (pinnedRows.length ? `<tr class="room-divider"><td colspan="${cols}">📌 נעוצים (${pinnedRows.length} חניכים)</td></tr>${pinnedRows.map(renderRow).join('')}` : '') +
+      this.homeroomRows(visible.filter(r => !pins.has(r.t.tz)), cols, renderRow);
     const coreHead = ([id, l]) => `<th><button type="button" class="font-semibold hover:underline" data-act="bagrutDrill" data-sel="core:${id}" title="מטריצת שאלונים – ${E(l)}">${l}</button></th>`;
     return `<table class="grid mx w-full text-center"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('tier', 'סטטוס זכאות / צבירה')}${coreCols.map(coreHead).join('')}${plain('מגמה 5 יח"ל')}${plain('פנימיים')}${plain('מיקוד פדגוגי (מה נדרש)', 'mx-focus')}</tr></thead>
       <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>`;
