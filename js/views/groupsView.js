@@ -288,7 +288,7 @@
         <td class="text-right">${details}</td>
         <td class="text-right whitespace-nowrap">${items.length} חריגות</td>
         <td class="text-right"><button type="button" class="text-xs text-[#75977D] underline" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button>
-          <button type="button" class="text-xs text-[#355747] underline" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'בטל סימון - החזר לסדר רגיל' : 'סמן כטופל - הורד לסוף הרשימה'}</button></td></tr>`;
+          <button type="button" class="text-xs text-[#355747] underline" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'החזר לסדר רגיל' : 'הורד לסוף הרשימה'}</button></td></tr>`;
     }).join('');
     const th = (col, label) => {
       const active = sortCol === col;
