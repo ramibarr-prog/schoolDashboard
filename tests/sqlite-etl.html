@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>SQLite ETL tests</title>
+<pre id="results">Running...</pre>
+<script>
+window.fetch = (input) => {
+  const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+  if (url.origin !== location.origin || url.pathname !== '/vendor/sql-wasm.wasm') throw new Error('Unexpected network request: ' + url.href);
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url.href);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = () => xhr.status === 200 ? resolve({ ok: true, arrayBuffer: async () => xhr.response }) : reject(new Error('WASM HTTP ' + xhr.status));
+    xhr.onerror = () => reject(new Error('WASM request failed'));
+    xhr.send();
+  });
+};
+</script>
+<script src="../vendor/sql-wasm.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/dbSchema.js"></script>
+<script src="../js/db.js"></script>
+<script src="../js/etl.js"></script>
+<script>
+(async () => {
+  const output = document.getElementById('results');
+  const logs = [];
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const equal = (a, b, message) => assert(JSON.stringify(a) === JSON.stringify(b), message + ': ' + JSON.stringify(a) + ' != ' + JSON.stringify(b));
+  const step = async (label, fn) => { await fn(); logs.push('PASS ' + label); };
+  const tz = n => String(900000000 + n);
+  try {
+    Config.data = Config.defaults();
+    Config._activeCohort = Config.data.gradeCohortMap['12'];
+    Config._syncQuestionnaires();
+    await step('schema and idempotent catalog', async () => {
+      await DB.init({ wasmBase: '../vendor/' });
+      DB.createEmpty();
+      DB.seedCatalogFromConfig();
+      const counts = () => ['subjects', 'subject_aliases', 'questionnaires', 'cohorts', 'cohort_rules'].map(t => DB.scalar('SELECT count(*) FROM ' + t));
+      const before = counts();
+      DB.seedCatalogFromConfig();
+      equal(counts(), before, 'Catalog must be idempotent');
+      const map = Config.data.gradeCohortMap;
+      const eleven = map['11'], twelve = map['12'];
+      map['11'] = twelve; map['12'] = eleven;
+      DB.seedCatalogFromConfig();
+      equal(DB.scalar("SELECT cohort_id FROM cohorts WHERE grade_key='יא'"), twelve, 'Changed cohort assignment is reseeded');
+      map['11'] = eleven; map['12'] = twelve;
+      DB.seedCatalogFromConfig();
+      equal(counts(), before, 'Catalog remains stable after cohort reassignment');
+      assert(before.every(n => n > 0), 'Every catalog table has entries');
+      equal(DB.scalar("SELECT is_non_bagrut FROM questionnaires WHERE code='700181'"), 1, 'Non-bagrut code');
+      equal(ETL.normalizeSubject('מג׳  תנ״ך'), ETL.normalizeSubject('תנ"ך'), 'Prefix and quotation normalization');
+      assert(DB.checkIntegrity().ok, 'Initial integrity');
+    });
+    await step('foreign keys, rollback and nested savepoints', () => {
+      DB.run("INSERT INTO groups(group_id) VALUES ('fk-test')");
+      let failed = false;
+      try { DB.run("INSERT INTO enrollments VALUES ('999999999','fk-test','יב')"); } catch (e) { failed = true; }
+      assert(failed, 'FK violation must fail');
+      try { DB.transaction(() => { DB.run("INSERT INTO groups(group_id) VALUES ('rollback')"); throw new Error('test'); }); }
+      catch (e) { assert(e.message === 'test', 'Original error propagates'); }
+      equal(DB.scalar("SELECT count(*) FROM groups WHERE group_id='rollback'"), 0, 'Transaction rolls back');
+      DB.transaction(() => {
+        DB.run("INSERT INTO groups(group_id) VALUES ('outer')");
+        try { DB.transaction(() => { DB.run("INSERT INTO groups(group_id) VALUES ('inner')"); throw new Error('inner'); }); } catch (e) { assert(e.message === 'inner', 'Nested error'); }
+      });
+      equal(DB.scalar("SELECT count(*) FROM groups WHERE group_id IN ('outer','inner')"), 1, 'Savepoint isolates rollback');
+    });
+    const roster = [
+      ...Array.from({ length: 10 }, (_, i) => ({ tz: tz(i + 1), firstName: 'Synthetic' + i, gradeKey: 'יב', classKey: 'יב1' })),
+      ...Array.from({ length: 10 }, (_, i) => ({ tz: tz(i + 11), firstName: 'Synthetic' + i, gradeKey: 'יב', classKey: 'יב2' })),
+      { tz: tz(21), firstName: 'Synthetic', gradeKey: 'יא', classKey: 'יא1' },
+      { tz: tz(22), firstName: 'Synthetic', gradeKey: 'יב', classKey: 'יב3' }
+    ];
+    await step('roster deactivation and no ghost students', () => {
+      const result = ETL.ingestRoster([...roster, { tz: 'bad', gradeKey: 'יב' }]);
+      equal(result.rowsQuarantined, 1, 'Bad ID quarantined');
+      DB.run('INSERT INTO student_overrides(tz,homeroom) VALUES (?,?)', [tz(22), 'יב1']);
+      DB.run("INSERT INTO students(tz,roster_grade,roster_homeroom,source) VALUES (?,'יב','יב1','manual')", [tz(23)]);
+      ETL.ingestRoster(roster.filter(r => r.tz !== tz(22)));
+      equal(DB.scalar('SELECT is_active FROM students WHERE tz=?', [tz(22)]), 0, 'Departed student inactive');
+      equal(DB.scalar('SELECT count(*) FROM v_effective_students WHERE tz=?', [tz(22)]), 0, 'Override cannot revive departed student');
+      equal(DB.scalar('SELECT is_active FROM students WHERE tz=?', [tz(23)]), 1, 'Manual student remains active');
+      DB.run('UPDATE students SET is_active=0 WHERE tz=?', [tz(23)]);
+    });
+    await step('groups scope replacement, idempotency and 30% coverage', () => {
+      const row = (n, groupId, gradeKey) => ({ tz: tz(n), groupId, gradeKey, subject: 'אזרחות', groupName: 'אזרחות' });
+      const eleven = [row(21, 'g11', 'יא')];
+      const twelve = [...[1, 2, 3, 4].map(n => row(n, 'g12a', 'יב')), ...[11, 12].map(n => row(n, 'g12b', 'יב'))];
+      ETL.ingestGroups(eleven);
+      ETL.ingestGroups(twelve);
+      ETL.ingestGroups(twelve);
+      equal(DB.scalar("SELECT count(*) FROM enrollments WHERE grade_scope='יא'"), 1, 'QA-11.8');
+      equal(DB.scalar("SELECT count(*) FROM enrollments WHERE grade_scope='יב'"), 6, 'No duplicates');
+      let failed = false;
+      try { ETL.ingestGroups(eleven, { gradeScope: 'יב' }); } catch (e) { failed = true; }
+      assert(failed, 'Conflicting explicit scope is rejected');
+      equal(DB.scalar("SELECT count(*) FROM enrollments WHERE grade_scope='יא'"), 1, 'Rejected import preserves other scope');
+      const coverage = DB.query("SELECT class_key,class_size,enrolled,is_required FROM v_class_core_coverage WHERE subject_name='אזרחות' AND class_key IN ('יב1','יב2') ORDER BY class_key");
+      equal(coverage, [{ class_key: 'יב1', class_size: 10, enrolled: 4, is_required: 1 }, { class_key: 'יב2', class_size: 10, enrolled: 2, is_required: 0 }], 'Coverage threshold');
+      ETL.ingestGroups([{ ...row(1, 'badgroup', 'יב'), subject: 'מקצוע לא מוכר' }, { ...row(2, 'badgroup', 'יב'), subject: 'מקצוע לא מוכר' }]);
+      equal(DB.scalar("SELECT count(*) FROM import_quarantine WHERE entity_type='unmapped_group' AND batch_id=(SELECT max(batch_id) FROM import_batches)"), 1, 'Unmapped warning once per group');
+      ETL.ingestGroups(twelve);
+      ETL.ingestGroups([
+        { tz: tz(21), groupId: 'prefix', gradeKey: 'יא', subject: "מג' אזרחות", groupName: "מג' אזרחות" },
+        { tz: tz(21), groupId: 'gender', gradeKey: 'יא', subject: 'מגדר', groupName: 'מגדר' },
+        { tz: '999999999', groupId: 'prefix', gradeKey: 'יא', subject: "מג' אזרחות", groupName: "מג' אזרחות" }
+      ]);
+      equal(DB.scalar("SELECT is_major_prefix FROM groups WHERE group_id='prefix'"), 1, 'Major prefix detected');
+      equal(DB.scalar("SELECT is_major_prefix FROM groups WHERE group_id='gender'"), 0, 'Gender is not a major prefix');
+      assert(DB.scalar("SELECT subject_id FROM groups WHERE group_id='prefix'") !== null, 'Prefixed subject resolves using aliases');
+      equal(DB.scalar("SELECT count(*) FROM import_quarantine WHERE entity_type='student_missing' AND batch_id=(SELECT max(batch_id) FROM import_batches)"), 1, 'Missing group pupil quarantined');
+      ETL.ingestGroups(eleven);
+      DB.run("CREATE TRIGGER test_import_failure BEFORE INSERT ON enrollments BEGIN SELECT RAISE(ABORT, 'forced failure'); END");
+      const before = DB.scalar('SELECT count(*) FROM import_batches');
+      failed = false;
+      try { ETL.ingestGroups(twelve); } catch (e) { failed = true; }
+      assert(failed, 'ETL error propagates');
+      equal(DB.scalar("SELECT count(*) FROM enrollments WHERE grade_scope='יב'"), 6, 'Failed import restores deleted enrollments');
+      equal(DB.scalar('SELECT count(*) FROM import_batches'), before, 'Failed batch rolls back');
+      DB.run('DROP TRIGGER test_import_failure');
+    });
+    await step('sadin idempotency and unenrolled grades', () => {
+      const rows = [
+        { tz: tz(5), groupId: 'g12a', subject: 'אזרחות', eventName: 'Synthetic test', date: '2026-03-01', weight: 20, score: 55, scoreRaw: '55' },
+        { tz: tz(1), groupId: 'g12a', subject: 'אזרחות', eventName: 'Synthetic test', date: '2026-03-01', weight: 20, score: 70 },
+        { tz: '999999999', groupId: 'g12a', eventName: 'Synthetic test', date: '2026-03-01', weight: 20, score: 80 },
+        { tz: tz(2), groupId: 'skeleton', subject: 'אזרחות', eventName: 'Other', date: '2026-03-02', score: 80 }
+      ];
+      const result = ETL.ingestSadin(rows);
+      equal(result.rowsQuarantined, 1, 'Missing pupil quarantined');
+      ETL.ingestSadin(rows);
+      equal(DB.scalar('SELECT count(*) FROM assessment_events'), 2, 'Events do not duplicate');
+      equal(DB.scalar('SELECT count(*) FROM sadin_grades'), 3, 'Grades do not duplicate');
+      equal(DB.scalar("SELECT count(*) FROM v_sadin_not_enrolled WHERE tz=? AND group_id='g12a'", [tz(5)]), 1, 'Unenrolled grade surfaced');
+      equal(DB.scalar("SELECT in_groups_file FROM groups WHERE group_id='skeleton'"), 0, 'Skeleton group');
+    });
+    await step('bagrut unknown codes, raw text and multiple dates', () => {
+      const rows = [
+        { tz: tz(1), code: '34271', moed: '202606', final: 'עבר', exam: 'חסם' },
+        { tz: tz(1), code: '34271', moed: '202608', final: '75' },
+        { tz: tz(1), code: '999999', moed: '202606', final: 'חסם', evalKind: 'alternative' }
+      ];
+      const b = ETL.ingestBagrut(rows);
+      equal(b.rowsQuarantined, 1, 'Unknown code warning');
+      equal(DB.scalar("SELECT is_known FROM questionnaires WHERE code='999999'"), 0, 'Unknown code created');
+      equal(DB.scalar("SELECT eval_kind FROM questionnaires WHERE code='999999'"), 'alternative', 'Evaluation kind');
+      equal(DB.scalar("SELECT count(*) FROM bagrut_grades WHERE questionnaire_code='034271'"), 2, 'Different dates coexist');
+      equal(DB.scalar("SELECT final_raw FROM bagrut_grades WHERE questionnaire_code='034271' AND moed_code='202606'"), 'עבר', 'Raw final text retained');
+      equal(DB.scalar("SELECT exam_raw FROM bagrut_grades WHERE questionnaire_code='034271' AND moed_code='202606'"), 'חסם', 'Raw exam text retained');
+    });
+    await step('round trip and integrity', async () => {
+      const tables = ['students','student_overrides','subjects','subject_aliases','questionnaires','cohorts','cohort_rules','groups','enrollments','assessment_events','sadin_grades','bagrut_grades','import_batches','import_quarantine'];
+      const snapshot = () => tables.map(t => DB.query('SELECT * FROM ' + t + ' ORDER BY rowid'));
+      const before = snapshot(), bytes = DB.exportBytes();
+      let failed = false;
+      try { DB.run("INSERT INTO enrollments VALUES ('999999999','g12a','יב')"); } catch (e) { failed = true; }
+      assert(failed, 'FK enforcement remains enabled after export');
+      const broken = new (await DB.init()).Database(bytes);
+      broken.run('PRAGMA foreign_keys=OFF');
+      broken.run("INSERT INTO enrollments VALUES ('999999999','g12a','יב')");
+      const brokenBytes = broken.export();
+      broken.close();
+      failed = false;
+      try { DB.openBytes(brokenBytes); } catch (e) { failed = true; }
+      assert(failed, 'Opening a database with FK violations is rejected');
+      equal(snapshot(), before, 'Rejected database leaves active database intact');
+      DB.openBytes(bytes);
+      equal(snapshot(), before, 'All rows preserved');
+      assert(DB.checkIntegrity().ok, 'Integrity after reopen');
+      failed = false;
+      try { DB.run("INSERT INTO enrollments VALUES ('999999999','g12a','יב')"); } catch (e) { failed = true; }
+      assert(failed, 'FK enforcement after reopen');
+    });
+    document.title = 'PASS - SQLite ETL tests';
+  } catch (e) {
+    logs.push('FAIL ' + (e && e.stack || e));
+    document.title = 'FAIL - SQLite ETL tests';
+  }
+  output.textContent = logs.join('\n');
+})();
+</script>
+</html>
