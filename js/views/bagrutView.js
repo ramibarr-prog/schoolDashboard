@@ -723,18 +723,25 @@
       const major = label === 'מגמה 5 יח"ל' && c.name;
       let value = major ? `${c.text}${c.text === 'לומד' ? ' ' : ' • '}${c.name}` :
         c.state === 'comp' ? `${c.text} ${c.sub.startsWith('פיצוי') ? 'פיצוי' : 'קיזוז'}` : c.text;
+      let detail = value, targetLine = '';
       if (s && (s.incomplete || s.partial) && s.reportedScore != null) {
         const target = target30(s, ev, Config.rulesForGrade(grade));
         const forecast = s.forecast || s.filled.length || s.comps.some(comp => comp.magenForecast);
-        value = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נקודות ${forecast ? 'לפי תחזית' : 'נצברו'} (חסר ${s.missingPct}% ממשקל המקצוע); דווחו ${s.reportedPct}% ממשקל המקצוע` :
+        detail = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נקודות ${forecast ? 'לפי תחזית' : 'נצברו'} (חסר ${s.missingPct}% ממשקל המקצוע); דווחו ${s.reportedPct}% ממשקל המקצוע` :
           `${Util.fmt(s.reportedScore, 0)} ממוצע רכיבים מדווחים; דווחו ${s.reportedPct}% ממשקל המקצוע`;
-        if (target) value += `; יעד בציון בית-ספרי (30%): ${target.target}${sim.useCurrent ? ' (לפי סימולציה)' : ''} — ${target.note}`;
+        value = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נק׳ ${forecast ? 'תחזית' : 'נצברו'}` :
+          `ממוצע ${Util.fmt(s.reportedScore, 0)}`;
+        if (target) {
+          targetLine = `יעד 30%: ${target.target}`;
+          detail += `; יעד בציון בית-ספרי (30%): ${target.target}${sim.useCurrent ? ' (לפי סימולציה)' : ''} — ${target.note}`;
+        }
       }
       const numeric = Number(c.text);
       const failed = ['fail', 'lost', 'missing', 'noshow', 'none'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
       const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' || c.state === 'exempt' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
         c.state === 'noenroll' || c.text === 'לומד' || c.text === '—' || c.text === 'בתהליך' ? 'text-slate-400' : 'text-slate-800 font-normal';
-      return `<td class="mx-cell" ${tip(c.tip)} tabindex="0" role="button" aria-label="${E(`${label}: ${value}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}">${E(value)}</span></td>`;
+      const fullTip = detail === value ? c.tip : `${c.tip} | ${detail}`;
+      return `<td class="mx-cell" ${tip(fullTip)} title="${E(fullTip)}" tabindex="0" role="button" aria-label="${E(`${label}: ${detail}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}${detail !== value ? ' whitespace-nowrap' : ''}">${E(value)}</span>${targetLine ? `<span class="block text-xs text-slate-600 whitespace-nowrap">${E(targetLine)}</span>` : ''}</td>`;
     };
     const internalsTd = ev => {
       const cells = ev.internalCells;
