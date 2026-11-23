@@ -96,6 +96,52 @@
       </div></div>`;
   }
 
+  function weakSpots(roster, st) {
+    const prereqs = prerequisitesByGrade(roster);
+    const sheet = GroupAnalyzer.sadinSheet(roster, st).map(r => normalizeRow(r, true));
+    const subjects = new Map(), classes = new Map();
+    roster.forEach(t => {
+      if (!classes.has(t.classKey)) classes.set(t.classKey, { key: t.classKey, total: 0, atRisk: 0, fail: 0, sum: 0, n: 0 });
+      classes.get(t.classKey).total++;
+    });
+    sheet.forEach(r => Config.withRulesForGrade(r.t.gradeKey, () => {
+      const hasGroups = prereqs.get(r.t.gradeKey).hasGroups, c = classes.get(r.t.classKey);
+      if (c && r.overall != null) { c.sum += r.overall; c.n++; }
+      let risky = false;
+      r.subjects.forEach(s => {
+        const failing = failingSubject(s), missed = confirmedMissed(s, hasGroups, r.t.tz);
+        if (failing || missed) risky = true;
+        if (!subjects.has(s.name)) subjects.set(s.name, { name: s.name, fail: 0, missed: 0, sum: 0, n: 0 });
+        const x = subjects.get(s.name);
+        if (failing) x.fail++;
+        x.missed += missed;
+        if (s.avg != null) { x.sum += s.avg; x.n++; }
+        if (failing && c) c.fail++;
+      });
+      if (risky && c) c.atRisk++;
+    }));
+    const by = (a, b) => b.score - a.score || natural(a.label, b.label);
+    return {
+      subjects: [...subjects.values()].filter(x => x.fail || x.missed)
+        .map(x => ({ ...x, label: x.name, score: x.fail + x.missed })).sort(by).slice(0, 5),
+      classes: [...classes.values()].filter(c => c.atRisk)
+        .map(c => ({ ...c, label: Config.classLabel(c.key), score: c.atRisk / c.total })).sort(by).slice(0, 5)
+    };
+  }
+
+  function weakSpotsHtml(spots, st) {
+    if (!spots.subjects.length && !spots.classes.length) return '';
+    const chip = (attr, value, active, text) => `<button type="button" class="btn btn-ghost btn-sm" ${attr}="${E(value)}" aria-pressed="${active}">${E(text)}</button>`;
+    const subjects = spots.subjects.map(x => chip('data-sadin-focus-subject', x.name, st.subject === x.name,
+      `${x.name} · ${x.fail} נכשלים${x.missed ? ` · ${x.missed} החמצות` : ''}${x.n ? ` · ממוצע ${Util.fmt(x.sum / x.n, 1)}` : ''}`)).join(' ');
+    const classes = spots.classes.map(c => chip('data-sadin-focus-class', c.key, false,
+      `${c.label} · ${c.atRisk}/${c.total} בסיכון${c.n ? ` · ממוצע ${Util.fmt(c.sum / c.n, 1)}` : ''}`)).join(' ');
+    return `<div class="w-full grid md:grid-cols-2 gap-2" aria-label="מקצועות בעייתיים וכיתות חלשות">
+      <section><strong>מקצועות בעייתיים:</strong> ${subjects || '<span class="text-slate-500">—</span>'}</section>
+      <section><strong>כיתות חלשות:</strong> ${classes || '<span class="text-slate-500">—</span>'}</section>
+      <div class="md:col-span-2 text-xs text-slate-500">לחיצה על מקצוע או כיתה מסננת את המסך. החמצות נספרות רק עם שיבוץ מאומת.</div></div>`;
+  }
+
   window.SadinView = {
   earlyWarningRows(roster, filters = {}) {
     return GroupAnalyzer.sadinSheet(roster, filters).map(r => normalizeRow(r, true)).filter(r => {
@@ -162,7 +208,7 @@
       modeBox.className = 'flex flex-wrap gap-2 mb-2';
       $('sadin-table').insertAdjacentElement('beforebegin', modeBox);
     }
-    modeBox.innerHTML = `<button type="button" class="btn ${early ? 'btn-primary' : 'btn-ghost'} btn-sm" data-act="sadinMode" data-mode="early" aria-pressed="${early}">התראה מקדימה</button>
+    modeBox.innerHTML = `<button type="button" class="btn ${early ? 'btn-primary' : 'btn-ghost'} btn-sm" data-act="sadinMode" data-mode="early" aria-pressed="${early}"    >איתור פדגוגי</button>
       <button type="button" class="btn ${early ? 'btn-ghost' : 'btn-primary'} btn-sm" data-act="sadinMode" data-mode="full" aria-pressed="${!early}">סדין מלא</button>`;
     let summaryBox = $('sadin-summary');
     if (!summaryBox) {
@@ -170,6 +216,18 @@
       summaryBox.id = 'sadin-summary';
       summaryBox.className = 'card px-4 py-2.5 mb-3 flex flex-wrap gap-x-6 gap-y-1 text-sm';
       summaryBox.setAttribute('role', 'status');
+      summaryBox.addEventListener('click', ev => {
+        const subj = ev.target.closest('[data-sadin-focus-subject]'), cls = ev.target.closest('[data-sadin-focus-class]');
+        if (subj) {
+          const same = this.state.sadin.subject === subj.dataset.sadinFocusSubject;
+          SadinView.sadinSubjectChange.call(this, same ? 'all' : subj.dataset.sadinFocusSubject);
+        } else if (cls) {
+          const sel = $('fHomeroom');
+          if (!sel || ![...sel.options].some(o => o.value === cls.dataset.sadinFocusClass)) return;
+          sel.value = cls.dataset.sadinFocusClass;
+          sel.dispatchEvent(new Event('change'));
+        }
+      });
       $('sadin-table').insertAdjacentElement('beforebegin', summaryBox);
     }
     summaryBox.innerHTML = '';
@@ -227,6 +285,7 @@
       <span><strong>100% ציונים עוברים:</strong> ${summary.cleanCount} מתוך ${summary.gradedCount} עם ציונים</span>
       <span>מוצגים ${summary.totalCount} מתוך ${roster.length} חניכים בחיתוך</span>
       ${early ? '<p class="w-full text-xs text-slate-500">מקצועות בגרות ויחידות פנימיות לפי כללי השכבה; מסלול 12 שנות לימוד בהכרעה ידנית אינו נכלל. ממצאים לא מאומתים מוצגים לבדיקה.</p>' : ''}
+      ${early ? weakSpotsHtml(weakSpots(roster, st), st) : ''}
       ${signalSummary(roster, rows, this.state.sim)}`;
     if (early) return SadinView.renderEarlyWarning.call(this, rows);
     if (st.view === 'flat') this.renderSadinFlat(rows);

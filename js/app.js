@@ -68,8 +68,8 @@ const App = {
      אתחול
      ------------------------------------------------------------------ */
   /** מסך הפתיחה: מוצג לפחות 850ms ולכל היותר 1600ms מרגע הטעינה, גם אם האתחול (ענן / רשת) עוד לא הסתיים */
-  SPLASH_MIN_MS: 850,
-  SPLASH_MAX_MS: 1600,
+  SPLASH_MIN_MS: 2350,
+  SPLASH_MAX_MS: 3100,
   startSplash() {
     const t0 = window.__splashT0 || Date.now();
     this._splashT0 = t0;
@@ -537,14 +537,16 @@ const App = {
     ['bagrut', 'groups', 'sadin', 'roster'].forEach(p => this.renderFreshnessBar(p));
     if (this.state.tab === 'settings' && $('qualityDetails')) {
       const signals = SignalEngine.computeAll(this.state.sim).list;
-      const rows = signals.filter(s => s.dataQuality.length).map(s => {
+      const flagged = signals.filter(s => s.dataQuality.length).map(s => {
         const t = Store.trainees.get(s.tz);
         return `<li><button type="button" class="underline" data-act="openProfile" data-tz="${E(s.tz)}">${E(t.name)}</button> · ${E(s.dataQuality.map(flag => flag.detail || flag.label).join(' · '))}</li>`;
-      }).join('');
+      });
+      const QUALITY_VISIBLE = 8;
       const outside = Object.keys(DATASETS).filter(key => Config.reconcile(key).unknown.length)
         .map(key => `<button type="button" class="btn btn-ghost btn-sm" data-act="showUnknown" data-key="${key}">${E(DATASETS[key].title)}: חניכים מחוץ למצבת (${Config.reconcile(key).unknown.length})</button>`).join(' ');
-      setHtml('qualityDetails', `<h3 class="font-semibold">איכות נתונים — כלל בית הספר</h3>
-        ${rows ? `<ul class="text-sm space-y-1">${rows}</ul>` : '<p class="text-sm text-slate-500">לא נמצאו דגלי איכות נתונים לחניכים במצבת.</p>'}
+      setHtml('qualityDetails', `      <h3 class="font-semibold">איכות נתונים — כלל בית הספר${flagged.length ? ` (${flagged.length})` : ''}</h3>
+              <p class="text-xs text-slate-500">מוצגים פערים ורשומות לבדיקת איכות קליטת הנתונים, עם קוד הקבוצה/השאלון להצלבה מול הקובץ המקורי.</p>
+        ${flagged.length ? `<ul class="text-sm space-y-1">${flagged.slice(0, QUALITY_VISIBLE).join('')}</ul>${flagged.length > QUALITY_VISIBLE ? `<details class="text-sm"><summary class="cursor-pointer text-slate-600">הצג עוד ${flagged.length - QUALITY_VISIBLE} רשומות</summary><ul class="space-y-1 mt-1">${flagged.slice(QUALITY_VISIBLE).join('')}</ul></details>` : ''}` : '<p class="text-sm text-slate-500">לא נמצאו דגלי איכות נתונים לחניכים במצבת.</p>'}
         ${outside ? `<div class="flex flex-wrap gap-2">${outside}</div>` : ''}`);
     }
   },
