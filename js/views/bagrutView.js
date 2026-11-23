@@ -137,6 +137,12 @@
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
+  bagrutTargetSort(el) {
+    const st = this.state.bagrut, key = el.dataset.key;
+    if (st.targetSort === key) st.targetDir *= -1; else { st.targetSort = key; st.targetDir = 1; }
+    this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
   target30Rows(list) {
     const rules = Config.rulesForGrade('יב'), result = [];
     list.filter(({ t }) => t.gradeKey === 'יב').forEach(({ t }) => {
@@ -459,16 +465,28 @@
     if (st.targets) {
       const hasBagrut = SignalEngine.prerequisitesFor('יב').hasBagrut;
       const targets = hasBagrut ? BagrutView.target30Rows.call(this, list) : [];
+      const { targetSort: sort, targetDir: dir } = st;
+      const values = r => ({ subject: r.subject, name: r.t.name, class: Config.classLabel(r.t.classKey), target: r.target });
+      targets.sort((a, b) => {
+        const x = values(a)[sort], y = values(b)[sort];
+        if (sort === 'target') {
+          const xNumeric = /^\d+$/.test(x), yNumeric = /^\d+$/.test(y);
+          if (xNumeric !== yNumeric) return xNumeric ? -1 : 1;
+        }
+        return natural(x, y) * dir || natural(a.subject, b.subject) || natural(a.t.name, b.t.name) ||
+          natural(Config.classLabel(a.t.classKey), Config.classLabel(b.t.classKey)) || natural(a.t.tz, b.t.tz);
+      });
       const students = new Set(targets.map(r => r.t.tz)).size;
       const body = targets.map(r => `<tr><td><button type="button" class="font-bold text-indigo-700 hover:underline" data-act="openProfile" data-tz="${E(r.t.tz)}">${E(r.t.name)}</button></td>
         <td>${E(Config.classLabel(r.t.classKey))}</td><td>${E(r.subject)}</td><td>${E(r.current)}</td><td>${E(r.target)}</td><td>${E(r.note)}</td></tr>`).join('');
+      const th = (key, label) => `<th aria-sort="${sort === key ? (dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="font-semibold" data-act="bagrutTargetSort" data-key="${key}">${label}${sort === key ? (dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
       return setHtml('bagrut-table', `${toggle}
         <div class="card p-3 mb-3 text-sm"><div class="flex flex-wrap items-center gap-3"><strong>יעד מינימלי בציון בית-ספרי (30%)</strong>
         <span>${students} חניכים · ${targets.length} מקצועות</span>
         <button type="button" class="btn btn-primary btn-sm" data-act="exportTargets30"${targets.length ? '' : ' disabled'}>ייצוא יעד 30% (CSV/Excel)</button></div>
         <p class="text-slate-500 mt-1">שכבת י"ב בלבד, לפי הסינונים הפעילים; חישוב תעודה סופית מציונים מדווחים ללא סימולציה. יעד לקיזוז כפוף למכסה ואינו מבטיח זכאות או שימוש בו בכמה מקצועות יחד.</p></div>
         ${!hasBagrut ? '<p class="text-slate-500">לא ניתן לקבוע — חסר קובץ בגרות לשכבת י"ב</p>' :
-        `<table class="grid w-full text-right"><thead><tr><th>חניך</th><th>כיתה</th><th>מקצוע</th><th>מצב/ציון נוכחי</th><th>יעד מינימלי ב-30%</th><th>הערה</th></tr></thead>
+        `<table class="grid w-full text-right"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('subject', 'מקצוע')}<th>מצב/ציון נוכחי</th>${th('target', 'יעד מינימלי ב-30%')}<th>הערה</th></tr></thead>
         <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">אין רכיבי 30% חסרים בסינון הנוכחי</td></tr>'}</tbody></table>`}`);
     }
     if (drill) return setHtml('bagrut-table', toggle + summary + this.bagrutSubjectMatrix(drill, signals));

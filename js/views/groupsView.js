@@ -254,9 +254,7 @@
 
     const groupTxt = g => `<span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
     const currentText = r => {
-      const major = r.category === 'missing_major';
-      const current = r.groups.length ? r.groups.map(groupTxt).join(' · ')
-        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>`;
+      const current = r.groups.map(groupTxt).join(' · ');
       const sadin = r.sadinGroups.map(g => ` · בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}`).join('');
       return `${current}${sadin}`;
     };
@@ -274,9 +272,14 @@
       const details = [...bySubject].map(([key, findings]) => {
         const label = findings[0].subject;
         const title = key === GroupAnalyzer.MAJOR_KEY ? 'השוואת מגמות בשכבה' : `השוואת קבוצות במקצוע ${label}`;
+        const findingDetails = findings.map(item => {
+          const description = item.kind === 'sadin' ? UI.signalBadge('data.sadin_not_enrolled', `איכות נתונים: ${item.kindLabel}`) :
+            item.kind === 'outlier' ? '<span class="an-k an-k-suspect">בודד מכיתתו</span>' :
+            item.category === 'suspect' ? `<span class="an-k an-k-suspect">${E(item.kindLabel)}</span>` : '';
+          return [description, item.isRoutineDuplicate ? '<span class="routine-tag">מקצוע מערכתי</span>' : '', currentText(item)].filter(Boolean).join(' ');
+        }).filter(Boolean).join(' · ');
         return `<span class="inline-block align-top max-w-full ml-3 mb-1 text-xs">
-          <button type="button" class="font-semibold text-[#355747] underline text-right" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>:
-          ${findings.map(item => `<span>${item.kind === 'sadin' ? UI.signalBadge('data.sadin_not_enrolled', `איכות נתונים: ${item.kindLabel}`) : `<span class="an-k an-k-${item.category}">${E(item.kindLabel)}</span>`}${item.isRoutineDuplicate ? ' <span class="routine-tag">מקצוע מערכתי</span>' : ''} <span class="text-slate-600">${currentText(item)}</span></span>`).join(' · ')}
+          <button type="button" class="font-semibold text-[#355747] underline text-right" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>${findingDetails ? `: <span class="text-slate-600">${findingDetails}</span>` : ''}
           </span>`;
       }).join('');
       return `<tr>
