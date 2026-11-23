@@ -316,7 +316,8 @@ window.fetch = (input, options) => {
           sadin: sadinRows([[1, 57], [2, 80], [3, 80]].flatMap(([n, sc]) => [{ tz: T(n), ev: 'מבחן א (50)', sc, grp: g, dt: '01/10/2026' }, { tz: T(n), ev: 'מבחן ב (50)', sc, grp: g, dt: '08/10/2026' }]))
         });
         app.evals.clear();
-        const overviewPct = () => { app.renderOverviewPanel(); const m = /כולל חנ"מ: (\d+)%/.exec($id('overview-body').textContent); return m ? Number(m[1]) : null; };
+        const overviewPct = () => app.overviewModel().stats.eligibilityInclSpecialEd;
+        app.state.sadin.mode = 'full';
         const snapshot = () => {
           app.evals.clear();
           const ev = app.getEval(T(1)), s = ev.subjects.find(x => x.id === 'history');
@@ -435,10 +436,9 @@ window.fetch = (input, options) => {
         same([summary.counted, summary.noBagrut, summary.specialEd, summary.exceptions], [expected.counted, expected.noBagrut, expected.specialEd, expected.exceptions], 'Summary counts');
         same([summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd], [expected.incl, expected.ex], 'Eligibility percentages incl. / excl. special-ed');
         check(expected.twelve === 1 && list.find(x => x.t.tz === T(12)).ev.tier === 5, 'The 12-years student must be tier 5 and excluded from the denominator');
+        const stats = app.overviewModel().stats;
+        same([stats.eligibilityInclSpecialEd, stats.eligibilityExSpecialEd], [expected.incl, expected.ex], 'Control room benchmark percentages include/exclude special-ed');
         app.renderOverviewPanel();
-        const text = $id('overview-body').textContent;
-        const incl = /כולל חנ"מ: (\d+)%/.exec(text), ex = /ללא חנ"מ: (\d+)%/.exec(text);
-        check(incl && Number(incl[1]) === expected.incl && ex && Number(ex[1]) === expected.ex, `The control room must show ${expected.incl}% incl. / ${expected.ex}% excl. special-ed`);
         const withSpecial = list.filter(x => trackOfStudent(x.t) === 'חנ"מ').length;
         check(withSpecial === expected.specialEd && withSpecial > 0, 'Special-ed students must be counted');
         noGarbage('overview');
@@ -469,6 +469,7 @@ window.fetch = (input, options) => {
         check([...subject(T(4)).missed.values()][0].kind === 'no-row', 'An empty cell must be marked as missing, never as a zero');
         check(!subject(T(4)).events.some(e => e.score === 0), 'An empty cell must not create a zero event');
         const app = newApp();
+        app.state.sadin.mode = 'full';
         app.renderSadinPanel();
         const table = $id('sadin-table');
         const bad = tz => { const tr = rowFor(table, tz); return tr ? tr.querySelectorAll('.is-bad').length : -1; };
@@ -606,8 +607,8 @@ window.fetch = (input, options) => {
           const om = app.overviewModel().anomaliesModel;
           same(pick(om.rows).filter(r => r[0] === t.tz), single, `T(${n}): overview card 4 rows match`);
           app.renderOverviewPanel();
-          const card4 = [...$id('overview-body').querySelectorAll('.ov-card')][3];
-          check(card4 && card4.textContent.includes(`חוסר ${om.byCategory.missing}`), `T(${n}): card 4 shows the same missing count`);
+          const card = $id('overview-body').querySelector('.ov-card[data-go="groups"]');
+          check(card && card.textContent.includes(`חוסר ${om.byCategory.missing}`), `T(${n}): placement card shows the same missing count`);
         });
         same(pick(GroupAnalyzer.placementAnomalies([Store.trainees.get(T(109))]).rows), [[T(109), histName(), 8, 10]], 'The single pupil sees 8 of 10');
       });
@@ -672,13 +673,13 @@ window.fetch = (input, options) => {
         const overview = app.overviewModel().anomaliesModel;
         same(overview.rows.filter(r => r.kind === 'nomajor').map(r => r.tz), missing.map(r => r.tz), 'Overview uses exactly the same missing-major pupils');
         app.renderOverviewPanel();
-        const card4 = [...$id('overview-body').querySelectorAll('.ov-card')][3];
-        same(Number(card4.querySelector('.ov-value').textContent), overview.total, 'Overview card 4 total matches placement anomalies');
-        check(card4.textContent.includes(`חוסר ${missing.length}`), 'Overview card 4 missing count matches the student maps');
+        const card4 = $id('overview-body').querySelector('.ov-card[data-go="groups"]');
+        same(parseInt(card4.querySelector('.ov-value').textContent, 10), overview.studentsCount, 'Overview placement card matches unique students');
+        check(card4.textContent.includes(`חוסר ${missing.length}`), 'Overview placement card missing count matches the student maps');
         app.renderGroupsPanel();
         const card = $id('groups-kpis').querySelector('[data-cat="missing_major"]');
         same(Number(card.querySelector('.n').textContent), missing.length, 'Group-control missing-major KPI matches overview');
-        same(card.querySelector('.s').textContent, 'חניכים ללא קבוצת מגמה', 'The placement subtitle does not impose a unit requirement');
+        check(card.querySelector('.s').textContent.includes('חניכים ללא קבוצת מגמה'), 'The placement subtitle does not impose a unit requirement');
         check(!$id('groups-table').textContent.includes('מגמה חלקית'), 'No partial-major label appears in the placement table');
         check(errorsOf(app).length === 0, 'No cross-view render errors');
       });
@@ -721,69 +722,62 @@ window.fetch = (input, options) => {
       for (let n = 111; n <= 118; n++) rows.push({ tz: T(n), grade: 'יב', cls: 'יב2', gid: LIT2 });
       [101, 111, 113].forEach(n => [H854, H855].forEach(gid => rows.push({ tz: T(n), grade: 'יב', cls: n <= 110 ? 'יב1' : 'יב2', gid })));
       [H856, H857].forEach(gid => rows.push({ tz: T(105), grade: 'יב', cls: 'יב1', gid }));
+      [H854, H855].forEach(gid => rows.push({ tz: T(109), grade: 'יב', cls: 'יב1', gid }));
       world({ roster, groups: groupRows(rows) });
 
       const app = newApp({ grade: 'יב' });
       const am = app.overviewModel().anomaliesModel;
       app.renderOverviewPanel();
-      const card4Total = () => Number([...$id('overview-body').querySelectorAll('.ov-card')][3].querySelector('.ov-value').textContent);
+      const card4Total = () => parseInt($id('overview-body').querySelector('.ov-card[data-go="groups"] .ov-value').textContent, 10);
       const baseCard4 = card4Total();
-      same(baseCard4, am.total, 'Card 4 equals the anomaly total before sorting');
+      same(baseCard4, am.studentsCount, 'Placement card counts unique students');
       app.renderGroupsPanel();
       const table = () => $id('groups-table');
-      const domRows = () => [...table().querySelectorAll('tbody tr')].filter(tr => tr.querySelector('[data-act="openProfile"]')).map(tr => {
-        const c = tr.children;
-        const ids = [...c[4].querySelectorAll('div')].filter(d => !/בסדין/.test(d.textContent)).map(d => (/\[([^\]]+)\]/.exec(d.textContent) || [])[1]).filter(Boolean).sort(natural);
-        return {
-          id: `${tr.querySelector('[data-act="openProfile"]').dataset.tz}|${c[2].textContent.trim()}|${c[3].querySelector('span').textContent.trim()}|${ids.join('+')}`,
-          name: c[0].textContent.trim(), cls: c[1].textContent.trim(), subject: c[2].textContent.trim(),
-          kind: c[3].querySelector('span').textContent.trim(), current: ids.length ? ids.map(id => `[${id}]`).join('+') : 'ללא שיבוץ'
-        };
-      });
+      const domRows = () => [...table().querySelectorAll('tbody tr')].filter(tr => tr.querySelector('[data-act="openProfile"]'));
       const baseline = domRows();
-      same(baseline.length, am.total, 'Default table shows every anomaly');
-      check(baseline.some(r => r.current === '[854]+[855]') && baseline.some(r => r.current === '[856]+[857]'), 'Fixture contains duplicate group pairs');
-      const cmp = {
-        name: (a, b) => a.name.localeCompare(b.name, 'he'), cls: (a, b) => natural(a.cls, b.cls),
-        subject: (a, b) => natural(a.subject, b.subject), kind: (a, b) => natural(a.kind, b.kind), current: (a, b) => natural(a.current, b.current)
-      };
+      same(baseline.length, am.studentsCount, 'One row per student');
+      check(am.total > am.studentsCount, 'Fixture includes a student with multiple findings');
+      baseline.forEach(tr => {
+        const id = tr.querySelector('[data-act="openProfile"]').dataset.tz, items = am.byTrainee.get(id).items;
+        same(parseInt(tr.children[3].textContent, 10), items.length, `${id}: anomaly count`);
+        items.forEach(item => check(tr.children[2].textContent.includes(item.subject) &&
+          [...tr.querySelectorAll('[data-act="inspectGroups"]')].some(b => b.dataset.subject === item.subject),
+          `${id}: every finding and its action remain visible`));
+      });
       const sortBtn = col => table().querySelector(`[data-act="grpAnomSort"][data-col="${col}"]`);
-      const ariaOf = col => sortBtn(col).closest('th').getAttribute('aria-sort');
-      const contiguous = (list, key) => {
-        const seen = new Set();
-        return list.every((r, i) => {
-          if (i && list[i - 1][key] === r[key]) return true;
-          if (seen.has(r[key])) return false;
-          seen.add(r[key]); return true;
-        });
-      };
+      const ariaOf = col => ['name', 'cls'].includes(col) ? sortBtn(col).closest('th').getAttribute('aria-sort') : sortBtn(col).getAttribute('aria-pressed');
       const cols = ['name', 'cls', 'subject', 'kind', 'current'];
-      cols.forEach(col => check(sortBtn(col) && ariaOf(col) === 'none', `${col}: sortable header starts with aria-sort=none`));
-      check(!table().querySelectorAll('thead th')[5].querySelector('[data-act="grpAnomSort"]'), 'The target-group column is not sortable');
+      const sortValue = (r, col) => {
+        if (col === 'name') return r.t.name;
+        if (col === 'cls') return r.t.classKey;
+        if (col === 'subject') return r.subject;
+        if (col === 'kind') return r.kindLabel;
+        const ids = r.groups.map(g => g.groupId).sort(natural).map(id => `[${id}]`).join('+') || 'ללא שיבוץ';
+        const sadin = r.sadinGroups.map(g => g.groupId).sort(natural).map(id => `[${id}]`).join('+');
+        return ids + (sadin ? ` / ${sadin}` : '');
+      };
+      cols.forEach(col => check(sortBtn(col) && ariaOf(col) === (['name', 'cls'].includes(col) ? 'none' : 'false'), `${col}: sort initially inactive`));
 
       for (const col of cols) {
-        app.acts.grpAnomSort.call(app, sortBtn(col));
-        const asc = domRows();
-        check(asc.every((r, i) => !i || cmp[col](asc[i - 1], r) <= 0), `${col}: first click sorts ascending`);
-        same(ariaOf(col), 'ascending', `${col}: aria-sort=ascending`);
-        check(cols.filter(c => c !== col).every(c => ariaOf(c) === 'none'), `${col}: other headers are aria-sort=none`);
-        check(sortBtn(col).textContent.includes('▲'), `${col}: ascending arrow`);
-        same(asc.map(r => r.id).sort(), baseline.map(r => r.id).sort(), `${col}: sorting keeps the same rows`);
-        if (col === 'subject') check(contiguous(asc, 'subject'), 'Subject sort groups rows of the same subject');
-        if (col === 'current') {
-          check(contiguous(asc, 'current'), 'Current sort groups identical group pairs');
-          const pair = asc.map((r, i) => r.current === '[854]+[855]' ? i : -1).filter(i => i >= 0);
-          check(pair.length >= 3 && pair[pair.length - 1] - pair[0] === pair.length - 1, 'Rows of [854]+[855] are consecutive');
+        for (const dir of [1, -1]) {
+          app.acts.grpAnomSort.call(app, sortBtn(col));
+          const rendered = domRows().map(tr => tr.querySelector('[data-act="openProfile"]').dataset.tz);
+          const sorted = app.sortAnomalyRows(am.rows, col, dir);
+          check(sorted.every((r, i) => !i || natural(sortValue(sorted[i - 1], col), sortValue(r, col)) * dir <= 0), `${col}/${dir}: independent primary-key order`);
+          const expected = [...new Set(sorted.map(r => r.tz))];
+          same(rendered, expected, `${col}/${dir}: grouped row ordering matches sorted findings`);
+          same(ariaOf(col), ['name', 'cls'].includes(col) ? (dir === 1 ? 'ascending' : 'descending') : 'true', `${col}/${dir}: active accessibility state`);
+          check(sortBtn(col).textContent.includes(dir === 1 ? '▲' : '▼'), `${col}/${dir}: sort arrow`);
+          same([...rendered].sort(), [...am.byTrainee.keys()].sort(), `${col}/${dir}: all students retained`);
         }
-        app.acts.grpAnomSort.call(app, sortBtn(col));
-        const desc = domRows();
-        check(desc.every((r, i) => !i || cmp[col](desc[i - 1], r) >= 0), `${col}: second click sorts descending`);
-        same(ariaOf(col), 'descending', `${col}: aria-sort=descending`);
-        check(sortBtn(col).textContent.includes('▼'), `${col}: descending arrow`);
-        same(desc.length, am.total, `${col}: total unchanged after sorting`);
       }
 
-      same(Number($id('groups-kpis').querySelector('[data-cat="all"] .n').textContent), am.total, 'All-anomalies KPI is unchanged by sorting');
+      same(Number($id('groups-kpis').querySelector('[data-cat="all"] .n').textContent), am.studentsCount, 'All-anomalies KPI is unchanged by sorting');
+      app.acts.anCat.call(app, $id('groups-kpis').querySelector('[data-cat="duplicate"]'));
+      const duplicateRows = am.rows.filter(r => r.category === 'duplicate');
+      same(tzsIn(table().querySelector('tbody')), [...new Set(duplicateRows.map(r => r.tz))].sort(), 'Duplicate filter preserves its exact student set');
+      same(Number($id('groups-kpis').querySelector('[data-cat="duplicate"] .n').textContent), new Set(duplicateRows.map(r => r.tz)).size, 'Duplicate KPI counts students rather than findings');
+      check($id('groups-kpis').querySelector('[data-cat="duplicate"] .s').textContent.includes(`${duplicateRows.length} חריגות`), 'Duplicate KPI reports anomaly rows separately');
       same(app.overviewModel().anomaliesModel.total, am.total, 'Overview anomaly model is unchanged by sorting');
       app.renderOverviewPanel();
       same(card4Total(), baseCard4, 'Card 4 still matches 1:1 after sorting');
@@ -893,32 +887,22 @@ window.fetch = (input, options) => {
         });
 
         app.state.bagrut.chip = 'all';
+        app.state.filters.grade = 'יב';
         app.renderOverviewPanel();
         const cards = [...$id('overview-body').querySelectorAll('button.ov-card')];
-        const valueOf = card => parseInt((card.querySelector('.ov-value') || {}).textContent, 10);
-        const readTable = () => tzsIn($id('bagrut-table'));
-
-        const eligibilityCard = cards[2];
-        app.acts.ovGo.call(app, eligibilityCard);
         const model = app.overviewModel();
-        same(readTable(), model.bench.rows.map(r => r.t.tz).sort(), 'Eligibility card: the opened list must be the benchmark population');
-        const opened = readTable().map(tz => app.getEval(tz)).filter(ev => ev.tier !== 0 && ev.tier !== 5);
-        check(valueOf(eligibilityCard) === pct(opened.filter(ev => ev.tier === 1 || ev.tier === 2).length, opened.length), 'Eligibility card: the percentage must match the opened population');
+        const expectedRisk = app.filterByChip(model.rows, 'notok').map(r => r.t.tz).sort();
+        app.acts.ovGo.call(app, cards[1]);
+        same(tzsIn($id('bagrut-table')), expectedRisk, 'Eligibility task opens exactly its risk population');
+        same(parseInt(cards[1].querySelector('.ov-value').textContent, 10), expectedRisk.length, 'Eligibility task count matches destination');
+        same(model.bench.rows.map(r => r.t.tz).sort(), everyone.filter(t => t.gradeKey === 'יב').map(t => t.tz).sort(), 'Benchmark retains the grade-12 population');
 
         app.renderOverviewPanel();
-        const attention = [...$id('overview-body').querySelectorAll('button.ov-card')][0];
-        const shown = valueOf(attention);
-        app.acts.ovGo.call(app, attention);
-        const destination = attention.dataset.go === 'bagrut' ? readTable().length : tzsIn($id('sadin-table')).length;
-        check(shown === destination, `Attention card: it counts ${shown} students but opens a list of ${destination} (the card unites bagrut risk and sadin risk, the link opens only one of them)`);
-
-        app.renderOverviewPanel();
-        const placement = [...$id('overview-body').querySelectorAll('button.ov-card')][3];
-        const anomalies = parseInt((placement.querySelector('.ov-value') || {}).textContent, 10);
-        app.state.groupsViewMode = 'anomalies';
-        app.renderGroupsPanel();
-        const cardN = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
-        check(anomalies === cardN('all'), `Placement card: ${anomalies} vs all destination anomalies ${cardN('all')}`);
+        const placement = $id('overview-body').querySelector('.ov-card[data-go="groups"]');
+        const students = parseInt(placement.querySelector('.ov-value').textContent, 10);
+        app.acts.ovGo.call(app, placement);
+        same(students, Number($id('groups-kpis').querySelector('.an-card[data-cat="all"] .n').textContent), 'Placement task matches destination unique students');
+        same(tzsIn($id('groups-table').querySelector('tbody')), [...model.anomaliesModel.byTrainee.keys()].sort(), 'Placement task opens exactly its student set');
       });
 
       await part('INV-5 / QA-10.2 / QA-10.3 / QA-10.7 every student: engine, eligibility table and 360 card agree', async () => {
@@ -1016,6 +1000,7 @@ window.fetch = (input, options) => {
         app.renderBagrutPanel();
         const button = [...$id('bagrut-table').querySelectorAll('button[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
         check(button && button.textContent === name && button.getAttribute('title') === `ת.ז ${T(1)}`, 'The table name button must keep its text, ID and title intact');
+        app.state.sadin.mode = 'full';
         app.renderSadinPanel();
         const sadinButton = [...$id('sadin-table').querySelectorAll('button[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
         check(sadinButton && sadinButton.getAttribute('title') === `${name} · ת.ז ${T(1)}`, 'The sadin name button must keep its title intact');
@@ -1313,12 +1298,17 @@ window.fetch = (input, options) => {
               }, `${label}: category partition`);
               same([...am.byTrainee.keys()].sort(), [...new Set(expected.map(r => r.tz))].sort(), `${label}: placement student set`);
               app.renderOverviewPanel();
-              same(value(cards()[3]), String(am.total), `${label}: card 4 total`);
-              check(cards()[3].textContent.includes(`${am.studentsCount} חניכים · חוסר ${am.byCategory.missing} • כפילות ${am.byCategory.duplicate} • חשודים ${am.byCategory.suspect}`), `${label}: card 4 detail`);
+              const groupsReady = [...new Set(list.map(t => t.gradeKey))].every(g => SignalEngine.prerequisitesFor(g).hasGroups);
+              if (groupsReady) {
+                same(parseInt(value(cards()[0]), 10), am.studentsCount, `${label}: placement student count`);
+                check(cards()[0].textContent.includes(`חוסר ${am.byCategory.missing}`) && cards()[0].textContent.includes(`כפילות ${am.byCategory.duplicate}`) && cards()[0].textContent.includes(`חשודים ${am.byCategory.suspect}`), `${label}: placement details`);
+              } else check(cards()[0].textContent.includes('לא ניתן לקבוע'), `${label}: incomplete groups shown as unknown`);
               app.renderGroupsPanel();
-              const groupsCard = $id('groups-kpis').querySelector('[data-cat="all"]');
-              same(groupsCard.querySelector('.n').textContent, String(am.total), `${label}: groups total`);
-              same(groupsCard.querySelector('.s').textContent, `${am.studentsCount} חניכים`, `${label}: groups students`);
+              if (groupsReady) {
+                const groupsCard = $id('groups-kpis').querySelector('[data-cat="all"]');
+                same(groupsCard.querySelector('.n').textContent, String(am.studentsCount), `${label}: groups students`);
+                check(groupsCard.querySelector('.s').textContent.includes(`${am.total} חריגות`), `${label}: groups anomaly rows`);
+              }
               const t = list[0], mine = app.placementAnomaliesModel([t]);
               app.state.profileTz = t.tz;
               app.renderTrainee360Panel();
@@ -1334,22 +1324,18 @@ window.fetch = (input, options) => {
             same(attention.tzSet.size, attention.bagrutRisk.length + attention.multi.length - attention.both, `${label}: union = risk + multi - both`);
             same(m.att.both, attention.both, `${label}: overview overlap from shared model`);
             const overlapText = `(${attention.both} בשניהם)`;
-            app.renderOverviewPanel();
-            same(value(cards()[0]), String(m.attention.size), `${label}: card 1 count`);
-            check(cards()[0].textContent.includes(`${app.attentionBreakdownText(attention, '2+ שליליים או חסרים')} · מתוך ${list.length}`), `${label}: card 1 shared breakdown`);
-            check(cards()[0].textContent.includes(overlapText) === attention.both > 0, `${label}: card 1 overlap shown only when > 0`);
-            same(value(cards()[1]), m.avg == null ? '—' : Util.fmt(m.avg, 1), `${label}: card 2 displayed average`);
             app.state.bagrutScope = '12'; app.state.bagrutScopeSet = false;
-            app.acts.ovGo.call(app, cards()[0]);
-            same([app.state.filters.grade, app.state.filters.cls, app.state.bagrutScope, app.state.bagrutScopeSet], [grade, homeroom, app.scopeOfGrade(grade), true], `${label}: card 1 preserves scope on first entry`);
+            app.acts.ovGo.call(app, { dataset: { go: 'bagrut', chip: 'attention' } });
+            same([app.state.filters.grade, app.state.filters.cls, app.state.bagrutScope, app.state.bagrutScopeSet], [grade, homeroom, app.scopeOfGrade(grade), true], `${label}: attention action preserves scope on first entry`);
             same(tzsIn($id('bagrut-table')), [...m.attention].sort(), `${label}: attention destination ID set`);
             same(app.bagrutList(app.dashRows()).length, m.attention.size, `${label}: attention row count`);
-            check($id('bagrut-kpis').textContent.includes(`במעקב: ${m.attention.size} · ${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both > 0 ? ` ${overlapText}` : ''}`), `${label}: visible attention breakdown`);
+            check($id('bagrut-kpis').textContent.includes(`במעקב: ${m.attention.size} חניכים · ${m.bagrutRisk.length} בסיכון בבגרות · ${m.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both > 0 ? ` ${overlapText}` : ''}`), `${label}: visible attention breakdown`);
             check($id('bagrut-kpis').textContent.includes(overlapText) === attention.both > 0, `${label}: bagrut-kpis overlap shown only when > 0`);
             const outside = Store.traineeList().filter(t => !list.includes(t)).map(t => ({ t, ev: app.getEval(t.tz) }));
             const expectedOutside = app.attentionModel(outside.map(r => r.t), outside).tzSet;
             same(app.filterByChip(outside, 'attention').map(r => r.t.tz).sort(), [...expectedOutside].sort(), `${label}: chip uses supplied rows, not global filters`);
 
+            app.state.sadin.mode = 'full';
             app.state.sadin.strip = 'all';
             app.renderSadinPanel();
             const summary = app.sadinSummary(GroupAnalyzer.sadinSheet(list, {}));
@@ -1364,12 +1350,20 @@ window.fetch = (input, options) => {
             hasSummary(app.sadinSummary(m.multi), list.length, `${label}/multiple`);
 
             app.renderOverviewPanel();
-            const expectedPct = m.bench.pace ? m.stats.pctInclSpecialEd : m.stats.eligibilityInclSpecialEd;
-            same(value(cards()[2]), m.bagrutOn ? `${expectedPct}%` : '—', `${label}: card 3 displayed percentage`);
-            app.acts.ovGo.call(app, cards()[2]);
-            same(tzsIn($id('bagrut-table')), m.bench.rows.map(r => r.t.tz).sort(), `${label}: benchmark destination ID set`);
-            const shown = /(\d+)%\s*(?:צפי זכאות · כולל חנ"מ|תקינות צבירה \([^)]*\) · כולל חנ"מ)/.exec($id('bagrut-kpis').textContent);
-            same(shown ? Number(shown[1]) : null, expectedPct, `${label}: card 3 vs visible bagrut percentage`);
+            const risk = app.filterByChip(m.rows, 'notok').map(r => r.t.tz).sort();
+            const bagrutReady = [...new Set(list.map(t => t.gradeKey))].every(g => SignalEngine.prerequisitesFor(g).hasBagrut);
+            if (bagrutReady) same(parseInt(value(cards()[1]), 10), risk.length, `${label}: eligibility risk count`);
+            else check(cards()[1].textContent.includes('לא ניתן לקבוע'), `${label}: incomplete bagrut shown as unknown`);
+            app.acts.ovGo.call(app, cards()[1]);
+            same(tzsIn($id('bagrut-table')), risk, `${label}: eligibility risk destination ID set`);
+            app.renderOverviewPanel();
+            const earlyCard = cards()[2];
+            const earlyIds = SadinView.earlyWarningRows(list).map(r => r.t.tz).sort();
+            const sadinReady = [...new Set(list.map(t => t.gradeKey))].every(g => SignalEngine.prerequisitesFor(g).hasSadin);
+            if (sadinReady) same(parseInt(value(earlyCard), 10), earlyIds.length, `${label}: early-warning count`);
+            else check(earlyCard.textContent.includes('לא ניתן לקבוע'), `${label}: incomplete sadin shown as unknown`);
+            app.acts.ovGo.call(app, earlyCard);
+            same(tzsIn($id('sadin-table')), earlyIds, `${label}: exact early-warning destination IDs`);
             noGarbage(label);
             same(errorsOf(app), [], `${label}: no panel errors`);
           }
@@ -1388,6 +1382,7 @@ window.fetch = (input, options) => {
           same(att.bagrutRisk.length, 0, `${loaded}: unloaded bagrut never contributes risk`);
           same(att.multi.length, loaded === 'grades' ? GroupAnalyzer.sadinSheet(app.filtered(), {}).filter(r => GroupAnalyzer.riskSubjects(r).length >= 2).length : 0, `${loaded}: only loaded grades contribute multi`);
           if (loaded === 'grades') {
+            app.state.sadin.mode = 'full';
             app.renderSadinPanel();
             hasSummary(app.sadinSummary(GroupAnalyzer.sadinSheet(app.filtered(), {})), app.filtered().length, loaded);
             app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'multiple' } });
@@ -1408,6 +1403,90 @@ window.fetch = (input, options) => {
         hasSummary(app.sadinSummary([]), 0, 'Empty slice');
       });
     });
+    await group('Three-task board — early warning destination parity', async () => {
+      resetConfig();
+      const english = 'אנגלית 4 יח"ל יב1 דוד בדיקה [8801]';
+      const social = 'מעורבות חברתית יב1 רות בדיקה [8802]';
+      const routine = 'חינוך יב1 מורה בדיקה [8803]';
+      const roster = [1, 2, 3, 4, 5, 6, 7].map(n => stu(n, 'יב', 'יב1'));
+      const groups = groupRows([
+        ...[1, 2, 3, 5].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: english })),
+        ...[6, 7].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: social })),
+        { tz: T(4), grade: 'יב', cls: 'יב1', gid: routine }
+      ]);
+      const events = [
+        ...[[1, 40, 40], [2, 0, 80], [3, 80, null], [5, 40, 40]].flatMap(([n, a, b]) =>
+          [a, b].flatMap((sc, i) => sc == null ? [] : [{ tz: T(n), ev: `מבחן ${i + 1} (50)`, sc, grp: english, dt: i ? '08/10/2026' : '01/10/2026' }])),
+        { tz: T(4), ev: 'מבחן (100)', sc: 10, grp: routine, dt: '01/10/2026' },
+        { tz: T(6), ev: 'מבחן (100)', sc: 1, grp: social, dt: '01/10/2026' },
+        { tz: T(7), ev: 'מבחן (100)', sc: 2, grp: social, dt: '01/10/2026' }
+      ];
+      world({ roster, groups, sadin: sadinRows(events) });
+      Config.setException(T(5), { isException: true, overrideStatus: 'twelve', reason: 'בדיקה' });
+      const app = newApp({ grade: 'יב' });
+      const expected = [T(1), T(2), T(3), T(6)].sort();
+      same(SadinView.earlyWarningRows(app.overviewModel().list).map(r => r.t.tz).sort(), expected,
+        'Relevant failures, missed events and social threshold only; routine and twelve-years excluded');
+      app.renderOverviewPanel();
+      const cards = [...$id('overview-body').querySelectorAll('button.ov-card')];
+      same(cards.map(c => c.dataset.go), ['groups', 'bagrut', 'sadin'], 'Exactly three tasks in priority order');
+      same(parseInt(cards[2].querySelector('.ov-value').textContent, 10), expected.length, 'Card counts the exact early-warning population');
+      Object.assign(app.state.sadin, { mode: 'full', subject: 'חינוך', teacher: 'מורה בדיקה', strip: 'fail' });
+      Object.assign(app.state.filters, { track: 'אתגר', q: T(4) });
+      app.acts.ovGo.call(app, cards[2]);
+      same([app.state.sadin.mode, app.state.sadin.subject, app.state.sadin.teacher, app.state.sadin.strip], ['early', 'all', 'all', 'all'], 'Navigation resets stale local controls');
+      same(tzsIn($id('sadin-table')), expected, 'Card opens exactly the counted IDs');
+      same(errorsOf(app), [], 'No early-warning navigation error');
+      world({ roster, sadin: sadinRows(events) });
+      app.renderOverviewPanel();
+      const noGroups = $id('overview-body').querySelector('[data-go="sadin"]');
+      app.acts.ovGo.call(app, noGroups);
+      same(parseInt(noGroups.querySelector('.ov-value').textContent, 10), tzsIn($id('sadin-table')).length, 'Card and destination still agree without groups');
+      check($id('sadin-summary').textContent.includes('לא ניתן לקבוע שיבוץ'), 'Missing groups remain a neutral placement warning');
+      world({ roster, groups });
+      app.renderOverviewPanel();
+      check($id('overview-body').querySelector('[data-go="sadin"]').textContent.includes('לא ניתן לקבוע'), 'Missing sadin displays unknown rather than a numeric count');
+    });
+
+    await group('Minimum 30% target export', async () => {
+      resetConfig();
+      const ids = ['000000001', '000000002', '000000003'];
+      const roster = ids.map((tz, i) => ({ ...stu(i + 1, 'יב', i === 0 ? 'יב1' : 'יב2'), tz,
+        ...(i === 0 ? { firstName: '=שם,"בדיקה"', lastName: 'חניך' } : {}) }));
+      world({ roster, bagrut: bagrutRows(ids.flatMap((tz, i) => profile(tz, { '22283': null, '22261': [80, 60, 20][i] }))) });
+      const app = newApp({ grade: 'יב' });
+      const targets = BagrutView.target30Rows.call(app, app.dashRows()).filter(r => r.subject === 'היסטוריה');
+      same(targets.map(r => [r.t.tz, r.target]), [[ids[0], '1'], [ids[1], '9'], [ids[2], 'לא אפשרי']], 'Positive minimum, compensation and impossible target');
+      check(targets[1].note.includes('קיזוז') && targets[2].note.includes('100'), 'Compensation and impossible cases explain their constraints');
+      let blob;
+      const create = URL.createObjectURL, revoke = URL.revokeObjectURL, click = HTMLAnchorElement.prototype.click;
+      try {
+        URL.createObjectURL = b => { blob = b; return 'blob:target-test'; };
+        URL.revokeObjectURL = () => {};
+        HTMLAnchorElement.prototype.click = () => {};
+        app.state.filters.cls = 'יב1';
+        app.acts.exportTargets30.call(app);
+        check(!!blob, 'Export creates a CSV blob for filtered targets');
+        if (blob) {
+          const bytes = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(new Uint8Array(reader.result));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsArrayBuffer(blob);
+          });
+          same([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM');
+          const csv = new TextDecoder().decode(bytes);
+          check(csv.startsWith('"ת""ז","שם חניך","כיתה","מקצוע","מצב/ציון נוכחי","יעד מינימלי ב-30%","הערה"\r\n'), 'Seven export columns in order');
+          check(csv.includes('"=""000000001"""') && !csv.includes(ids[1]) && !csv.includes(ids[2]), 'Leading zeros retained and class filter respected');
+          check(csv.includes('""בדיקה""') && csv.includes("'=שם,"), 'Quotes are escaped and formula-like names are neutralized');
+        }
+      } finally {
+        URL.createObjectURL = create;
+        URL.revokeObjectURL = revoke;
+        HTMLAnchorElement.prototype.click = click;
+      }
+    });
+
     await group('Readiness Parity — pending examinees, current grades and identical overview drill-down', async () => {
       const fixture = () => {
         const scores = [0, 54, 55, 64, 65, 100, null, undefined, 80, 70];
@@ -1425,6 +1504,7 @@ window.fetch = (input, options) => {
         return { roster, bagrut, sadin };
       };
       const build = () => { resetConfig(); world(fixture()); };
+      const readinessAction = (sel, scope = '12') => ({ dataset: { sel, scope } });
 
       await part('Removed selector and one-click attention reset', async () => {
         resetConfig(); world(schoolFixture()); applySchoolConfig();
@@ -1440,22 +1520,25 @@ window.fetch = (input, options) => {
         same(errorsOf(app), [], 'No panel error without status select');
       });
 
-      await part('Overview ignores track/search, hides them, and drill-down resets them 1:1', async () => {
+      await part('Lean toolbar and overview drill-down filter reset', async () => {
         resetConfig();
         const fx = fixture();
         fx.roster[4].track = 'אתגר';
         world(fx);
         const html = await (await window.fetch('../index.html')).text();
-        const bar = new DOMParser().parseFromString(html, 'text/html').getElementById('globalFilterBar');
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const bar = doc.getElementById('globalFilterBar');
         const app = newApp({ grade: 'יב', track: 'אתגר', q: T(5) });
         $id('stage').appendChild(document.importNode(bar, true));
+        $id('stage').appendChild(document.importNode(doc.getElementById('localControls'), true));
         const f = app.state.filters, isHidden = el => el.classList.contains('hidden');
-        const trackBox = $id('fTrack').closest('[data-hide-overview]'), searchBox = $id('globalSearch').closest('[data-hide-overview]');
-        same([...document.querySelectorAll('[data-hide-overview]')], [trackBox, searchBox], 'Exactly track and search are overview-hidden');
+        const trackBox = $id('fTrack').closest('[data-hide-overview]'), searchBox = $id('globalSearch').closest('#searchWrap');
+        check(bar.querySelectorAll('[data-act="openDataTools"]').length === 1 && !bar.querySelector('input[type="file"], #fTrack, [data-bagrut-only]'), 'Global bar has one loading action and no local controls');
         app.showTab('bagrut');
+        check(!isHidden($id('bagrutActions')), 'Simulation controls visible in eligibility');
         same(app.filtered().map(t => t.tz), [T(5)], 'Precondition: search + track narrow bagrut to one pupil');
         app.showTab('overview');
-        check(isHidden(trackBox) && isHidden(searchBox), 'Overview hides track and search');
+        check(isHidden(trackBox) && !isHidden(searchBox) && isHidden($id('bagrutActions')), 'Overview keeps search while hiding track and simulation');
         check(!isHidden($id('fGrade').closest('label')) && !isHidden($id('fHomeroom').closest('label')) && !isHidden($id('fClear')), 'Overview keeps grade, homeroom and clear');
         const grade12 = Store.traineeList().filter(t => t.gradeKey === 'יב').map(t => t.tz).sort();
         same(app.overviewModel().list.map(t => t.tz).sort(), grade12, 'Overview model is the whole grade, not one pupil');
@@ -1477,17 +1560,17 @@ window.fetch = (input, options) => {
         const isReset = label => same([f.track, f.q, app.state.selectedSearchTz, $id('fTrack').value, $id('globalSearch').value], ['all', '', null, 'all', ''], `${label}: track and search reset`);
         narrow();
         const m = app.overviewModel();
-        app.acts.ovGo.call(app, $id('overview-body').querySelectorAll('button.ov-card')[2]);
+        app.acts.ovGo.call(app, $id('overview-body').querySelector('button.ov-card[data-go="bagrut"]'));
         isReset('ovGo');
-        same(tzsIn($id('bagrut-table')), m.bench.rows.map(r => r.t.tz).sort(), 'ovGo destination equals the overview population');
+        same(tzsIn($id('bagrut-table')), app.filterByChip(m.rows, 'notok').map(r => r.t.tz).sort(), 'Eligibility destination equals the overview risk population');
         narrow();
         app.state.selectedSearchTz = T(5);
         app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'all' } });
         isReset('ovGo sadin');
-        same(tzsIn($id('sadin-table')), m.list.map(t => t.tz).sort(), 'Sadin destination equals the overview population');
+        same(tzsIn($id('sadin-table')), SadinView.earlyWarningRows(m.list).map(r => r.t.tz).sort(), 'Sadin destination equals early-warning population');
         narrow();
         const expected = app.overviewReadinessModel(app.overviewModel()).items.find(r => r.sel === 'core:history');
-        app.acts.ovReadiness.call(app, $id('overview-readiness').querySelector('[data-sel="core:history"]'));
+        app.acts.ovReadiness.call(app, readinessAction('core:history'));
         isReset('ovReadiness');
         same(Number($id('bagrut-kpis').querySelector('[data-readiness-summary]').dataset.total), expected.total, 'Readiness strip total equals the overview card');
         same(tzsIn($id('bagrut-table')), expected.rows.map(r => r.t.tz).sort(), 'Readiness destination rows equal the overview card');
@@ -1561,14 +1644,9 @@ window.fetch = (input, options) => {
           const overview = app.overviewReadinessModel(app.overviewModel());
           check(overview.items.every((r, i, a) => !i || (a[i - 1].fail + a[i - 1].borderline) > (r.fail + r.borderline) || ((a[i - 1].fail + a[i - 1].borderline) === (r.fail + r.borderline) && a[i - 1].offTrack >= r.offTrack)), 'Subjects ranked by real severity');
           const expected = overview.items.find(r => r.sel === 'core:history');
-          const btn = $id('overview-readiness').querySelector('[data-sel="core:history"]');
-          same([Number(btn.dataset.total), Number(btn.dataset.offTrack)], [expected.total, expected.offTrack], 'Overview row counters');
-          check(btn.textContent.includes(app.readinessCompact(expected)) && btn.textContent.includes(app.readinessAverage(expected.avg)), 'Overview compact breakdown and average');
-          check(expected.noGrade > 0 === btn.textContent.includes('ללא ציון') && expected.unreported > 0 === btn.textContent.includes('טרם דווח'), 'No-grade and unreported shown only when present');
-          const multiClass = !filters.cls && expected.classes.filter(c => !c.unreportedOnly).length > 1;
-          check(btn.textContent.includes('הכיתה החלשה') === multiClass, 'Weakest class only with several graded classes and no homeroom filter');
-          if (multiClass) check(btn.textContent.includes(`${Config.classLabel(expected.weakest.key)} · ${app.readinessAverage(expected.weakest.avg)} / ${expected.weakest.offTrackPct}%`), 'Overview weakest class');
-          app.acts.ovReadiness.call(app, btn);
+          check(expected && expected.total === expected.rows.length, 'Overview readiness model retains its pending population');
+          check(app.readinessCompact(expected).includes(`${expected.fail} נכשלים`) && app.readinessCompact(expected).includes(`${expected.borderline} גבוליים`) && app.readinessAverage(expected.avg), 'Compact breakdown and average are defined');
+          app.acts.ovReadiness.call(app, readinessAction('core:history'));
           same([app.state.tab, app.state.filters.grade, app.state.filters.cls, app.state.bagrut.drill, app.state.bagrut.chip, app.state.sim.useCurrent, app.state.bagrut.onlyPending, app.state.bagrut.readinessFilter, app.state.bagrut.mxSort, app.state.bagrut.mxDir],
             ['bagrut', 'יב', filters.cls || 'all', 'core:history', 'all', true, true, 'all', 'current', 1], 'One click applies readiness, ascending current sort and preserves scope');
           const actual = app.subjectReadinessModel(app.state.bagrut.drill, app.filtered(), true);
@@ -1678,20 +1756,20 @@ window.fetch = (input, options) => {
         same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב1', false, 6, 2, 0], ['יב2', true, 0, 0, 2]], 'Unreported-only homerooms go last');
         same(model.weakest.key, 'יב1', 'Unreported-only homeroom is never the weakest');
         app.renderOverviewPanel();
-        check($id('overview-readiness').querySelector('.grid [data-sel="core:history"]'), 'coveragePct 25% (2/8) makes the subject active');
-        app.acts.ovReadiness.call(app, $id('overview-readiness').querySelector('[data-sel="core:history"]'));
+        check(app.overviewReadinessModel(app.overviewModel()).items.some(r => r.sel === 'core:history'), 'coveragePct 25% (2/8) makes the subject active');
+        app.acts.ovReadiness.call(app, readinessAction('core:history'));
         const cards = [...$id('bagrut-kpis').querySelectorAll('[data-act="bagrutReadinessClass"]')];
         same(cards.map(c => [c.dataset.class, c.dataset.unreportedOnly]), [['יב1', 'false'], ['יב2', 'true']], 'Rendered unreported class last');
         check(cards[1].textContent.includes('טרם דווח'), 'Unreported class label');
         same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness), ['fail', 'borderline', 'noGrade', 'noGrade', 'noGrade', 'noGrade', 'unreported', 'unreported'], 'Default ascending current sort: numeric, no-grade, unreported');
-        check($id('bagrut-kpis').querySelector('[data-readiness-summary]').textContent.includes('+ 2 טרם דווח'), 'Strip mentions unreported separately');
+        check($id('bagrut-kpis').querySelector('[data-readiness-summary]').textContent.includes('+ 2 חניכים טרם דווחו'), 'Strip mentions unreported separately');
         scenario(10, 2);
         app.renderOverviewPanel();
-        const chip = $id('overview-readiness').querySelector('[data-sel="core:history"]');
-        check(chip && !chip.closest('.grid') && chip.textContent.includes('(2/10)'), '2 graded at 20% coverage is an unreported subject');
+        const chip = app.overviewReadinessModel(app.overviewModel()).unreportedItems.find(r => r.sel === 'core:history');
+        check(chip && chip.graded === 2 && chip.total === 10, '2 graded at 20% coverage is an unreported subject');
         scenario(20, 3);
         app.renderOverviewPanel();
-        check($id('overview-readiness').querySelector('.grid [data-sel="core:history"]'), 'Three graded pupils make the subject active in the compact grid (15% coverage)');
+        check(app.overviewReadinessModel(app.overviewModel()).items.some(r => r.sel === 'core:history'), 'Three graded pupils make the subject active (15% coverage)');
         same(errorsOf(app), [], 'No fallback/threshold errors');
       });
 
@@ -1713,16 +1791,16 @@ window.fetch = (input, options) => {
         app.renderOverviewPanel();
         const ov = app.overviewReadinessModel(app.overviewModel());
         check(!ov.items.some(r => r.sel === 'core:history') && ov.unreportedItems.some(r => r.sel === 'core:history'), '1 of 6 graded is an unreported subject');
-        const chip = $id('overview-readiness').querySelector('[data-sel="core:history"]');
-        check(chip && !chip.closest('.grid') && chip.textContent.includes('(1/6)'), 'Unreported subject shown as a gray chip outside the grid');
-        app.acts.ovReadiness.call(app, chip);
+        const chip = ov.unreportedItems.find(r => r.sel === 'core:history');
+        check(chip && chip.graded === 1 && chip.total === 6, 'Unreported subject retains coverage counts');
+        app.acts.ovReadiness.call(app, readinessAction('core:history'));
         const cards = [...$id('bagrut-kpis').querySelectorAll('[data-act="bagrutReadinessClass"]')];
         same(cards.map(c => c.dataset.unreportedOnly), ['true', 'true'], 'Rendered classes are both unranked');
         check(cards[0].textContent.includes('דיווח חלקי') && cards[1].textContent.includes('טרם דווח'), 'Partial vs unreported class labels');
         same([...$id('bagrut-table').querySelectorAll('[data-readiness="unreported"]')].map(c => c.textContent.trim()), Array(5).fill('טרם דווח'), 'Unreported cells are gray, not no-grade warnings');
         const summary = $id('bagrut-kpis').querySelector('[data-readiness-summary]');
-        same(Number(summary.dataset.offTrack), Number(chip.dataset.offTrack), 'Overview/matrix parity for unreported subject');
-        check(summary.textContent.includes('+ 5 טרם דווח'), 'Strip mentions unreported separately');
+        same(Number(summary.dataset.offTrack), chip.offTrack, 'Overview/matrix parity for unreported subject');
+        check(summary.textContent.includes('+ 5 חניכים טרם דווחו'), 'Strip mentions unreported separately');
         same(errorsOf(app), [], 'No single-grade errors');
       });
 
@@ -1743,8 +1821,8 @@ window.fetch = (input, options) => {
         const pending = app.subjectReadinessModel('core:history', app.filtered(), true);
         same([pending.rows.map(r => r.t.tz).sort(), pending.notEnrolled, pending.offTrack], [[T(1), T(2)], 0, 1], 'Pending examinees are only the completion group');
         app.renderOverviewPanel();
-        const card = $id('overview-readiness').querySelector('.grid [data-sel="core:history"]');
-        check(card && card.dataset.total === '2' && !$id('overview-readiness').textContent.includes('טרם דווח'), 'No "+8 טרם דווח" in the overview');
+        const card = app.overviewReadinessModel(app.overviewModel()).items.find(r => r.sel === 'core:history');
+        check(card && card.total === 2 && card.unreported === 0, 'No eight unreported pupils in the overview model');
         Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, readinessFilter: 'all', readinessClass: '' });
         app.state.sim.useCurrent = true;
         app.renderBagrutPanel();
@@ -1784,8 +1862,7 @@ window.fetch = (input, options) => {
         const schedule = scheduled(app.overviewReadinessModel(app.overviewModel()));
         check(!schedule.some(r => r.sel === 'core:history') && schedule.some(r => r.sel === 'core:english'), 'Grade 11 is not forced to grade 12 schedule');
         app.renderOverviewPanel();
-        const btn = $id('overview-readiness').querySelector('[data-sel="core:english"]');
-        app.acts.ovReadiness.call(app, btn);
+        app.acts.ovReadiness.call(app, readinessAction('core:english', '11'));
         same([app.state.filters.grade, app.state.bagrut.drill], ['יא', 'core:english'], 'Grade 11 readiness navigation');
         Config.withRulesForGrade('יא', () => {
           const rules = Config.rules();
@@ -1793,10 +1870,12 @@ window.fetch = (input, options) => {
           rules.majors.forEach(s => { s.expectedGrade = 'יב'; });
         });
         app.renderOverviewPanel();
-        check(!$id('overview-readiness').querySelector('[data-act="ovReadiness"]') && $id('overview-readiness').textContent.includes('אין שאלוני'), 'No matching schedule clears rows and explains');
+        const empty = app.overviewReadinessModel(app.overviewModel());
+        check(!empty.items.length && !empty.unreportedItems.length && empty.message.includes('אין שאלוני'), 'No matching schedule clears rows and explains');
         world({ roster: fixture().roster });
         app.renderOverviewPanel(); app.renderBagrutPanel();
-        check(!$id('overview-readiness').querySelector('[data-act="ovReadiness"]') && $id('overview-readiness').textContent.includes('טען ציונים שוטפים'), 'Unloading clears overview readiness');
+        const unloaded = app.overviewReadinessModel(app.overviewModel());
+        check(!unloaded.items.length && !unloaded.unreportedItems.length && unloaded.message.includes('טען ציונים שוטפים'), 'Unloading clears overview readiness');
         check(!$id('bagrut-table').querySelector('[data-readiness]'), 'No stale current column after unloading');
         noGarbage('empty readiness');
       });
@@ -1807,13 +1886,14 @@ window.fetch = (input, options) => {
           components: [{ codes: ['987654'], weight: 100, expectedGrade: 'יב', enabled: true }] }).ok, 'Add a scheduled custom core subject');
         const app = newApp();
         app.renderOverviewPanel();
-        const row = $id('overview-readiness').querySelector('[data-sel="core:readiness_test"]');
+        const model = app.overviewReadinessModel(app.overviewModel());
+        const row = [...model.items, ...model.unreportedItems].find(r => r.sel === 'core:readiness_test');
         check(!!row, 'Automatically found custom subject');
-        app.acts.ovReadiness.call(app, row);
+        app.acts.ovReadiness.call(app, readinessAction('core:readiness_test'));
         same(app.state.bagrut.drill, 'core:readiness_test', 'Advisor default drill options must not reset an active scheduled subject');
         same($id('bagrutSubjectDrillSelect').value, 'core:readiness_test', 'Selected subject remains visible in drill selector');
         const summary = $id('bagrut-kpis').querySelector('[data-readiness-summary]');
-        same([Number(summary.dataset.total), Number(summary.dataset.offTrack)], [Number(row.dataset.total), Number(row.dataset.offTrack)], 'Custom subject overview/matrix parity');
+        same([Number(summary.dataset.total), Number(summary.dataset.offTrack)], [row.total, row.offTrack], 'Custom subject overview/matrix parity');
         same(errorsOf(app), [], 'No custom-subject navigation errors');
       });
     });

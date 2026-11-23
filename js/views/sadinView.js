@@ -6,10 +6,41 @@
   const natural = (a, b) => String(a).localeCompare(String(b), 'he', { numeric: true });
   const compatible = (subject, teacher) => Store.traineeList().some(t => Store.currentOf(t.tz).some(e =>
     GroupAnalyzer.sadinSubject(e.subject) === subject && ((Store.groups.get(e.groupId) || {}).teacher || e.teacher) === teacher));
-  const confirmedMissed = (subject, hasGroups) =>
-    [...subject.missed.values()].filter(m => hasGroups || m.kind !== 'no-row').length;
+  const confirmedEvent = (m, hasGroups, tz) => {
+    if (m.kind !== 'no-row') return true;
+    if (!hasGroups) return false;
+    if (!tz) return true;
+    const group = Store.groups.get(m.groupId);
+    return !!group && group.inFile && group.members.has(tz);
+  };
+  const confirmedMissed = (subject, hasGroups, tz) =>
+    [...subject.missed.values()].filter(m => confirmedEvent(m, hasGroups, tz)).length;
   const prerequisitesByGrade = roster => new Map([...new Set(roster.map(t => t.gradeKey))]
     .map(grade => [grade, SignalEngine.prerequisitesFor(grade)]));
+  const isSocial = name => Util.norm(name) === Util.norm('מעורבות חברתית');
+  const failingSubject = s => s.avg != null && !SignalEngine.isPassingScore(s.avg, { social: isSocial(s.name) });
+  const riskSubject = s => failingSubject(s) || s.missed.size > 0;
+  const hasEventData = ev => ev && (ev.score != null || String(ev.scoreRaw || '').trim() !== '');
+
+  function relevantSubject(s) {
+    const rules = Config.rules();
+    const names = [s.name, ...s.entries.map(e => e.displaySubject || e.subject)];
+    const defs = [...rules.coreSubjects, ...rules.majors, ...rules.internals].filter(d => d.enabled !== false);
+    return defs.some(d => names.some(name =>
+      Util.matchKeywords(name, [...(d.keywords || []), ...(d.groupKeywords || []), d.name]))) ||
+      s.entries.some(e => {
+        const group = Store.groups.get(e.groupId);
+        return group && GroupAnalyzer.isMajorGroup(group);
+      });
+  }
+
+  function normalizeRow(row, early) {
+    return Config.withRulesForGrade(row.t.gradeKey, () => {
+      const subjects = early ? new Map([...row.subjects].filter(([, s]) => relevantSubject(s))) : row.subjects;
+      return { ...row, subjects, failing: [...subjects.values()].filter(failingSubject).length,
+        missed: [...subjects.values()].reduce((n, s) => n + s.missed.size, 0) };
+    });
+  }
 
   function signalSummary(roster, rows, opts) {
     const prereqs = prerequisitesByGrade(roster);
@@ -20,30 +51,32 @@
       ].filter(Boolean);
     });
     const all = SignalEngine.computeAll(opts), pedagogical = new Map(), quality = new Map();
-    const borderline = Number(Config.rules().borderlineMin);
     const add = (map, id, tz) => {
       if (!map.has(id)) map.set(id, new Set());
       map.get(id).add(tz);
     };
     rows.forEach(row => {
       const signal = all.byTz.get(row.t.tz);
-      row.subjects.forEach(subject => {
-        if (subject.avg == null || SignalEngine.isPassingScore(subject.avg)) return;
-        add(pedagogical, 'sadin.fail', row.t.tz);
-        if (Number.isFinite(borderline) && subject.avg >= borderline) add(pedagogical, 'sadin.borderline', row.t.tz);
+      Config.withRulesForGrade(row.t.gradeKey, () => {
+        const borderline = Number(Config.rules().borderlineMin);
+        row.subjects.forEach(subject => {
+          if (!failingSubject(subject)) return;
+          add(pedagogical, 'sadin.fail', row.t.tz);
+          if (Number.isFinite(borderline) && subject.avg >= borderline) add(pedagogical, 'sadin.borderline', row.t.tz);
+        });
       });
       if (signal.pedagogical.some(f => f.id === 'sadin.missed_event') &&
-          [...row.subjects.values()].some(s => confirmedMissed(s, signal.prereqs.hasGroups)))
+          [...row.subjects.values()].some(s => confirmedMissed(s, signal.prereqs.hasGroups, row.t.tz)))
         add(pedagogical, 'sadin.missed_event', row.t.tz);
       signal.dataQuality.filter(f => f.id === 'data.sadin_not_enrolled').forEach(f => add(quality, f.id, row.t.tz));
     });
     const unmatched = GroupAnalyzer.unmatchedIds().filter(item => item.sources.includes('סדין ציונים'));
     unmatched.forEach(item => add(quality, 'data.not_in_roster', item.tz));
-    const badges = map => [...map].map(([id, ids]) => UI.signalBadge(id, `${SignalEngine.CATALOG[id].label}: ${ids.size}`)).join(' ');
+    const badges = map => [...map].map(([id, ids]) =>     UI.signalBadge(id, `${SignalEngine.CATALOG[id].label}: ${ids.size} חניכים`)).join(' ');
     const incompleteGroups = [...prereqs.values()].some(p => !p.hasGroups);
     return `<div class="w-full space-y-2 mt-2" aria-label="דגלי ציונים ואיכות נתונים">
       ${missing.length ? `<div class="flex flex-wrap gap-1">${missing.join(' ')}</div>` : ''}
-      ${incompleteGroups ? '<p class="text-xs text-slate-500">אירועים ללא שורה דורשים אימות שיבוץ; המסננים והסיכום כוללים גם אירועים שטרם אומתו, לשמירת ההתאמה לחדר הבקרה.</p>' : ''}
+      ${incompleteGroups ? '<p class="text-xs text-slate-500">אירועים ללא שורה דורשים אימות שיבוץ; המסננים כוללים גם אירועים שטרם אומתו.</p>' : ''}
       <div class="grid md:grid-cols-2 gap-2">
         <section aria-label="דגלים פדגוגיים"><strong>דגלים פדגוגיים:</strong> ${badges(pedagogical) || '<span class="text-slate-500">לא אותרו בנתונים הזמינים</span>'}
           <div class="text-xs text-slate-500">הדגלים, הציונים והמסננים לפי הכללים הפעילים.</div></section>
@@ -53,10 +86,26 @@
   }
 
   window.SadinView = {
+  earlyWarningRows(roster, filters = {}) {
+    return GroupAnalyzer.sadinSheet(roster, filters).map(r => normalizeRow(r, true)).filter(r => {
+      const ex = Config.getException(r.t.tz);
+      return !(ex.isException && ex.overrideStatus === 'twelve') &&
+        Config.withRulesForGrade(r.t.gradeKey, () => [...r.subjects.values()].some(riskSubject));
+    });
+  },
+
+  sadinMode(el) {
+    this.state.sadin.mode = el.dataset.mode;
+    if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
+    this.state.sadin.strip = 'all';
+    this.dirty.add('sadin'); this.renderTab('sadin');
+  },
+
   sadinSubjectChange(value) {
     const st = this.state.sadin;
     st.subject = value;
     if (st.subject !== 'all' && st.teacher !== 'all' && !compatible(st.subject, st.teacher)) st.teacher = 'all';
+    this.alertOut = [];
     this.dirty.add('sadin'); this.renderTab('sadin');
   },
 
@@ -64,6 +113,7 @@
     const st = this.state.sadin;
     st.teacher = value;
     if (st.teacher !== 'all' && st.subject !== 'all' && !compatible(st.subject, st.teacher)) st.subject = 'all';
+    this.alertOut = [];
     this.dirty.add('sadin'); this.renderTab('sadin');
   },
 
@@ -93,6 +143,16 @@
   renderSadinPanel() {
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
+    const early = st.mode !== 'full';
+    let modeBox = $('sadin-mode');
+    if (!modeBox) {
+      modeBox = document.createElement('div');
+      modeBox.id = 'sadin-mode';
+      modeBox.className = 'flex flex-wrap gap-2 mb-2';
+      $('sadin-table').insertAdjacentElement('beforebegin', modeBox);
+    }
+    modeBox.innerHTML = `<button type="button" class="btn ${early ? 'btn-primary' : 'btn-ghost'} btn-sm" data-act="sadinMode" data-mode="early" aria-pressed="${early}">התראה מקדימה</button>
+      <button type="button" class="btn ${early ? 'btn-ghost' : 'btn-primary'} btn-sm" data-act="sadinMode" data-mode="full" aria-pressed="${!early}">סדין מלא</button>`;
     let summaryBox = $('sadin-summary');
     if (!summaryBox) {
       summaryBox = document.createElement('div');
@@ -103,8 +163,11 @@
     }
     summaryBox.innerHTML = '';
     summaryBox.classList.add('hidden');
-    $('sadin-table').className = st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sticky-scroll';
-    document.querySelectorAll('[data-sview]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sview === st.view)));
+    $('sadin-table').className = !early && st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sticky-scroll';
+    document.querySelectorAll('[data-sview]').forEach(b => {
+      b.classList.toggle('hidden', early);
+      b.setAttribute('aria-pressed', String(!early && b.dataset.sview === st.view));
+    });
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
     const subjects = [...new Set(entries.map(e => e.subject).concat(rawUnknown.map(r => r.subject)).filter(Boolean).map(s => GroupAnalyzer.sadinSubject(s)))].sort(natural);
@@ -125,41 +188,46 @@
       return;
     }
     const roster = this.filtered();
-    const all = GroupAnalyzer.sadinSheet(roster, st);
-    if (st.view === 'sheet' && (st.subject !== 'all' || st.teacher !== 'all')) {
+    let all = early ? SadinView.earlyWarningRows(roster, st) : GroupAnalyzer.sadinSheet(roster, st);
+    if (!early && st.view === 'sheet' && (st.subject !== 'all' || st.teacher !== 'all')) {
       const included = new Set(all.map(r => r.t.tz));
       GroupAnalyzer.sadinSheet(roster.filter(t => !included.has(t.tz))).forEach(r => {
         all.push({ ...r, subjects: new Map(), failing: 0, missed: 0 });
       });
     }
+    if (!early) all = all.map(r => normalizeRow(r, false));
+    const risks = r => Config.withRulesForGrade(r.t.gradeKey, () => [...r.subjects.values()].filter(riskSubject));
     const filters = [
-      ['all', 'כל החניכים', all.length],
+      ['all', early ? 'כל החניכים לטיפול' : 'כל החניכים', all.length],
       ['fail', 'עם נכשל שוטף', all.filter(r => r.failing > 0).length],
-      ['multiple', '2+ מקצועות בסיכון (שלילי/חסר)', all.filter(r => GroupAnalyzer.riskSubjects(r).length >= 2).length],
+      ['multiple', '2+ מקצועות בסיכון (שלילי/חסר)', all.filter(r => risks(r).length >= 2).length],
       ['missed', 'אירועים שהוחמצו', all.filter(r => r.missed > 0).length]
     ];
     setHtml('sadinFilterSelect', filters.map(([key, label, count]) => option(key, `${label} (${count})`, st.strip)).join(''));
     const selectedFilter = filters.find(([key]) => key === st.strip);
-    const rows = all.filter(r => st.strip === 'all' || (st.strip === 'fail' && r.failing > 0) || (st.strip === 'multiple' && GroupAnalyzer.riskSubjects(r).length >= 2) || (st.strip === 'missed' && r.missed > 0));
+    const rows = all.filter(r => st.strip === 'all' || (st.strip === 'fail' && r.failing > 0) || (st.strip === 'multiple' && risks(r).length >= 2) || (st.strip === 'missed' && r.missed > 0));
     const summary = this.sadinSummary(rows);
+    summary.cleanCount = rows.filter(r => r.overall != null && !risks(r).length).length;
     $('sadinFilterSelect').title = `${selectedFilter ? `${selectedFilter[1]} (${selectedFilter[2]}) · ` : ''}ממוצע כללי בסינון: ${Util.fmt(summary.avg, 1)}`;
     summaryBox.classList.remove('hidden');
     summaryBox.innerHTML = `<span><strong>ממוצע כללי בסינון:</strong> ${Util.fmt(summary.avg, 1)}</span>
       <span><strong>100% ציונים עוברים:</strong> ${summary.cleanCount} מתוך ${summary.gradedCount} עם ציונים</span>
       <span>מוצגים ${summary.totalCount} מתוך ${roster.length} חניכים בחיתוך</span>
+      ${early ? '<p class="w-full text-xs text-slate-500">מקצועות בגרות ויחידות פנימיות לפי כללי השכבה; מסלול 12 שנות לימוד בהכרעה ידנית אינו נכלל. ממצאים לא מאומתים מוצגים לבדיקה.</p>' : ''}
       ${signalSummary(roster, rows, this.state.sim)}`;
+    if (early) return SadinView.renderEarlyWarning.call(this, rows);
     if (st.view === 'flat') this.renderSadinFlat(rows);
     else this.renderSadinSheet(rows, st.subject !== 'all' || st.teacher !== 'all');
   },
 
   /** ציון כטקסט שטוח בשורה אחת, בלי רקע או מסגרת: אדום כהה לנכשל/חסר/מסומן, אפור-כהה לעובר */
-  sadinScore(value, missed = false) {
+  sadinScore(value, missed = false, social = false) {
     const text = value == null ? (missed ? 'חסר' : '—') : Util.fmt(value, 0);
-    const alert = missed || (value != null && !SignalEngine.isPassingScore(value));
+    const alert = missed || (value != null && !SignalEngine.isPassingScore(value, { social }));
     return `<span class="sadin-score ${alert ? 'is-bad' : value == null ? 'is-empty' : ''}">${text}</span>`;
   },
 
-  sadinTip(subject, hasGroups = true) {
+  sadinTip(subject, hasGroups = true, tz) {
     const exact = v => v == null ? '—' : String(v);
     const lines = [`${subject.name} · ממוצע מקצוע ${exact(subject.avg)} · ${subject.events.length} אירועים`];
     subject.entries.forEach(e => {
@@ -167,9 +235,31 @@
       e.events.forEach(ev => lines.push(`${ev.eventName || 'אירוע'}${ev.date ? ` · ${ev.date}` : ''}: ${ev.score != null ? exact(ev.score) : (ev.scoreRaw || 'חסר')} (משקל ${ev.weight})`));
     });
     subject.missed.forEach(m => {
-      if (!subject.events.some(e => e.key === m.key)) lines.push(`${m.eventName || 'אירוע'}${m.date ? ` · ${m.date}` : ''}: ${!hasGroups && m.kind === 'no-row' ? 'לא ניתן לקבוע ללא קובץ קבוצות' : 'חסר'} (משקל ${m.weight})`);
+      if (!subject.events.some(e => e.key === m.key)) lines.push(`${m.eventName || 'אירוע'}${m.date ? ` · ${m.date}` : ''}: ${confirmedEvent(m, hasGroups, tz) ? 'חסר' : 'לא ניתן לקבוע ללא שיבוץ מאומת'} (משקל ${m.weight})`);
     });
     return lines.join('\n');
+  },
+
+  renderEarlyWarning(rows) {
+    const prereqs = prerequisitesByGrade(rows.map(r => r.t));
+    const signals = SignalEngine.computeAll(this.state.sim).byTz;
+    const body = rows.map(r => {
+      const p = prereqs.get(r.t.gradeKey);
+      const findings = Config.withRulesForGrade(r.t.gradeKey, () => [...r.subjects.values()].filter(riskSubject).map(s => {
+        const missed = confirmedMissed(s, p.hasGroups, r.t.tz), uncertain = s.missed.size - missed;
+        const parts = [];
+        if (failingSubject(s)) parts.push(`ממוצע שוטף ${Util.fmt(s.avg, 1)} — נכשל`);
+        if (missed) parts.push(`${missed} אירועי הערכה שהוחמצו`);
+        if (uncertain) parts.push(`${uncertain} אירועים לא ניתנים לאימות ללא שיבוץ מאומת`);
+        return `<div><strong>${E(s.name)}:</strong> ${E(parts.join(' · '))}</div>`;
+      }).join(''));
+      const quality = signals.get(r.t.tz).dataQuality.some(f => f.id === 'data.sadin_not_enrolled')
+        ? '<div class="text-slate-500">איכות נתונים: ציונים ללא שיבוץ — לבדיקה</div>' : '';
+      return `<tr><td><button type="button" class="font-bold text-indigo-700 hover:underline" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(r.t.name)} · ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
+        <td>${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td><td>${findings}</td><td>${quality || '—'}</td></tr>`;
+    }).join('');
+    setHtml('sadin-table', `<table class="grid w-full text-right"><thead><tr><th>חניך</th><th>כיתה</th><th>ממצאים בשוטף</th><th>איכות נתונים</th></tr></thead>
+      <tbody>${body || '<tr><td colspan="4" class="text-center text-slate-500 py-8">אין ממצאים להצגה בנתונים הזמינים</td></tr>'}</tbody></table>`);
   },
 
   renderSadinSheet(rows, eventsMode) {
@@ -178,7 +268,16 @@
     const rank = s => { const i = coreOrder.indexOf(s); return i < 0 ? coreOrder.length : i; };
     /* עמודות קבועות: כל מקצועות הסדין של השכבה (ללא תלות בחיפוש, בכיתה או בסינון השורות) */
     const all = GroupAnalyzer.sadinSheet(this.filtered(false, true), this.state.sadin);
+    const columnPrereqs = prerequisitesByGrade(all.map(r => r.t));
+    const hasMissing = (s, r, key) => {
+      const m = s.missed.get(key);
+      return !!m && confirmedEvent(m, columnPrereqs.get(r.t.gradeKey).hasGroups, r.t.tz);
+    };
     const names = [...new Set(all.flatMap(r => [...r.subjects.keys()]))]
+      .filter(name => all.some(r => {
+        const s = r.subjects.get(name);
+        return s && (s.avg != null || s.events.some(hasEventData) || [...s.missed.keys()].some(key => hasMissing(s, r, key)));
+      }))
       .sort((a, b) => rank(a) - rank(b) || natural(a, b));
     const columns = [];
     names.forEach(name => {
@@ -191,6 +290,10 @@
           s.missed.forEach(e => { if (!events.has(e.key)) events.set(e.key, e); });
         });
         [...events.values()].sort((a, b) => (a.date || '').localeCompare(b.date || '') || natural(a.eventName, b.eventName) || natural(a.groupId, b.groupId)).forEach(e => {
+          if (!all.some(r => {
+            const s = r.subjects.get(name);
+            return s && (s.events.some(ev => ev.key === e.key && hasEventData(ev)) || hasMissing(s, r, e.key));
+          })) return;
           const header = `${names.length > 1 ? `${name} · ` : ''}${e.eventName || 'אירוע'}${e.date ? ` · ${e.date}` : ''} (משקל ${e.weight})${e.teacher ? ` · ${e.teacher}` : ''}${e.groupId ? ` [${e.groupId}]` : ''}`;
           columns.push({ kind: 'event', name, event: e, header });
         });
@@ -205,34 +308,38 @@
     const wStyle = key => `width:${widthOf(key)}px;min-width:${widthOf(key)}px;max-width:${widthOf(key)}px`;
     const body = rowsSorted.map(r => {
       const readiness = prereqs.get(r.t.gradeKey);
+      const score = (value, missed, social) => Config.withRulesForGrade(r.t.gradeKey, () => this.sadinScore(value, missed, social));
+      const hasSocial = Store.currentOf(r.t.tz).some(e => e.avg != null && isSocial(e.subject));
+      const overall = hasSocial && r.overall != null
+        ? `<span class="sadin-score">${Util.fmt(r.overall, 0)}</span>` : score(r.overall, false, false);
       const cells = columns.map(col => {
         const s = r.subjects.get(col.name);
         const sty = wStyle(colKey(col));
         if (!s) return `<td class="sx-s text-slate-300" style="${sty}">—</td>`;
         if (col.kind === 'event') {
           const ev = s.events.find(x => x.key === col.event.key), missing = s.missed.get(col.event.key);
-          const uncertain = missing && !readiness.hasGroups && missing.kind === 'no-row';
+          const uncertain = missing && !confirmedEvent(missing, readiness.hasGroups, r.t.tz);
           const missed = !!missing && !uncertain;
           const val = ev && ev.score != null ? ev.score : null;
           const text = ev && ev.score == null && ev.scoreRaw ? String(ev.scoreRaw) : '';
-          const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : uncertain ? 'לא ניתן לקבוע ללא קובץ קבוצות' : '—')}`;
-          return `<td class="sx-s" style="${sty}" title="${E(eventTip)}">${val != null || missed ? this.sadinScore(val, missed) : text ? E(text) : '<span class="text-slate-300">—</span>'}</td>`;
+          const eventTip = `${col.name} · ${col.event.eventName || 'אירוע'}${col.event.date ? ` · ${col.event.date}` : ''} · משקל ${col.event.weight} · ${val != null ? String(val) : text || (missed ? 'חסר' : uncertain ? 'לא ניתן לקבוע ללא שיבוץ מאומת' : '—')}`;
+          return `<td class="sx-s" style="${sty}" title="${E(eventTip)}">${val != null || missed ? score(val, missed, isSocial(col.name)) : text ? E(text) : '<span class="text-slate-300">—</span>'}</td>`;
         }
-        return `<td class="sx-s" style="${sty}"><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s, readiness.hasGroups))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${this.sadinScore(s.avg, confirmedMissed(s, readiness.hasGroups) > 0)}</button></td>`;
+        return `<td class="sx-s" style="${sty}"><button type="button" class="w-full text-center" data-act="sadinPop" data-tip="${E(this.sadinTip(s, readiness.hasGroups, r.t.tz))}" aria-label="${E(`${col.name}: ממוצע ${Util.fmt(s.avg, 1)}. הצגת פירוט`)}">${score(s.avg, confirmedMissed(s, readiness.hasGroups, r.t.tz) > 0, isSocial(col.name))}</button></td>`;
       }).join('');
       /* נכשלים וחסרים בתגים נפרדים, כדי שלא יתבלבלו זה בזה */
-      const missed = [...r.subjects.values()].reduce((n, s) => n + confirmedMissed(s, readiness.hasGroups), 0);
+      const missed = [...r.subjects.values()].reduce((n, s) => n + confirmedMissed(s, readiness.hasGroups, r.t.tz), 0);
       const uncertain = r.missed - missed;
       const hasGrade = [...r.subjects.values()].some(s => s.avg != null);
       const negBadges = !readiness.hasSadin || (!hasGrade && !r.failing && !missed && !uncertain)
         ? '<span class="text-slate-500">לא ניתן לקבוע</span>'
         : r.failing || missed || uncertain
-          ? `<span class="neg-cell">${r.failing ? `<span class="neg-badge neg-fail">${r.failing} נכשל</span>` : ''}${missed ? `<span class="neg-badge neg-miss">${missed} חסר</span>` : ''}${uncertain ? `<span class="text-slate-500" title="לא ניתן לאמת ללא קובץ קבוצות">${uncertain} לבדיקה</span>` : ''}</span>`
+          ? `<span class="neg-cell">${r.failing ? `<span class="neg-badge neg-fail">${r.failing} נכשל</span>` : ''}${missed ? `<span class="neg-badge neg-miss">${missed} חסר</span>` : ''}${uncertain ? `<span class="text-slate-500" title="לא ניתן לאמת ללא שיבוץ מאומת">${uncertain} לבדיקה</span>` : ''}</span>`
           : '<span class="neg-ok">✓ תקין</span>';
       return `<tr><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(r.t.name)} · ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
         <td class="sx-room" style="${wStyle('homeroom')}">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>
-        <td class="sx-avg font-bold" style="${wStyle('avg')}" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}`)}">${this.sadinScore(r.overall, false)}</td>
-        <td class="sx-neg" style="${wStyle('negatives')}" title="${E(`${r.failing} נכשלים · ${missed} חסרים${uncertain ? ` · ${uncertain} לא אומתו ללא קבוצות` : ''}`)}">${negBadges}</td>${cells}</tr>`;
+        <td class="sx-avg font-bold" style="${wStyle('avg')}" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}${hasSocial ? ' · כולל מעורבות חברתית בסולם שונה' : ''}`)}">${overall}</td>
+        <td class="sx-neg" style="${wStyle('negatives')}" title="${E(`${r.failing} נכשלים · ${missed} חסרים${uncertain ? ` · ${uncertain} ללא שיבוץ מאומת` : ''}`)}">${negBadges}</td>${cells}</tr>`;
     }).join('');
     const sort = this.state.sadinSort, sortKey = sort.key === 'class_name' ? 'homeroom' : sort.key;
     const th = (key, label, cls = '', title = '') => {
@@ -326,7 +433,7 @@
           ? `<td rowspan="${all.length}" class="fx-name student-end"><button type="button" class="font-semibold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td><td rowspan="${all.length}" class="fx-room student-end">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>`
           : '';
         return `<tr>${who}
-          <td class="fx-subj${end}">${E(s.name)}</td><td class="fx-teacher${end}" title="${E(teacher)}">${E(teacher || '—')}</td><td class="fx-n${end}">${n}</td><td class="fx-avg${end}"><button type="button" data-act="sadinPop" data-tip="${E(this.sadinTip(s, hasGroups))}" aria-label="${E(`${s.name}: הצגת פירוט הציונים`)}">${this.sadinScore(s.avg, confirmedMissed(s, hasGroups) > 0)}</button></td></tr>`;
+          <td class="fx-subj${end}">${E(s.name)}</td><td class="fx-teacher${end}" title="${E(teacher)}">${E(teacher || '—')}</td><td class="fx-n${end}">${n}</td><td class="fx-avg${end}"><button type="button" data-act="sadinPop" data-tip="${E(this.sadinTip(s, hasGroups, r.t.tz))}" aria-label="${E(`${s.name}: הצגת פירוט הציונים`)}">${Config.withRulesForGrade(r.t.gradeKey, () => this.sadinScore(s.avg, confirmedMissed(s, hasGroups, r.t.tz) > 0, isSocial(s.name)))}</button></td></tr>`;
     }).join('')).join('');
     setHtml('sadin-table', `<table class="grid sadin-flat" style="width:745px"><colgroup><col style="width:165px"><col style="width:115px"><col style="width:135px"><col style="width:140px"><col style="width:80px"><col style="width:110px"></colgroup>
       <thead><tr><th>חניך</th><th>כיתה</th><th>מקצוע</th><th>מורה</th><th>אירועים</th><th>ממוצע משוקלל</th></tr></thead><tbody>${body || '<tr><td colspan="6" class="text-center py-8">אין נתונים בסינון הנוכחי</td></tr>'}</tbody></table>`);
@@ -351,7 +458,8 @@
         <select id="alertBy" class="inp" aria-label="קיבוץ התראות לפי"><option value="class" ${st.alertBy === 'class' ? 'selected' : ''}>לפי כיתה</option><option value="teacher" ${st.alertBy === 'teacher' ? 'selected' : ''}>לפי מורה</option></select>
         <label class="flex items-center gap-1 text-sm"><input type="checkbox" id="alertInitials" ${st.initials ? 'checked' : ''}>ראשי תיבות בלבד</label>
         <button type="button" class="btn btn-primary btn-sm" data-act="generateAlerts">הפק רשימת התראות</button>
-      </div><div id="alertOut" class="grid md:grid-cols-2 gap-3" aria-live="polite"></div>`, true);
+      </div><p class="text-xs text-slate-500 mb-3">לטיפול מיידי: ממוצע מתחת לסף הקיזוז של השכבה או שתי החמצות מאומתות באותו מקצוע ואצל אותו מורה. רק שיבוצים מאומתים ומקצועות הרלוונטיים לבגרות נכללים.</p>
+      <div id="alertOut" class="grid md:grid-cols-2 gap-3" aria-live="polite"></div>`, true);
     this.renderAlerts();
   },
 
@@ -385,19 +493,53 @@
       this.renderAlerts();
       return this.toast('לא ניתן להפיק התראות: חסר קובץ סדין או קבוצות לשכבות שבסינון', 'warn');
     }
-    const res = GroupAnalyzer.generateAlertsText({
-      by, roster: ready, initials: this.state.sadin.initials, getEval: tz => {
-        const ev = this.getEval(tz), t = Store.trainees.get(tz);
-        return ev && !prereqs.get(t.gradeKey).hasBagrut
-          ? { ...ev, blockers: ev.blockers.filter(b => b.k !== 'internal') } : ev;
-      }
-    });
-    this.alertOut = res.sections;
+    const groups = new Map(), st = this.state.sadin;
+    const sheet = GroupAnalyzer.sadinSheet(ready, st).map(r => normalizeRow(r, true));
+    sheet.forEach(r => Config.withRulesForGrade(r.t.gradeKey, () => {
+      const ex = Config.getException(r.t.tz);
+      if (ex.isException && ex.overrideStatus === 'twelve') return;
+      const enrolled = new Set(Store.groupsOf(r.t.tz).filter(g => g.inFile).map(g => String(g.groupId)));
+      const threshold = Math.min(Number(Config.rules().passGrade), Number(Config.rules().compensationMin));
+      r.subjects.forEach(s => {
+        const teachers = new Map();
+        const bucket = teacher => {
+          if (!teachers.has(teacher)) teachers.set(teacher, { events: [], missed: new Map() });
+          return teachers.get(teacher);
+        };
+        s.entries.forEach(e => {
+          if (!enrolled.has(String(e.groupId))) return;
+          const teacher = (Store.groups.get(e.groupId) || {}).teacher || e.teacher || 'ללא מורה';
+          bucket(teacher).events.push(...e.events);
+        });
+        s.missed.forEach(m => {
+          if (!enrolled.has(String(m.groupId))) return;
+          const teacher = (Store.groups.get(m.groupId) || {}).teacher || m.teacher || 'ללא מורה';
+          bucket(teacher).missed.set(m.key, m);
+        });
+        teachers.forEach((items, teacher) => {
+          const avg = Store.weightedAverage(items.events).avg;
+          const severe = avg != null && Number.isFinite(threshold) && avg < threshold &&
+            !SignalEngine.isPassingScore(avg, { social: isSocial(s.name) });
+          if (!severe && items.missed.size < 2) return;
+          const parts = [];
+          if (severe) parts.push(`ממוצע ${Util.fmt(avg, 1)} (מתחת לסף ${threshold})`);
+          if (items.missed.size >= 2) parts.push(`${items.missed.size} אירועים שהוחמצו`);
+          const name = st.initials && r.t.lastName ? `${r.t.firstName} ${r.t.lastName[0]}.` : r.t.name;
+          const title = by === 'teacher' ? `מורה: ${teacher}` : `כיתה: ${Config.classLabel(r.t.classKey)}`;
+          if (!groups.has(title)) groups.set(title, []);
+          groups.get(title).push(`• ${name} (${Config.classLabel(r.t.classKey)}) – ${s.name}: ${parts.join(' · ')}${by === 'teacher' ? '' : ` | מורה: ${teacher}`}`);
+        });
+      });
+    }));
+    this.alertOut = [...groups].sort((a, b) => natural(a[0], b[0])).map(([title, lines]) =>
+      ({ title, count: lines.length, text: `*${title}*\n${lines.join('\n')}` }));
     this.renderAlerts();
     const note = skipped ? `; דולגו ${skipped} חניכים ללא סדין או קבוצות לשכבתם` : '';
-    if (!res.sections.length) return this.toast(`לא נמצאו פריטים להתראה בנתונים הזמינים${note}`, skipped ? 'warn' : 'ok');
-    const copied = await this.copyText(res.text);
-    this.toast((copied ? `הופקו ${res.sections.length} רשימות (${res.total} פריטים) והועתקו ללוח` : 'הרשימות הופקו, אך ההעתקה ללוח נכשלה – אפשר להעתיק מכל כרטיס') + note, copied && !skipped ? 'ok' : 'warn');
+    if (!this.alertOut.length) return this.toast(`לא נמצאו פריטים קריטיים להתראה בנתונים הזמינים${note}`, skipped ? 'warn' : 'ok');
+    const total = this.alertOut.reduce((n, section) => n + section.count, 0);
+    const text = `*התראות ציונים שוטפים לטיפול מיידי – ${new Date().toLocaleDateString('he-IL')}*\n\n${this.alertOut.map(s => s.text).join('\n\n')}\n\nנא לטפל / לעדכן. תודה.`;
+    const copied = await this.copyText(text);
+    this.toast((copied ? `הופקו ${this.alertOut.length} רשימות (${total} פריטים) והועתקו ללוח` : 'הרשימות הופקו, אך ההעתקה ללוח נכשלה – אפשר להעתיק מכל כרטיס') + note, copied && !skipped ? 'ok' : 'warn');
   },
 
   showMissed() {
@@ -406,9 +548,9 @@
     const KIND = { 'no-row': 'אין שורה', empty: 'ללא ציון', zero: 'ציון 0' };
     const rows = res.missed.slice(0, 1000).map(m => {
       const t = Store.trainees.get(m.tz);
-      const uncertain = m.kind === 'no-row' && !prereqs.get(t.gradeKey).hasGroups;
+      const uncertain = !confirmedEvent(m, prereqs.get(t.gradeKey).hasGroups, t.tz);
       return `<tr class="cursor-pointer" data-act="openProfile" data-tz="${E(m.tz)}"><td class="font-medium whitespace-nowrap">${E(t.name)}</td><td>${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}</td>
-        <td>${E(m.subject)}</td><td>${E(m.teacher)}</td><td>${E(m.eventName)} (${m.weight})</td><td>${E(m.date || '—')}</td><td>${uncertain ? UI.signalBadge('placement.unknown', 'לא ניתן לקבוע ללא קבוצות') : `<span class="badge tier-3">${KIND[m.kind]}</span>`}</td></tr>`;
+        <td>${E(m.subject)}</td><td>${E(m.teacher)}</td><td>${E(m.eventName)} (${m.weight})</td><td>${E(m.date || '—')}</td><td>${uncertain ? UI.signalBadge('placement.unknown', 'לא ניתן לקבוע ללא שיבוץ מאומת') : `<span class="badge tier-3">${KIND[m.kind]}</span>`}</td></tr>`;
     }).join('');
     const incomplete = [...prereqs].filter(([, p]) => !p.hasSadin || !p.hasGroups).map(([grade]) => grade);
     this.openModal(`

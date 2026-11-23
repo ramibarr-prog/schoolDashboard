@@ -50,7 +50,7 @@ const App = {
     sadinSort: { key: 'class_name', dir: 'asc' },
     /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
     sadinColWidths: {},
-    sadin: { subject: 'all', teacher: 'all', view: 'sheet', strip: 'all', alertBy: 'teacher', initials: false },
+    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false },
     profileTz: null,
     selectedSearchTz: null,
     settingsView: 'roster'
@@ -260,8 +260,7 @@ const App = {
     toggle('[data-bagrut-only]', name === 'bagrut');
     toggle('[data-profile-only]', name === 'profile');
     toggle('[data-profile-exclude]', name !== 'profile');
-    /* חדר הבקרה מסונן לפי שכבה וכיתת אם בלבד; מסלול וחיפוש מוסתרים בו (בלי לדרוס את ההסתרה שבכרטיס 360°) */
-    document.querySelectorAll('[data-hide-overview]').forEach(el => el.classList.toggle('hidden', name === 'overview' || (name === 'profile' && el.hasAttribute('data-profile-exclude'))));
+    document.querySelectorAll('[data-hide-overview]').forEach(el => el.classList.toggle('hidden', !['groups', 'bagrut', 'sadin'].includes(name)));
     [['groupActions', 'groups'], ['sadinActions', 'sadin'], ['bagrutActions', 'bagrut'], ['profileSwitcher', 'profile']].forEach(([id, tab]) => {
       const el = $(id);
       if (el) el.classList.toggle('flex', name === tab);
@@ -450,7 +449,7 @@ const App = {
     if (item.kind === 's') this.selectStudent(item.tz); else this.selectGroup(item.id);
   },
 
-  /** נעילת הסינון לחניך אחד: טבלאות מסוננות אליו, בקבוצות מוצגות קבוצותיו בלבד, ובשאר הלשוניות נפתח כרטיס ה-360° שלו */
+  /** בחירת חניך בחיפוש המהיר פותחת את כרטיס ה-360° שלו. */
   selectStudent(tz) {
     const t = Store.trainees.get(tz);
     if (!t) return;
@@ -460,8 +459,7 @@ const App = {
     setVal('globalSearch', t.name);
     FILTERED_TABS.forEach(tab => this.dirty.add(tab));
     this.renderSearchChrome();
-    if (['groups', 'bagrut', 'sadin'].includes(this.state.tab)) this.renderTab(this.state.tab);
-    else this.openProfile(tz);
+    this.openProfile(tz);
   },
 
   selectGroup(groupId) {
@@ -537,6 +535,18 @@ const App = {
     const banner = $('overridesBanner');
     if (banner) { banner.classList.toggle('hidden', !count); banner.textContent = `🔀 ${count} דריסות שיוך פעילות`; }
     ['bagrut', 'groups', 'sadin', 'roster'].forEach(p => this.renderFreshnessBar(p));
+    if (this.state.tab === 'settings' && $('qualityDetails')) {
+      const signals = SignalEngine.computeAll(this.state.sim).list;
+      const rows = signals.filter(s => s.dataQuality.length).map(s => {
+        const t = Store.trainees.get(s.tz);
+        return `<li><button type="button" class="underline" data-act="openProfile" data-tz="${E(s.tz)}">${E(t.name)}</button> · ${E(s.dataQuality.map(flag => flag.detail || flag.label).join(' · '))}</li>`;
+      }).join('');
+      const outside = Object.keys(DATASETS).filter(key => Config.reconcile(key).unknown.length)
+        .map(key => `<button type="button" class="btn btn-ghost btn-sm" data-act="showUnknown" data-key="${key}">${E(DATASETS[key].title)}: חניכים מחוץ למצבת (${Config.reconcile(key).unknown.length})</button>`).join(' ');
+      setHtml('qualityDetails', `<h3 class="font-semibold">איכות נתונים — כלל בית הספר</h3>
+        ${rows ? `<ul class="text-sm space-y-1">${rows}</ul>` : '<p class="text-sm text-slate-500">לא נמצאו דגלי איכות נתונים לחניכים במצבת.</p>'}
+        ${outside ? `<div class="flex flex-wrap gap-2">${outside}</div>` : ''}`);
+    }
   },
 
   /** כלים טכניים בלשונית ההגדרות: מיפוי עמודות וניקוי נתונים לכל קובץ משנה (כולל הסרת סדין לפי שכבה) */
@@ -875,7 +885,12 @@ const App = {
   subjectDisplayCell(...args) { return ProfileView.subjectDisplayCell.apply(this, args); },
   majorDisplayCell(...args) { return BagrutView.majorDisplayCell.apply(this, args); },
   reverseBadges(...args) { return BagrutView.reverseBadges.apply(this, args); },
-  renderBagrutPanel(...args) { return BagrutView.renderBagrutPanel.apply(this, args); },
+  renderBagrutPanel(...args) {
+    const result = BagrutView.renderBagrutPanel.apply(this, args);
+    const reset = $('bagrutRiskReset');
+    if (reset) reset.hidden = this.state.bagrut.chip !== 'notok';
+    return result;
+  },
   renderBagrutKpis(...args) { return BagrutView.renderBagrutKpis.apply(this, args); },
   subjectDrillModel(...args) { return BagrutView.subjectDrillModel.apply(this, args); },
   readinessMatch(...args) { return BagrutView.readinessMatch.apply(this, args); },
@@ -1175,12 +1190,27 @@ const App = {
     bagrutMode(el) { return BagrutView.bagrutMode.call(this, el); },
     closeModal() { this.closeModal(); },
     sadinAlerts() { this.openSadinAlerts(); },
+    sadinMode(el) { return SadinView.sadinMode.call(this, el); },
     generateAlerts() { this.generateAlerts(); },
     sadinPop(el) {
       if (this._sadinPinned === el) this.hideSadinPop();
       else this.showSadinPop(el, true);
     },
     goSettings() { this.showTab('settings'); },
+    openDataTools() {
+      this.state.settingsView = 'system';
+      this.dirty.add('settings');
+      this.showTab('settings');
+      const card = $('dataToolsCard');
+      if (card && card.scrollIntoView) card.scrollIntoView({ block: 'start' });
+    },
+    openDataQuality() {
+      this.state.settingsView = 'system';
+      this.dirty.add('settings');
+      this.showTab('settings');
+      const report = $('qualityDetails');
+      if (report && report.scrollIntoView) report.scrollIntoView({ block: 'start' });
+    },
     settingsView(...args) { return RulesView.settingsView.apply(this, args); },
     quarantineClear(...args) { return RulesView.quarantineClear.apply(this, args); },
     quarantineAudit(...args) { return RulesView.quarantineAudit.apply(this, args); },
@@ -1201,7 +1231,7 @@ const App = {
         /* "כל השכבות" מכרטיס כללי אינו מבטל שכבה שנבחרה במפורש בסינון העליון */
         if (chip !== 'attention' && scope && (scope !== 'all' || this.state.filters.grade === 'all')) { this.applyBagrutScope(scope); this.alertOut = []; }
       }
-      if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', subject: 'all', teacher: 'all' }); this.dirty.add('sadin'); }
+      if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', mode: !strip || strip === 'all' ? 'early' : 'full', subject: 'all', teacher: 'all' }); this.alertOut = []; this.dirty.add('sadin'); }
       if (go === 'groups') {
         Object.assign(this.state.groups, { subject: 'all', teacher: 'all' });
         Object.assign(this.state, { groupsViewMode: view === 'explorer' ? 'explorer' : 'anomalies', anomalyCategoryFilter: 'all', anomalySubject: 'all' });
@@ -1248,6 +1278,8 @@ const App = {
     bagrutDrillBack() { return BagrutView.bagrutDrillBack.call(this); },
     bagrutMxSort(el) { return BagrutView.bagrutMxSort.call(this, el); },
     bagrutChip(el) { return BagrutView.bagrutChip.call(this, el); },
+    bagrutTargets() { return BagrutView.bagrutTargets.call(this); },
+    exportTargets30() { return BagrutView.exportTargets30.call(this); },
     bagrutScope(el) { return BagrutView.bagrutScope.call(this, el); },
     excModal(el) { this.openExceptionModal(el.dataset.tz); },
     excModalSave(el) { this.saveProfileException(el); },

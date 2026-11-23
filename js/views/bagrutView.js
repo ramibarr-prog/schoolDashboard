@@ -16,33 +16,64 @@
   }
 
   function signalSummary(rows, signals, sim) {
-    const pedagogical = new Map(), quality = new Map();
-    const add = (map, flag, tz) => {
-      if (!map.has(flag.id)) map.set(flag.id, new Set());
-      map.get(flag.id).add(tz);
-    };
-    rows.forEach(({ t }) => {
-      const signal = signals.get(t.tz);
-      signal.pedagogical.filter(f => f.family === 'bagrut').forEach(f => add(pedagogical, f, t.tz));
-      signal.dataQuality.filter(f => f.id === 'data.manual_review').forEach(f => add(quality, f, t.tz));
-    });
+    const quality = rows.filter(({ t }) => signals.get(t.tz).ev.manualReview.required &&
+      signals.get(t.tz).dataQuality.some(f => f.id === 'data.manual_review')).length;
     const missing = [...new Set(rows.map(r => r.t.gradeKey))].filter(grade => {
       const p = SignalEngine.prerequisitesFor(grade);
       return !p.hasBagrut && !(sim.useCurrent && p.hasSadin);
     });
-    const badges = map => [...map].map(([id, ids]) =>
-      UI.signalBadge(id, `${SignalEngine.CATALOG[id].label}: ${ids.size}`)).join(' ');
-    return `<div class="card p-3 mb-3" aria-label="דגלי בגרות ואיכות נתונים">
-      ${missing.length ? `<div class="mb-2">${UI.signalBadge('bagrut.unknown', `לא ניתן לקבוע — חסר קובץ בגרות לשכבות ${missing.map(Util.gl).join(', ')}`)}</div>` : ''}
-      <div class="grid md:grid-cols-2 gap-3">
-        <section aria-label="דגלי בגרות פדגוגיים"><strong>דגלים פדגוגיים:</strong> ${badges(pedagogical) || '<span class="text-slate-500">אין חניכים להצגה</span>'}</section>
-        <section aria-label="איכות נתוני בגרות"><strong>איכות נתונים והחלטת רכזת:</strong> ${badges(quality) || '<span class="text-slate-500">לא אותרו דגלי איכות נתונים</span>'}</section>
-      </div><p class="text-xs text-slate-500 mt-1">נתוני הצפי והסינונים משקפים גם מצבים הממתינים להחלטת רכזת.</p></div>`;
+    if (!missing.length && !quality) return '';
+    return `<div class="card p-3 mb-3 text-sm text-slate-600" aria-label="איכות נתוני בגרות">
+      ${missing.length ? `<div>${UI.signalBadge('bagrut.unknown', `לא ניתן לקבוע — חסר קובץ בגרות לשכבות ${missing.map(Util.gl).join(', ')}`)}</div>` : ''}
+      ${quality ? `<div>איכות נתונים: ${quality} חניכים נדרשים לבדיקת רכזת. הבדיקה אינה דגל סיכון פדגוגי.</div>` : ''}</div>`;
+  }
+
+  function target30(s, ev, rules) {
+    const missing = s.unresolved.concat(s.pending);
+    const internal = missing.filter(c => c.internal);
+    const allInternal = s.comps.filter(c => c.internal);
+    const total = s.comps.reduce((n, c) => n + c.weight, 0);
+    const internalWeight = internal.reduce((n, c) => n + c.weight, 0);
+    const totalInternalWeight = allInternal.reduce((n, c) => n + c.weight, 0);
+    if (!total || !internal.length || Math.abs(totalInternalWeight * 100 / total - 30) > 0.000001) return null;
+    const r = s.reverse;
+    const notes = [];
+    if (ev.manual) notes.push('קיימת הכרעה ידנית; היעד אינו משנה אותה');
+    if (ev.manualReview.required) notes.push('נדרשת החלטת רכזת');
+    let target = 'לא ניתן לקבוע';
+    if (!r || missing.some(c => !c.internal)) {
+      notes.push('נדרשים נתונים נוספים או בדיקה של הרכיבים החסרים');
+    } else {
+      const recordedInternal = allInternal.filter(c => c.state === 'num').reduce((n, c) => n + c.num * c.weight, 0);
+      const fullTarget = n => Math.ceil(+((recordedInternal + Math.max(1, n) * internalWeight) / totalInternalWeight).toFixed(6));
+      const compUsed = ev.subjects.filter(subject => subject.status === 'comp' && !subject.critical).length;
+      const canCompensate = !s.critical && rules.allowCompensationRule && compUsed < rules.maxCompensations &&
+        r.requiredFor45 <= 100 && r.requiredFor45 < Math.max(1, r.required30);
+      if (canCompensate) {
+        target = String(fullTarget(r.requiredFor45));
+        notes.push(`לקיזוז ${r.compMin}; כפוף לכללי הזכאות ולמכסת הקיזוז`);
+        notes.push(r.required30 <= 100 ? `למעבר ללא קיזוז נדרש ${fullTarget(r.required30)} ב-30%` : `מעבר ללא קיזוז אינו אפשרי; מקסימום ${r.max}`);
+      } else if (r.required30 <= 100) {
+        target = String(fullTarget(r.required30));
+        notes.push('למעבר במקצוע ללא קיזוז');
+      } else {
+        target = 'לא אפשרי';
+        notes.push(`גם 100 אינו מספיק; מקסימום במקצוע ${r.max}`);
+      }
+      if (internalWeight !== totalInternalWeight) {
+        const required = canCompensate ? r.requiredFor45 : r.required30;
+        if (required <= 100) notes.push(`ברכיב החסר (${r.pct}% ממשקל המקצוע) נדרש ${Math.max(1, required)}`);
+      }
+      if (allInternal.length > 1) notes.push('היעד הוא ממוצע משוקלל של רכיבי ה-30%');
+    }
+    const current = s.reportedScore == null ? 'אין ציון מספרי מדווח' :
+      `ממוצע הציונים המדווחים ${Util.fmt(s.reportedScore, 1)}; דווחו ${s.reportedPct}% ממשקל המקצוע`;
+    return { current, target, note: notes.join(' · ') };
   }
 
   window.BagrutView = {
   bagrutSubjectChange(value) {
-    Object.assign(this.state.bagrut, { drill: value, readinessClass: '', readinessFilter: 'all' });
+    Object.assign(this.state.bagrut, { drill: value, readinessClass: '', readinessFilter: 'all', targets: false });
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
@@ -66,7 +97,7 @@
   },
 
   bagrutDrill(el) {
-    Object.assign(this.state.bagrut, { drill: el.dataset.sel, readinessClass: '', readinessFilter: 'all' });
+    Object.assign(this.state.bagrut, { drill: el.dataset.sel, readinessClass: '', readinessFilter: 'all', targets: false });
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
@@ -97,6 +128,53 @@
     const st = this.state.bagrut, chip = el.dataset.chip;
     st.chip = st.chip === chip ? 'all' : chip;
     this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
+  bagrutTargets() {
+    const st = this.state.bagrut;
+    st.targets = !st.targets;
+    if (st.targets) Object.assign(st, { drill: 'all', readinessClass: '', readinessFilter: 'all' });
+    this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
+  target30Rows(list) {
+    const rules = Config.rulesForGrade('יב'), result = [];
+    list.filter(({ t }) => t.gradeKey === 'יב').forEach(({ t }) => {
+      const ev = BagrutEngine.evaluate(t.tz, { fullMode: true });
+      ev.subjects.forEach(s => {
+        const target = target30(s, ev, rules);
+        if (target) result.push({ t, subject: s.name, ...target });
+      });
+    });
+    return result;
+  },
+
+  exportTargets30() {
+    if (!SignalEngine.prerequisitesFor('יב').hasBagrut) {
+      this.toast('לא ניתן לייצא: חסר קובץ בגרות לשכבת י"ב', 'error');
+      return;
+    }
+    const rows = this.bagrutList(this.bagrutScopeInfo(this.dashRows()).rows);
+    const targets = BagrutView.target30Rows.call(this, rows);
+    if (!targets.length) {
+      this.toast('אין יעדי 30% לייצוא בסינון הנוכחי', 'warn');
+      return;
+    }
+    const quote = value => `"${String(value).replace(/"/g, '""')}"`;
+    const safe = value => {
+      const text = String(value == null ? '' : value);
+      return quote(/^[\t\r\n]|^[\s\u0000-\u001f]*[=+\-@]/.test(text) ? `'${text}` : text);
+    };
+    const id = value => /^\d+$/.test(value) ? quote(`="${value}"`) : safe(value);
+    const header = ['ת"ז', 'שם חניך', 'כיתה', 'מקצוע', 'מצב/ציון נוכחי', 'יעד מינימלי ב-30%', 'הערה'];
+    const lines = [header.map(safe).join(','), ...targets.map(r =>
+      [id(r.t.tz), ...[r.t.name, Config.classLabel(r.t.classKey), r.subject, r.current, r.target, r.note].map(safe)].join(','))];
+    const blob = new Blob(['\ufeff', lines.join('\r\n'), '\r\n'], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `bagrut-target-30-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   },
 
   bagrutScope(el) {
@@ -201,7 +279,7 @@
   },
 
   readinessBreakdown(m) {
-    return `${m.fail} נכשלים · ${m.borderline} גבוליים · ${m.noGrade} ללא ציון${m.unreported ? ` · ${m.unreported} טרם דווח` : ''}`;
+    return `${m.fail} חניכים נכשלים · ${m.borderline} חניכים גבוליים · ${m.noGrade} חניכים ללא ציון${m.unreported ? ` · ${m.unreported} חניכים טרם דווחו` : ''}`;
   },
 
   readinessCompact(r) {
@@ -269,7 +347,7 @@
     const box = $('bagrut-scope');
     if (!box) return;
     if (!Store.hasData() || !info.show) { box.classList.add('hidden'); box.innerHTML = ''; return; }
-    const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} (${info.counts[id]})</button>`;
+    const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} · חניכים (${info.counts[id]})</button>`;
     box.classList.remove('hidden');
     const cohort = gk => ` • ${E(Config.getCohortNameForGrade(gk))}`;
     box.innerHTML = `<div class="scope-bar" role="group" aria-label="היקף שכבות בצפי הזכאות">
@@ -377,8 +455,24 @@
       .filter(r => !drill.currentOn || ((!st.readinessClass || r.t.classKey === st.readinessClass) && this.readinessMatch(r, st.readinessFilter)))
       .map(r => ({ t: r.t })) : list;
     const summary = signalSummary(displayed, signals, sim);
-    if (drill) return setHtml('bagrut-table', summary + this.bagrutSubjectMatrix(drill, signals));
-    setHtml('bagrut-table', summary + this.bagrutTable(list, signals));
+    const toggle = `<div class="flex flex-wrap items-center gap-2 mb-3"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutTargets" aria-pressed="${!!st.targets}">${st.targets ? 'חזרה לטבלת הזכאות' : 'תצוגת יעד 30% מינימלי'}</button></div>`;
+    if (st.targets) {
+      const hasBagrut = SignalEngine.prerequisitesFor('יב').hasBagrut;
+      const targets = hasBagrut ? BagrutView.target30Rows.call(this, list) : [];
+      const students = new Set(targets.map(r => r.t.tz)).size;
+      const body = targets.map(r => `<tr><td><button type="button" class="font-bold text-indigo-700 hover:underline" data-act="openProfile" data-tz="${E(r.t.tz)}">${E(r.t.name)}</button></td>
+        <td>${E(Config.classLabel(r.t.classKey))}</td><td>${E(r.subject)}</td><td>${E(r.current)}</td><td>${E(r.target)}</td><td>${E(r.note)}</td></tr>`).join('');
+      return setHtml('bagrut-table', `${toggle}
+        <div class="card p-3 mb-3 text-sm"><div class="flex flex-wrap items-center gap-3"><strong>יעד מינימלי בציון בית-ספרי (30%)</strong>
+        <span>${students} חניכים · ${targets.length} מקצועות</span>
+        <button type="button" class="btn btn-primary btn-sm" data-act="exportTargets30"${targets.length ? '' : ' disabled'}>ייצוא יעד 30% (CSV/Excel)</button></div>
+        <p class="text-slate-500 mt-1">שכבת י"ב בלבד, לפי הסינונים הפעילים; חישוב תעודה סופית מציונים מדווחים ללא סימולציה. יעד לקיזוז כפוף למכסה ואינו מבטיח זכאות או שימוש בו בכמה מקצועות יחד.</p></div>
+        ${!hasBagrut ? '<p class="text-slate-500">לא ניתן לקבוע — חסר קובץ בגרות לשכבת י"ב</p>' :
+        `<table class="grid w-full text-right"><thead><tr><th>חניך</th><th>כיתה</th><th>מקצוע</th><th>מצב/ציון נוכחי</th><th>יעד מינימלי ב-30%</th><th>הערה</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">אין רכיבי 30% חסרים בסינון הנוכחי</td></tr>'}</tbody></table>`}`);
+    }
+    if (drill) return setHtml('bagrut-table', toggle + summary + this.bagrutSubjectMatrix(drill, signals));
+    setHtml('bagrut-table', toggle + summary + this.bagrutTable(list, signals));
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
@@ -395,8 +489,8 @@
     }
     const active = this.state.bagrut.chip;
     const pct = (value, label, title) => `<div class="flex items-baseline gap-2" title="${E(title)}"><span class="text-2xl font-extrabold leading-none text-slate-900">${value}%</span><span class="text-xs font-semibold text-slate-600">${label}</span></div>`;
-    const quick = (id, cls, label, count, title) => `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(title)}">
-      <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${count}</span></button>`;
+    const quick = (id, cls, label, count, title) => `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(`${title} · ${count} חניכים`)}">
+      <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label} · חניכים</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${count}</span></button>`;
     const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
     const divider = '<span class="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true"></span>';
     const eligible = stats.total > 0 || !paceRows.length ? `
@@ -406,7 +500,7 @@
       </div>${divider}
       <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי צפי">
         ${quick('eligible', 'gstat-ok', 'זכאים', tierCount[1] + tierCount[2], `${TT[1]} + ${TT[2]}`)}
-        ${quick('tier3', 'gstat-amber', 'קרובים לזכאות', tierCount[3], TT[3])}
+        ${quick('tier3', 'gstat-amber', 'השלמה או החלטה', tierCount[3], TT[3])}
         ${quick('tier4', 'gstat-bad', 'בסיכון', tierCount[4], TT[4])}
       </div>` : '';
     let pace = '';
@@ -429,7 +523,7 @@
     box.classList.remove('hidden');
     const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
     box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}
-      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all">✕ הצג הכל</button></div>` : ''}</div>`;
+      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} חניכים · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all">✕ הצג הכל</button></div>` : ''}</div>`;
   },
 
   /** מודל אחד למקצוע בודד, משותף לפס המוכנות שב-#bagrut-kpis ולמטריצת השאלונים */
@@ -460,16 +554,16 @@
     let metrics = '', classes = '';
     if (d.currentOn && m && m.name) {
       const flt = (id, cls, label, n) => `<button type="button" class="gstat ${cls}" data-act="readinessFilter" data-filter="${id}" data-count="${n}" aria-pressed="${st.readinessFilter === id}">
-        <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label}</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${n}</span></button>`;
+        <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label} · חניכים</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${n}</span></button>`;
       metrics = `${divider}<div class="flex items-baseline gap-2" data-readiness-summary data-avg="${r.avg == null ? '' : r.avg}" data-off-track="${r.offTrack}" data-fail="${r.fail}" data-borderline="${r.borderline}" data-no-grade="${r.noGrade}" data-total="${r.total}" title="${E(this.readinessBreakdown(r))}">
-          <span class="text-2xl font-extrabold leading-none text-slate-900">${this.readinessAverage(r.avg)}</span><span class="text-xs font-semibold text-slate-600">ממוצע שוטף · ${r.offTrackPct}% לא בכיוון מתוך ${r.assessed}${r.unreported ? ` (+ ${r.unreported} טרם דווח)` : ''}</span></div>${divider}
+          <span class="text-2xl font-extrabold leading-none text-slate-900">${this.readinessAverage(r.avg)}</span><span class="text-xs font-semibold text-slate-600">ממוצע שוטף · ${r.offTrackPct}% לא בכיוון מתוך ${r.assessed} חניכים${r.unreported ? ` (+ ${r.unreported} חניכים טרם דווחו)` : ''}</span></div>${divider}
         <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי מוכנות">
           ${flt('offTrack', 'gstat-bad', 'לא בכיוון', r.offTrack)}
           ${flt('fail', 'gstat-bad', `נכשלים (&lt;${r.pass})`, r.fail)}
           ${flt('borderline', 'gstat-amber', `גבוליים (${r.pass}–64)`, r.borderline)}
           ${r.noGrade > 0 ? flt('noGrade', 'gstat-violet', 'ללא ציון', r.noGrade) : ''}</div>`;
       if (r.classes.length > 1) classes = `<div class="w-full flex flex-wrap gap-2" aria-label="השוואת מוכנות לפי כיתות">${r.classes.map(c => `<button type="button" class="rounded-lg border px-2.5 py-1.5 text-right text-xs ${st.readinessClass === c.key ? 'bg-amber-100 border-amber-500' : c.unreportedOnly ? 'bg-slate-100 text-slate-400' : 'bg-slate-50'}" data-act="bagrutReadinessClass" data-class="${E(c.key)}" data-off-track="${c.offTrackCount}" data-total="${c.total}" data-unreported-only="${c.unreportedOnly}" aria-pressed="${st.readinessClass === c.key}">
-        <span class="block font-bold">${E(Config.classLabel(c.key))} · ${c.unreportedOnly ? (c.graded ? 'דיווח חלקי' : 'טרם דווח') : `${c.offTrackPct}% לא בכיוון (${c.offTrackCount}/${c.assessed})`}</span>
+        <span class="block font-bold">${E(Config.classLabel(c.key))} · ${c.unreportedOnly ? (c.graded ? 'דיווח חלקי' : 'טרם דווח') : `${c.offTrackPct}% לא בכיוון (${c.offTrackCount}/${c.assessed} חניכים)`}</span>
         <span class="block">${this.readinessBreakdown(c)} · ממוצע ${this.readinessAverage(c.avg)}</span></button>`).join('')}</div>`;
     }
     return `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2" data-subject-kpis>
@@ -580,7 +674,7 @@
       rooms.get(key).push(row);
     });
     return [...rooms.entries()].map(([key, members]) =>
-      `<tr class="room-divider"><td colspan="${cols}">כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${members.length})</td></tr>${members.map(render).join('')}`
+      `<tr class="room-divider"><td colspan="${cols}">כיתה <bdi dir="rtl">${E(Config.classLabel(key))}</bdi> (${members.length} חניכים)</td></tr>${members.map(render).join('')}`
     ).join('');
   },
 
@@ -624,16 +718,23 @@
     const coreCols = BAGRUT_CORE.filter(([id]) => rules.coreSubjects.some(s => s.id === id && s.enabled !== false));
     const tip = text => `data-act="mxPop" data-tip="${E(text)}"`;
 
-    const subjectTd = (c, label) => {
+    const subjectTd = (c, label, s, ev, grade) => {
       if (!c) return '<td class="text-slate-300 text-xs">—</td>';
       const major = label === 'מגמה 5 יח"ל' && c.name;
-      const value = major ? `${c.text}${c.text === 'לומד' ? ' ' : ' • '}${c.name}` :
+      let value = major ? `${c.text}${c.text === 'לומד' ? ' ' : ' • '}${c.name}` :
         c.state === 'comp' ? `${c.text} ${c.sub.startsWith('פיצוי') ? 'פיצוי' : 'קיזוז'}` : c.text;
+      if (s && (s.incomplete || s.partial) && s.reportedScore != null) {
+        const target = target30(s, ev, Config.rulesForGrade(grade));
+        const forecast = s.forecast || s.filled.length || s.comps.some(comp => comp.magenForecast);
+        value = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נקודות ${forecast ? 'לפי תחזית' : 'נצברו'} (חסר ${s.missingPct}% ממשקל המקצוע); דווחו ${s.reportedPct}% ממשקל המקצוע` :
+          `${Util.fmt(s.reportedScore, 0)} ממוצע רכיבים מדווחים; דווחו ${s.reportedPct}% ממשקל המקצוע`;
+        if (target) value += `; יעד בציון בית-ספרי (30%): ${target.target}${sim.useCurrent ? ' (לפי סימולציה)' : ''} — ${target.note}`;
+      }
       const numeric = Number(c.text);
       const failed = ['fail', 'lost', 'missing', 'noshow', 'none'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
       const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' || c.state === 'exempt' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
         c.state === 'noenroll' || c.text === 'לומד' || c.text === '—' || c.text === 'בתהליך' ? 'text-slate-400' : 'text-slate-800 font-normal';
-      return `<td class="mx-cell whitespace-nowrap" ${tip(c.tip)} tabindex="0" role="button" aria-label="${E(`${label}: ${value}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}">${E(value)}</span></td>`;
+      return `<td class="mx-cell" ${tip(c.tip)} tabindex="0" role="button" aria-label="${E(`${label}: ${value}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}">${E(value)}</span></td>`;
     };
     const internalsTd = ev => {
       const cells = ev.internalCells;
@@ -667,17 +768,14 @@
       let text = ev.tierText;
       const held = ev.manualReview.required, real = ev.blockers.filter(b => !b.info).length;
       if (ev.adaptive && ev.tier === 3 && !ev.manual && real > 0) text += ` (חסם ${real})`;
-      const bagrutFlag = signal.pedagogical.find(f => ['bagrut.eligible', 'bagrut.watch', 'bagrut.risk', 'bagrut.twelve', 'bagrut.unknown'].includes(f.id));
       const status = isUnknown(signal) ? UI.overallBadge('unknown') :
-        held ? UI.signalBadge(bagrutFlag) :
         !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
         ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
         `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
-      const suspect = held ? ev.suspectExtra : ev.suspect;
       const quality = signal.dataQuality.find(f => f.id === 'data.manual_review');
       const review = quality ? `<div aria-label="איכות נתונים" title="${E(quality.detail)}">${UI.signalBadge(quality, held ? 'נדרשת החלטת רכזת' : 'נדרשת בדיקה ידנית')}</div>` : '';
       return `<div>${status}</div>${noBagrutData(signal, sim) ? '' : `<div>${this.unitsBadge(ev)}</div>`}
-        ${ev.manual ? '<div><span class="badge badge-exc">⚡ חריג</span></div>' : !isUnknown(signal) && suspect.length ? `<div><span class="badge tier-3" title="${E(suspect.join(' · '))}">חשד לחריג</span></div>` : ''}${review}`;
+        ${review}`;
     };
 
     const cols = 6 + coreCols.length;
@@ -690,7 +788,7 @@
         <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
         <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}${track && track !== 'רגילה' ? ` <span class="badge fresh-slate border">${E(track)}</span>` : ''}</span></td>
         <td>${pill(ev, signal)}</td>
-        ${coreCols.map(([id, label]) => unknown ? noDataCell : subjectTd(this.subjectDisplayCell(ev, id), label)).join('')}
+        ${coreCols.map(([id, label]) => unknown ? noDataCell : subjectTd(this.subjectDisplayCell(ev, id), label, ev.subjects.find(s => s.id === id), ev, t.gradeKey)).join('')}
         ${unknown ? noDataCell : subjectTd(this.majorDisplayCell(ev), 'מגמה 5 יח"ל')}
         ${unknown ? noDataCell : internalsTd(ev)}
         ${focusTd(ev, unknown)}
