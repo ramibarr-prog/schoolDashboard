@@ -221,7 +221,7 @@
     const card = (id, cls, label, explanation) => {
       const items = forCategory(id), n = studentCount(items);
       return `<button type="button" class="an-card ${cls}" data-act="anCat" data-cat="${id}" aria-pressed="${cat === id}" title="${E(explanation)}">
-        <span class="top"><span class="t">${label}</span><span><span class="n">${n}</span> חניכים</span></span>
+        <span class="top"><span class="t">${label}</span><span><span class="n">${n}</span> חניכים ייחודיים</span></span>
         <span class="s" style="white-space:normal">${items.length} חריגות · ${explanation}</span></button>`;
     };
     setHtml('groups-kpis',
@@ -239,24 +239,35 @@
       if (!byTrainee.has(r.tz)) byTrainee.set(r.tz, []);
       byTrainee.get(r.tz).push(r);
     });
-    setHtml('groups-mode-extra', `<label class="flex items-center gap-2 text-xs font-semibold text-[#355747]">סינון לפי מקצוע
+    setHtml('groups-mode-extra', `<p class="text-xs text-slate-600">כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים.</p>
+      <label class="flex items-center gap-2 text-xs font-semibold text-[#355747]">סינון לפי מקצוע
         <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${rows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select></label>
       <button type="button" class="routine-toggle" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount} חריגות)</button>`);
 
-    const groupTxt = g => `<div><span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}</div>`;
+    const groupTxt = g => `<span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
     const currentText = r => {
       const major = r.category === 'missing_major';
-      const current = r.groups.length ? r.groups.map(g => groupTxt(g)).join('')
-        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>${r.category === 'missing' && r.classTotal ? `<div class="text-xs text-slate-500" data-class-coverage>(בכיתה: ${r.classEnrolled} מתוך ${r.classTotal})</div>` : ''}`;
-      const sadin = r.sadinGroups.map(g => `<div class="text-xs text-slate-600">בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}</div>`).join('');
+      const current = r.groups.length ? r.groups.map(groupTxt).join(' · ')
+        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>${r.category === 'missing' && r.classTotal ? ` <span data-class-coverage>(בכיתה: ${r.classEnrolled} מתוך ${r.classTotal})</span>` : ''}`;
+      const sadin = r.sadinGroups.map(g => ` · בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}`).join('');
       return `${current}${sadin}`;
     };
     const body = [...byTrainee.values()].slice(0, 1500).map(items => {
       const r = items[0];
-      const details = items.map(item => `<div class="border-b border-[#E6ECE6] py-1 last:border-0">
-        <span class="font-semibold">${E(item.subject)}</span> · ${item.kind === 'sadin' ? UI.signalBadge('data.sadin_not_enrolled', `איכות נתונים: ${item.kindLabel}`) : `<span class="an-k an-k-${item.category}">${E(item.kindLabel)}</span>`}${item.isRoutineDuplicate ? ' <span class="routine-tag">מקצוע מערכתי</span>' : ''}
-        <div class="text-xs">${currentText(item)}</div>
-        <button type="button" class="btn btn-ghost btn-sm mt-1" data-act="inspectGroups" data-tz="${E(item.tz)}" data-subject="${E(item.category === 'missing_major' ? GroupAnalyzer.MAJOR_KEY : item.subject)}">${item.category === 'missing_major' ? 'השוואת מגמות בשכבה' : 'השוואת קבוצות במקצוע'}</button></div>`).join('');
+      const bySubject = new Map();
+      items.forEach(item => {
+        const key = item.category === 'missing_major' ? GroupAnalyzer.MAJOR_KEY : item.subject;
+        if (!bySubject.has(key)) bySubject.set(key, []);
+        bySubject.get(key).push(item);
+      });
+      const details = [...bySubject].map(([key, findings]) => {
+        const label = findings[0].subject;
+        const title = key === GroupAnalyzer.MAJOR_KEY ? 'השוואת מגמות בשכבה' : `השוואת קבוצות במקצוע ${label}`;
+        return `<span class="inline-block align-top max-w-full ml-3 mb-1 text-xs">
+          <button type="button" class="font-semibold text-[#355747] underline text-right" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>:
+          ${findings.map(item => `<span>${item.kind === 'sadin' ? UI.signalBadge('data.sadin_not_enrolled', `איכות נתונים: ${item.kindLabel}`) : `<span class="an-k an-k-${item.category}">${E(item.kindLabel)}</span>`}${item.isRoutineDuplicate ? ' <span class="routine-tag">מקצוע מערכתי</span>' : ''} <span class="text-slate-600">${currentText(item)}</span></span>`).join(' · ')}
+          </span>`;
+      }).join('');
       return `<tr>
         <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
