@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Consistency and quarantine tests</title>
+<pre id="results">Running...</pre>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/parser.js"></script>
+<script src="../js/bagrutFacts.js"></script>
+<script src="../js/bagrutPolicies.js"></script>
+<script src="../js/bagrutEngine.js"></script>
+<script src="../js/bagrutAdvisor.js"></script>
+<script src="../js/groupAnalyzer.js"></script>
+<script src="../js/signalEngine.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/views/overviewView.js"></script>
+<script src="../js/views/profileView.js"></script>
+<script src="../js/views/groupsView.js"></script>
+<script src="../js/views/sadinView.js"></script>
+<script src="../js/views/bagrutView.js"></script>
+<script src="../js/views/rulesView.js"></script>
+<script src="../js/importQuarantine.js"></script>
+<script>
+(async () => {
+  const output = document.getElementById('results'), logs = [];
+  const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const step = async (label, fn) => { await fn(); logs.push('PASS ' + label); };
+  const T = n => String(900000000 + n);
+  const student = (n, grade, homeroom) => ({ tz: T(n), firstName: 'Synthetic' + n, lastName: 'Test', grade, homeroom, track: 'רגילה' });
+  const workbook = (name, rows) => {
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), 'Data');
+    const data = XLSX.write(book, { type: 'array', bookType: 'xlsx' });
+    return { name, arrayBuffer: async () => data };
+  };
+  const reasons = ImportQuarantine.REASONS;
+  const result = rows => ({ type: 'groups', rows, skipped: 0, ignored: 0, unmatchedIds: [], warnings: [] });
+  let saved;
+  try {
+    await Config.ready;
+    saved = { data: Config.data, cache: Config._cache, ignored: Config._ignoredCache, active: Config._activeCohort,
+      write: Config._write, put: Config._storePut, del: Config._storeDelete };
+    Config._write = () => ({ ok: true });
+    Config._storePut = async () => ({ ok: true });
+    Config._storeDelete = async () => {};
+    Config.data = Config.defaults();
+    Config._activeCohort = Config.data.gradeCohortMap['12'];
+    Config._syncQuestionnaires();
+    const roster = Config.normalizeRosterRows([student(1, 'יב', 'יב1'), student(2, 'יב', 'יב1'), student(3, 'יא', 'יא1')]);
+    Config._cache = { masterRoster: { data: roster.rows, ignoredIds: [], fileName: 'synthetic', uploadedAt: 1 } };
+    Config._ignoredCache = new Set();
+    Config._invalidateRoster();
+    Store.refresh();
+    ImportQuarantine.clear();
+
+    const source = await (await window.fetch('../js/app.js')).text();
+    const doc = new Proxy(document, { get(target, key) {
+      if (key === 'readyState') return 'loading';
+      if (key === 'addEventListener') return () => {};
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const cloud = { configured: () => false, hasUnpublished: () => false, status: { kind: 'none' },
+      meta: () => ({}), url: () => '', apiToken: () => '', passcode: () => '' };
+    const app = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', source + '\nreturn App;')(
+      Util, Config, cloud, doc, Parser.parseExcelFile, () => true, Store);
+    app.toasts = [];
+    app.toast = (text, kind) => app.toasts.push({ text, kind });
+    app.state.sim = { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false };
+
+    await step('real import captures invalid IDs, unmatched students and unmapped questionnaires', async () => {
+      const file = workbook('synthetic-bagrut.xlsx', [
+        ['ת.ז', 'סמל שאלון', 'ציון סופי'],
+        ['1.23457E+08', '22283', 70],
+        [T(999), '22283', 70],
+        [T(1), '999999', 70],
+        [T(2), '22283', 70]
+      ]);
+      assert(await app.importDataset('bagrutData', file), 'Import succeeds');
+      app.afterDataChange();
+      const rows = ImportQuarantine.list();
+      const invalid = rows.find(r => r.reason === reasons.invalidId);
+      assert(invalid && invalid.raw && invalid.raw['ת.ז'] === '1.23457E+08', 'Rejected raw ID is captured');
+      assert(rows.some(r => r.reason === reasons.outside && r.key === T(999)), 'Student outside roster is captured');
+      assert(rows.some(r => r.reason === reasons.questionnaire && r.key === '999999' && r.gradeScope === 'יב'), 'Unknown questionnaire is captured with roster grade');
+      assert(rows.every(r => r.id && r.batchId && r.fileType && r.entityType && 'raw' in r), 'Record fields are present');
+      assert(Config.getRows('bagrutData').length === 3, 'Quarantine does not remove accepted input rows');
+      assert(app.toasts.some(t => t.text.includes('דוח קליטה') && t.text.includes('3')), 'Import summary reports findings');
+    });
+
+    await step('bagrut upsert retains findings for rows not replaced', async () => {
+      await ImportQuarantine.recordImport('bagrutData', { name: 'synthetic-bagrut.xlsx' },
+        { rows: [{ tz: T(2), code: '22283' }], skipped: 0, ignored: 0 }, { grades: ['יב'] });
+      assert(ImportQuarantine.list().some(r => r.reason === reasons.questionnaire && r.key === '999999'),
+        'An unrelated bagrut upsert must not erase a retained unmapped questionnaire');
+    });
+
+    await step('grade-scoped batch replacement and explicit reset', async () => {
+      const group = (tz, grade, groupId) => ({ tz, gradeKey: grade, groupId, groupName: '', isTeacher: false });
+      await ImportQuarantine.recordImport('groupsData', { name: 'g11.xlsx' }, result([group(T(3), 'יא', '1111')]), { grades: ['יא'] });
+      await ImportQuarantine.recordImport('groupsData', { name: 'g12.xlsx' }, result([group(T(1), 'יב', '2222')]), { grades: ['יב'] });
+      assert(ImportQuarantine.list().filter(r => r.reason === reasons.subject).length === 2, 'Both grade scopes are recorded');
+      const rows = [{ ...group(T(1), 'יב', '2222'), groupName: 'היסטוריה יב1 [2222]' }];
+      Config._cache.groupsData = { data: rows, fileName: 'g12.xlsx', uploadedAt: 1 };
+      await ImportQuarantine.recordImport('groupsData', { name: 'g12.xlsx' }, result(rows), { grades: ['יב'] });
+      const remaining = ImportQuarantine.list().filter(r => r.reason === reasons.subject);
+      assert(remaining.length === 1 && remaining[0].gradeScope === 'יא', 'Replacement removes only the updated grade');
+      ImportQuarantine.clear({ fileType: 'groupsData', gradeScope: 'יא' });
+      assert(!ImportQuarantine.list().some(r => r.reason === reasons.subject), 'Scoped clear works');
+      assert(ImportQuarantine.list().some(r => r.reason === reasons.questionnaire), 'Other types remain intact');
+      Store.refresh();
+    });
+
+    await step('sadin enrollment checks require groups for the same grade', async () => {
+      const rows = [
+        { tz: T(1), groupId: '9999', subject: 'היסטוריה', avg: 70 },
+        { tz: T(3), groupId: '9999', subject: 'היסטוריה', avg: 70 }
+      ];
+      const batch = await ImportQuarantine.recordImport('sadinData', { name: 'grades.xlsx' },
+        { rows, skipped: 0, ignored: 0 }, { grades: ['יא', 'יב'] });
+      const enrollments = batch.records.filter(r => r.reason === reasons.enrollment);
+      assert(enrollments.length === 1 && enrollments[0].key === T(1) + '|9999',
+        'Only the grade with group data can have an enrollment mismatch');
+    });
+
+    await step('flat parser omissions remain explicit when raw rows are unavailable', async () => {
+      const batch = await ImportQuarantine.recordImport('sadinData', { name: 'opaque.xlsx' },
+        { type: 'grades', rows: [], skipped: 2, ignored: 0 }, { append: true });
+      assert(batch.records.length === 2 && batch.records.every(r => r.reason === reasons.skipped && r.raw === null),
+        'Count-only skips are not falsely assigned a specific reason');
+    });
+
+    await step('failed import is recorded without replacing existing data', async () => {
+      const before = Config.getRows('groupsData').length;
+      const file = { name: '<img src=x onerror=alert(1)>', arrayBuffer: async () => { throw new Error('synthetic read failure'); } };
+      let failed = false;
+      try { await app.importDataset('groupsData', file); } catch (error) { failed = error.message === 'synthetic read failure'; }
+      assert(failed && Config.getRows('groupsData').length === before, 'Existing data survives the failed import');
+      assert(ImportQuarantine.list().some(r => r.entityType === 'file' && r.label === 'synthetic read failure'),
+        'The file error is reported to quarantine');
+    });
+
+    await step('audit validates real views and detects injected contradictions', () => {
+      app.evals.clear();
+      const clean = ImportQuarantine.auditConsistency();
+      assert(clean.ok, 'Expected consistent models: ' + JSON.stringify(clean.issues));
+      const counts = clean.summary.counts;
+      assert(counts.ok + counts.watch + counts.risk + counts.unknown + counts.twelve === clean.summary.total, 'Status counts match roster scope');
+      const original = app.filterByChip;
+      app.filterByChip = function (rows, chip, signals) {
+        return chip === 'tier4' ? rows.slice() : original.call(this, rows, chip, signals);
+      };
+      const inconsistent = ImportQuarantine.auditConsistency(app);
+      app.filterByChip = original;
+      assert(!inconsistent.ok && inconsistent.issues.some(i => i.code === 'bagrut-filter' || i.code === 'unknown-active'),
+        'A contradictory risk filter is reported');
+      const originalModel = app.overviewModel;
+      app.overviewModel = function () {
+        const model = originalModel.call(this);
+        model.stats = { ...model.stats, counted: model.stats.counted + 1 };
+        return model;
+      };
+      const badStats = ImportQuarantine.auditConsistency(app);
+      app.overviewModel = originalModel;
+      assert(badStats.issues.some(i => i.code === 'overview-stats'), 'A contradictory overview KPI is reported');
+
+      app.state.sim.fullMode = true;
+      app.state.sim.useCurrent = true;
+      app.evals.clear(); SignalEngine.invalidate();
+      const forecast = ImportQuarantine.auditConsistency(app);
+      assert(forecast.ok, 'Mixed-grade forecast is consistent: ' + JSON.stringify(forecast.issues));
+      app.state.sim.fullMode = false;
+      app.state.sim.useCurrent = false;
+      app.evals.clear(); SignalEngine.invalidate();
+    });
+
+    await step('settings renders escaped quarantine and consistency reports', () => {
+      const pane = document.createElement('div');
+      pane.dataset.settingsPane = 'system';
+      document.body.appendChild(pane);
+      RulesView.renderQuarantineReports.call(app);
+      const host = document.getElementById('quarantineReports');
+      assert(host && host.textContent.includes('דוח הסגר קליטה') && host.textContent.includes('דוח עקביות מערכת'), 'Both reports render');
+      assert(host.textContent.includes(reasons.questionnaire) && host.textContent.includes('לא נמצאו סתירות'), 'Findings and audit result render');
+      assert(!host.querySelector('img') && host.textContent.includes('<img src=x onerror=alert(1)>'), 'Untrusted file names are escaped');
+      assert(host.querySelector('[data-act="quarantineClear"]') && host.querySelector('[data-act="quarantineAudit"]'), 'Report actions render');
+      app.confirmAction = () => true;
+      app.acts.quarantineAudit.call(app);
+      app.acts.quarantineClear.call(app);
+      assert(ImportQuarantine.list().length === 0 && host.textContent.includes('אין פריטים בהסגר'), 'Report actions update the display');
+      pane.remove();
+    });
+    output.textContent = logs.join('\n') + '\nAll tests passed.';
+    document.title = 'PASS - Consistency and quarantine tests';
+  } catch (error) {
+    output.textContent = logs.join('\n') + '\nFAIL ' + (error.stack || error.message);
+    document.title = 'FAIL - Consistency and quarantine tests';
+  } finally {
+    ImportQuarantine.clear();
+    if (saved) {
+      Config.data = saved.data; Config._cache = saved.cache; Config._ignoredCache = saved.ignored;
+      Config._activeCohort = saved.active; Config._write = saved.write; Config._storePut = saved.put; Config._storeDelete = saved.del;
+      Config._invalidateRoster(); Store.refresh(); SignalEngine.invalidate();
+    }
+  }
+})();
+</script>
+</html>

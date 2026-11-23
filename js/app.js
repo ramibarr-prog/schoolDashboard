@@ -700,13 +700,41 @@ const App = {
     return new Promise(resolve => { this._rosterImportResolve = resolve; });
   },
 
+  async reportImportQuarantine(key, file, result, options) {
+    if (!window.ImportQuarantine) {
+      this.toast('דוח הסגר הקליטה אינו זמין.', 'warn');
+      return;
+    }
+    try {
+      const batch = await window.ImportQuarantine.recordImport(key, file, result, options);
+      this.dirty.add('settings');
+      const summary = window.ImportQuarantine.summarize(batch.records);
+      const details = summary.reasons.map(([reason, count]) => `${reason}: ${count}`).join(' · ');
+      this.toast(summary.total ? `דוח קליטה: ${summary.total} פריטים לבדיקה · ${details}` : 'דוח קליטה: לא זוהו פריטים להסגר', summary.total ? 'warn' : 'info');
+      if (batch.warning) this.toast(batch.warning, 'warn');
+    } catch (error) {
+      console.error('import quarantine', error);
+      this.toast(`דוח הסגר הקליטה לא הושלם: ${error.message}`, 'error');
+    }
+  },
+
   async importRoster(file, opts = {}) {
-    const res = await parseExcelFile(file, 'roster', opts);
+    let res;
+    try { res = await parseExcelFile(file, 'roster', opts); }
+    catch (error) {
+      if (window.ImportQuarantine) window.ImportQuarantine.recordFailure('masterRoster', file, error);
+      this.dirty.add('settings');
+      throw error;
+    }
     if (!res) { this.toast('הייבוא בוטל', 'info'); return false; }
     const previous = Config.getRosterEntry();
     const diff = Config.rosterDiff(res.rows);
-    if (!diff.incoming.length) { this.toast('לא נמצאו חניכים תקינים בקובץ. המצבת לא הוחלפה.', 'error'); return false; }
-    let rows = diff.incoming;
+    if (!diff.incoming.length) {
+      await this.reportImportQuarantine('masterRoster', file, res, { append: true });
+      this.toast('לא נמצאו חניכים תקינים בקובץ. המצבת לא הוחלפה.', 'error');
+      return false;
+    }
+    let rows = diff.incoming, merged = false;
     if (previous) {
       const choice = await this.confirmRosterImport(diff, file.name);
       if (!choice) { this.toast('הייבוא בוטל', 'info'); return false; }
@@ -714,7 +742,7 @@ const App = {
         this.toast('המצבת השתנתה בזמן האישור. יש לטעון שוב את הקובץ ולבדוק את ההבדלים העדכניים.', 'warn');
         return false;
       }
-      if (choice === 'merge') rows = Config.mergeRosterGrades(rows);
+      if (choice === 'merge') { rows = Config.mergeRosterGrades(rows); merged = true; }
     }
     const saved = Config.setRoster(rows, file.name, res.ignoredIds);
     if (!saved.ok) { this.toast(saved.error, 'error'); return false; }
@@ -731,6 +759,9 @@ const App = {
     const overrides = Object.keys(Config.getRosterOverrides()).length;
     if (overrides) this.toast(`המצבת עודכנה. שים לב: ${overrides} דריסות שיוך ידניות ממשיכות לחול על הקובץ החדש.`, 'warn');
     res.warnings.forEach(w => this.toast(w, 'warn'));
+    await this.reportImportQuarantine('masterRoster', file, res, {
+      replaceAll: !merged, grades: [...new Set(diff.incoming.map(r => r.grade).filter(Boolean))]
+    });
     this.afterDataChange();
     return true;
   },
@@ -738,15 +769,26 @@ const App = {
   async importDataset(key, file, opts = {}) {
     const ds = DATASETS[key];
     if (!Store.hasData()) this.toast('טרם נטענה מצבת – ת.ז שאינן במצבת יוחרגו מכל המדדים.', 'warn');
-    const res = await parseExcelFile(file, ds.type, opts);
+    let res;
+    try { res = await parseExcelFile(file, ds.type, opts); }
+    catch (error) {
+      if (window.ImportQuarantine) window.ImportQuarantine.recordFailure(key, file, error);
+      this.dirty.add('settings');
+      throw error;
+    }
     if (!res) { this.toast('הייבוא בוטל', 'info'); return false; }
-    if (!res.rows.length) { this.toast(`${file.name}: לא נקלטו שורות תקינות מהקובץ. הנתונים הקיימים לא הוחלפו.`, 'warn'); return false; }
+    if (!res.rows.length) {
+      await this.reportImportQuarantine(key, file, res, { append: true });
+      this.toast(`${file.name}: לא נקלטו שורות תקינות מהקובץ. הנתונים הקיימים לא הוחלפו.`, 'warn');
+      return false;
+    }
     const saved = await Config.upsertDataset(key, Parser.slimRows(res.type, res.rows), { fileName: file.name });
     if (!saved.ok) { this.toast(saved.error, 'error'); return false; }
     const scope = saved.grades.length ? ` · שכבות: ${saved.grades.map(g => Util.gl(g)).join(', ')} (שאר השכבות נשמרו)` : '';
     this.toast(`נטענו ${res.rows.length} שורות מ"${file.name}"${res.skipped ? ` (${res.skipped} דולגו)` : ''}${res.ignored ? ` · ${res.ignored} שורות של חניכי ז'-ט' לא נקלטו` : ''}${scope}`, 'ok');
     if (res.unmatchedIds.length) this.toast(`${res.unmatchedIds.length} ת.ז בקובץ אינן במצבת והוחרגו מהחישובים`, 'warn');
     res.warnings.forEach(w => this.toast(w, 'warn'));
+    await this.reportImportQuarantine(key, file, res, { grades: saved.grades, replaceAll: key !== 'bagrutData' && !saved.grades.length });
     return true;
   },
 
@@ -1140,6 +1182,8 @@ const App = {
     },
     goSettings() { this.showTab('settings'); },
     settingsView(...args) { return RulesView.settingsView.apply(this, args); },
+    quarantineClear(...args) { return RulesView.quarantineClear.apply(this, args); },
+    quarantineAudit(...args) { return RulesView.quarantineAudit.apply(this, args); },
 
     sgPick(el) { this.pickSuggestion(+el.dataset.i); },
     searchClear() { this.clearSearch(); },
@@ -1317,6 +1361,8 @@ const App = {
 
   }
 };
+
+window.App = App;
 
 /* אתחול בטעינת המסמך (או מיד אם כבר נטען) */
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => App.init());

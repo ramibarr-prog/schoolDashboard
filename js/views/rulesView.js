@@ -238,7 +238,56 @@
     this.renderCalibration();
     this.renderRulesDrawer();
     this.renderSettingsNav();
+    RulesView.renderQuarantineReports.call(this);
   },
+
+  renderQuarantineReports() {
+    const pane = document.querySelector('[data-settings-pane="system"]');
+    if (!pane) return;
+    let host = $('quarantineReports');
+    if (!host) {
+      host = document.createElement('section');
+      host.id = 'quarantineReports';
+      host.className = 'card p-4 space-y-3 xl:col-span-2';
+      pane.appendChild(host);
+    }
+    const quarantine = window.ImportQuarantine;
+    if (!quarantine) {
+      host.innerHTML = '<div class="text-slate-600">דוח הסגר הקליטה אינו זמין.</div>';
+      return;
+    }
+    const items = quarantine.list(), summary = quarantine.summarize(items);
+    const audit = quarantine.auditConsistency(this);
+    const breakdown = values => values.map(([label, count]) => `${E(label)}: ${count}`).join(' · ');
+    const rows = items.slice(-100).reverse().map(item => `<tr>
+      <td>${E(item.fileName || item.fileType)}</td><td>${E(item.gradeScope ? Util.gl(item.gradeScope) : 'לא ידועה')}</td>
+      <td>${E(item.reason)}</td><td>${E(item.key || '—')}</td><td>${E(item.label || '—')}</td></tr>`).join('');
+    const details = value => typeof value === 'string' ? value : JSON.stringify(value);
+    host.innerHTML = `
+      <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="font-semibold">דוח הסגר קליטה</h3>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="quarantineClear" ${items.length ? '' : 'disabled'}>נקה דוח הסגר</button></div>
+      <p class="text-xs text-slate-500">הממצאים הם תמונת מצב בזמן הקליטה בלבד, נשמרים בזיכרון ונמחקים ברענון הדף. הם אינם משנים את הנתונים שנקלטו.</p>
+      <div class="text-sm">${summary.total ? `${summary.total} פריטים · ${breakdown(summary.reasons)}` : 'אין פריטים בהסגר.'}</div>
+      ${summary.total ? `<div class="text-xs text-slate-600">לפי שכבה: ${breakdown(summary.gradeScopes)}</div>
+        <div class="tbl-wrap"><table class="grid w-full text-sm"><thead><tr><th>קובץ</th><th>שכבה</th><th>סיבה</th><th>מזהה</th><th>פירוט</th></tr></thead><tbody>${rows}</tbody></table></div>
+        ${items.length > 100 ? '<p class="text-xs text-slate-500">מוצגים 100 הפריטים האחרונים.</p>' : ''}
+        <p class="text-xs text-slate-500">כאשר המפענח מחזיר רק מספר שורות שדולגו, פרטי השורות מוצגים כלא זמינים.</p>` : ''}
+      <div class="border-t border-slate-200 pt-3">
+        <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="font-semibold">דוח עקביות מערכת</h3>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="quarantineAudit">בדוק שוב</button></div>
+        ${audit.ok ? `<p class="text-sm text-emerald-700">לא נמצאו סתירות במדדים שנבדקו (${audit.summary.total} חניכים באוכלוסיית הייחוס).</p>`
+          : `<p class="text-sm text-amber-800">נמצאו ${audit.issues.length} בעיות או בדיקות שלא הושלמו:</p>
+            <ul class="text-sm text-amber-800">${audit.issues.map(issue => `<li>${E(issue.message)} ${E(details(issue.details))}</li>`).join('')}</ul>`}
+      </div>`;
+  },
+
+  quarantineClear() {
+    if (!window.ImportQuarantine || !this.confirmAction('לנקות את דוח הסגר הקליטה שבזיכרון? הנתונים שנקלטו לא יימחקו.')) return;
+    window.ImportQuarantine.clear();
+    RulesView.renderQuarantineReports.call(this);
+  },
+
+  quarantineAudit() { RulesView.renderQuarantineReports.call(this); },
 
   /* ---------- דריסת שיוך שכבה וכיתת אם ---------- */
   rawLabel(r) { return r.added ? '— (לא במצבת)' : `${r.rawHomeroom}${r.rawClassName ? ` • ${r.rawClassName}` : ''}`; },
