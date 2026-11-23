@@ -3,6 +3,7 @@
   const E = Util.esc;
   const $ = id => document.getElementById(id);
   const setHtml = (id, html) => { const el = $(id); if (el) el.innerHTML = html; return el; };
+  const treatedByApp = new WeakMap();
 
   function signalSummary(list, outside, opts) {
     const all = SignalEngine.computeAll(opts), details = [];
@@ -209,14 +210,22 @@
       <button type="button" class="btn btn-ghost btn-sm" data-act="groupsMode" data-mode="${next}">${label}</button></div><div id="groups-mode-extra" class="gm-extra"></div></div>`;
   },
 
-  /** מוקד חריגי שיבוץ: חמשת כרטיסי הקטגוריה הלחיצים, סינון מקצוע וטבלת חריגים עם כפתור בדיקת קבוצת יעד */
+  /** מוקד חריגי שיבוץ: כרטיסי קטגוריה, סינון מקצוע וטבלת חריגים */
   renderAnomalyWorkspace(am) {
-    const state = this.state, cat = state.anomalyCategoryFilter, rows = am.rows;
-    const forCategory = c => c === 'all' ? rows : rows.filter(r => r.category === c);
+    const state = this.state, rows = am.rows;
+    if (!['missing', 'missing_major', 'duplicate', 'suspect'].includes(state.anomalyCategoryFilter))
+      state.anomalyCategoryFilter = 'missing';
+    const cat = state.anomalyCategoryFilter;
+    const forCategory = c => rows.filter(r => r.category === c);
     const studentCount = items => new Set(items.map(r => r.tz)).size;
-    const subjects = [...new Set(rows.map(r => r.subject))].sort(natural);
+    const categoryRows = forCategory(cat);
+    const subjects = [...new Set(categoryRows.map(r => r.subject))].sort(natural);
     if (state.anomalySubject !== 'all' && !subjects.includes(state.anomalySubject)) state.anomalySubject = 'all';
     const subject = state.anomalySubject;
+    if (!treatedByApp.has(this)) treatedByApp.set(this, new Map());
+    const categories = treatedByApp.get(this);
+    if (!categories.has(cat)) categories.set(cat, new Set());
+    const treated = categories.get(cat);
 
     const card = (id, cls, label, explanation) => {
       const items = forCategory(id), n = studentCount(items);
@@ -225,13 +234,12 @@
         <span class="s" style="white-space:normal">${items.length} חריגות · ${explanation}</span></button>`;
     };
     setHtml('groups-kpis',
-      card('all', 'an-forest', 'כל השיבוצים לטיפול', 'כל סוגי הממצאים') +
       card('missing', 'an-sage', 'היעדר מקצוע ליבה', 'סף שיבוץ כיתתי (30%): חסר במקצוע שבו לפחות 30% מהכיתה משובצים') +
       card('missing_major', 'an-terra', 'ללא שיבוץ מגמה', 'חניכים ללא קבוצת מגמה') +
       card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', 'רשומים ב-2 קבוצות ויותר') +
       card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', 'כולל פערי נתונים מול הסדין'));
 
-    const filteredRows = rows.filter(r => (cat === 'all' || r.category === cat) && (subject === 'all' || r.subject === subject));
+    const filteredRows = categoryRows.filter(r => subject === 'all' || r.subject === subject);
     const { anomSort: sortCol, anomDir: sortDir } = state.groups;
     const shown = this.sortAnomalyRows(filteredRows, sortCol, sortDir);
     const byTrainee = new Map();
@@ -239,20 +247,23 @@
       if (!byTrainee.has(r.tz)) byTrainee.set(r.tz, []);
       byTrainee.get(r.tz).push(r);
     });
-    setHtml('groups-mode-extra', `<p class="text-xs text-slate-600">כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים.</p>
+    setHtml('groups-mode-extra', `<p class="text-xs text-slate-600">כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים. סימון כטופל הוא זמני ולכל קטגוריה בנפרד.</p>
       <label class="flex items-center gap-2 text-xs font-semibold text-[#355747]">סינון לפי מקצוע
-        <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${rows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select></label>
+        <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${categoryRows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select></label>
       <button type="button" class="routine-toggle" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount} חריגות)</button>`);
 
     const groupTxt = g => `<span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
     const currentText = r => {
       const major = r.category === 'missing_major';
       const current = r.groups.length ? r.groups.map(groupTxt).join(' · ')
-        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>${r.category === 'missing' && r.classTotal ? ` <span data-class-coverage>(בכיתה: ${r.classEnrolled} מתוך ${r.classTotal})</span>` : ''}`;
+        : `<span class="font-semibold an-k-missing">${major ? 'ללא מגמה רשומה' : 'ללא שיבוץ'}</span>`;
       const sadin = r.sadinGroups.map(g => ` · בסדין: <span dir="ltr">[${E(g.groupId)}]</span>${g.teacher ? ` ${E(g.teacher)}` : ''}`).join('');
       return `${current}${sadin}`;
     };
-    const body = [...byTrainee.values()].slice(0, 1500).map(items => {
+    const ordered = [...byTrainee.values()];
+    const pending = ordered.filter(items => !treated.has(items[0].tz));
+    const completed = ordered.filter(items => treated.has(items[0].tz));
+    const body = pending.slice(0, 1500).concat(completed).map(items => {
       const r = items[0];
       const bySubject = new Map();
       items.forEach(item => {
@@ -273,7 +284,8 @@
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
         <td class="text-right">${details}</td>
         <td class="text-right whitespace-nowrap">${items.length} חריגות</td>
-        <td class="text-right"><button type="button" class="text-xs text-[#75977D] underline" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button></td></tr>`;
+        <td class="text-right"><button type="button" class="text-xs text-[#75977D] underline" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button>
+          <button type="button" class="text-xs text-[#355747] underline" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'בטל סימון - החזר לסדר רגיל' : 'סמן כטופל - הורד לסוף הרשימה'}</button></td></tr>`;
     }).join('');
     const th = (col, label) => {
       const active = sortCol === col;
@@ -284,12 +296,19 @@
       return `<button type="button" class="underline" data-act="grpAnomSort" data-col="${col}" aria-pressed="${active}" title="מיון לפי הממצא הראשון של החניך">${label}${active ? (sortDir > 0 ? ' ▲' : ' ▼') : ''}</button>`;
     };
     const signals = signalSummary(this.filtered(), am.outside, this.state.sim, state.showRoutineDuplicates);
-    const filteredSummary = cat !== 'all' || subject !== 'all' || byTrainee.size > 1500
-      ? `<div class="px-4 py-2 text-sm text-slate-600">${byTrainee.size} חניכים · ${shown.length} חריגות${byTrainee.size > 1500 ? ' · מוצגים 1500 חניכים ראשונים' : ''}</div>` : '';
+    const filteredSummary = `<div class="px-4 py-2 text-sm text-slate-600">${byTrainee.size} חניכים · ${shown.length} חריגות${pending.length > 1500 ? ' · מוצגים 1500 חניכים לא מסומנים ראשונים וכל המסומנים' : ''}</div>`;
     setHtml('groups-table', `${filteredSummary}
       <table class="grid w-full" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
-        ${th('name', 'שם החניך')}${th('cls', 'כיתת אם')}<th class="text-right">ממצאים ופעולות <span class="text-xs font-normal">· מיון לפי ${sortFinding('subject', 'מקצוע')} / ${sortFinding('kind', 'סוג')} / ${sortFinding('current', 'קבוצה')}</span></th><th class="text-right">מספר חריגות</th><th class="text-right">מפת חניך</th></tr></thead>
+        ${th('name', 'שם החניך')}${th('cls', 'כיתת אם')}<th class="text-right">ממצאים ופעולות <span class="text-xs font-normal">· מיון לפי ${sortFinding('subject', 'מקצוע')} / ${sortFinding('kind', 'סוג')} / ${sortFinding('current', 'קבוצה')}</span></th><th class="text-right">מספר חריגות</th><th class="text-right">פעולות</th></tr></thead>
         <tbody>${body || '<tr><td colspan="5" class="text-center text-[#355747] py-8">לא נמצאו חריגות שיבוץ בסינון הנוכחי</td></tr>'}</tbody></table>${signals}`);
+    $('groups-table').querySelectorAll('[data-groups-treated]').forEach(button => button.addEventListener('click', () => {
+      const tz = button.dataset.groupsTreated;
+      if (treated.has(tz)) treated.delete(tz); else treated.add(tz);
+      this.dirty.add('groups');
+      this.renderTab('groups');
+      const next = [...$('groups-table').querySelectorAll('[data-groups-treated]')].find(el => el.dataset.groupsTreated === tz);
+      if (next) next.focus();
+    }));
   },
 
   /** מיון עותק של שורות חריגי השיבוץ לפי עמודה; ללא עמודה נשמר סדר placementAnomalies */
