@@ -191,7 +191,7 @@
   /** מספר הקבוצות בסייר לפי הסינון הגלובלי (קבוצות מקובץ הקבוצות שיש בהן חניך מהסינון) */
   visibleGroupCount() {
     const f = this.state.filters;
-    const scoped = f.grade !== 'all' || f.cls !== 'all' || f.track !== 'all';
+    const scoped = f.grade !== 'all' || f.cls !== 'all';
     const people = new Set(this.filtered(false).map(t => t.tz));
     let n = 0;
     Store.groups.forEach(g => { if (g.inFile && (!scoped || [...g.members].some(tz => people.has(tz)))) n++; });
@@ -424,7 +424,7 @@
     const groups = GroupAnalyzer.explorerModel().groups;
     const lockT = this.lockedTrainee();
     const population = lockT ? [lockT] : this.filtered(false), populationIds = new Set(population.map(t => t.tz));
-    const scoped = !!lockT || f.grade !== 'all' || f.cls !== 'all' || f.track !== 'all';
+    const scoped = !!lockT || f.grade !== 'all' || f.cls !== 'all';
     const visible = groups.filter(g => !scoped || g.members.some(m => populationIds.has(m.t.tz)));
     const cats = new Map();
     groups.forEach(g => { const c = cats.get(g.cat.key) || { ...g.cat, n: 0 }; c.n++; cats.set(c.key, c); });

@@ -298,7 +298,7 @@ const App = {
     const f = this.state.filters;
     if (f.grade !== 'all' && t.gradeKey !== f.grade) return false;
     if (!ignoreClass && f.cls !== 'all' && t.classKey !== f.cls) return false;
-    return f.track === 'all' || this.trackOf(t) === f.track;
+    return ['groups', 'bagrut', 'sadin'].includes(this.state.tab) || f.track === 'all' || this.trackOf(t) === f.track;
   },
 
   /** חיפוש טקסט חי פעיל רק בלשוניות שבהן כל שורה היא חניך; בשאר הלשוניות הטקסט מזין רק את חלון ההשלמה */
