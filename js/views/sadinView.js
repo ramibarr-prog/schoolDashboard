@@ -4,8 +4,19 @@
   const $ = id => document.getElementById(id);
   const setHtml = (id, html) => { const el = $(id); if (el) el.innerHTML = html; return el; };
   const natural = (a, b) => String(a).localeCompare(String(b), 'he', { numeric: true });
-  const compatible = (subject, teacher) => Store.traineeList().some(t => Store.currentOf(t.tz).some(e =>
-    GroupAnalyzer.sadinSubject(e.subject) === subject && ((Store.groups.get(e.groupId) || {}).teacher || e.teacher) === teacher));
+  const teachersForSubject = (roster, subject) => {
+    const teachers = new Set();
+    roster.forEach(t => {
+      Store.groupsOf(t.tz).forEach(g => {
+        if (g.subject && GroupAnalyzer.sadinSubject(g.subject) === subject && g.teacher) teachers.add(g.teacher);
+      });
+      Store.currentOf(t.tz).forEach(e => {
+        const teacher = (Store.groups.get(e.groupId) || {}).teacher || e.teacher;
+        if (e.subject && GroupAnalyzer.sadinSubject(e.subject) === subject && teacher) teachers.add(teacher);
+      });
+    });
+    return [...teachers].sort(natural);
+  };
   const confirmedEvent = (m, hasGroups, tz) => {
     if (m.kind !== 'no-row') return true;
     if (!hasGroups) return false;
@@ -104,7 +115,7 @@
   sadinSubjectChange(value) {
     const st = this.state.sadin;
     st.subject = value;
-    if (st.subject !== 'all' && st.teacher !== 'all' && !compatible(st.subject, st.teacher)) st.teacher = 'all';
+    if (st.subject !== 'all' && st.teacher !== 'all' && !teachersForSubject(this.filtered(false), st.subject).includes(st.teacher)) st.teacher = 'all';
     this.alertOut = [];
     this.dirty.add('sadin'); this.renderTab('sadin');
   },
@@ -112,7 +123,7 @@
   sadinTeacherChange(value) {
     const st = this.state.sadin;
     st.teacher = value;
-    if (st.teacher !== 'all' && st.subject !== 'all' && !compatible(st.subject, st.teacher)) st.subject = 'all';
+    if (st.teacher !== 'all' && st.subject !== 'all' && !teachersForSubject(this.filtered(false), st.subject).includes(st.teacher)) st.subject = 'all';
     this.alertOut = [];
     this.dirty.add('sadin'); this.renderTab('sadin');
   },
@@ -171,8 +182,10 @@
     const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
     const subjects = [...new Set(entries.map(e => e.subject).concat(rawUnknown.map(r => r.subject)).filter(Boolean).map(s => GroupAnalyzer.sadinSubject(s)))].sort(natural);
-    const teachers = [...new Set(entries.map(e => (Store.groups.get(e.groupId) || {}).teacher || e.teacher).concat(rawUnknown.map(r => r.teacher)).filter(Boolean))].sort(natural);
     if (st.subject !== 'all' && !subjects.includes(st.subject)) st.subject = 'all';
+    const teachers = st.subject === 'all'
+      ? [...new Set(entries.map(e => (Store.groups.get(e.groupId) || {}).teacher || e.teacher).concat(rawUnknown.map(r => r.teacher)).filter(Boolean))].sort(natural)
+      : teachersForSubject(this.filtered(false), st.subject);
     if (st.teacher !== 'all' && !teachers.includes(st.teacher)) st.teacher = 'all';
     const option = (v, label, selected) => `<option value="${E(v)}" ${v === selected ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('sadinSubjectSelect', option('all', 'כל המקצועות', st.subject) + subjects.map(s => option(s, s, st.subject)).join(''));
