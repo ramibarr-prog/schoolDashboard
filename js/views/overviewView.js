@@ -168,7 +168,6 @@
     const sadinOn = covered(Store.loaded.grades, 'hasSadin');
     const risk = bagrutOn ? this.filterByChip(m.rows, 'notok') : [];
     const near = risk.filter(r => r.ev.singleBlocker).length;
-    const completion = risk.filter(r => r.ev.reverse.some(r => r.pct === 30)).length;
     const currentRisk = sadinOn ? SadinView.earlyWarningRows(m.list).length : 0;
     const card = (attrs, title, value, detail, ready) => `<button type="button" class="ov-card" data-act="ovGo" ${attrs}>
       <span class="ov-label">${title}</span>
@@ -186,8 +185,8 @@
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         ${card('data-go="groups" data-view="anomalies"', 'משימה 1 — שיבוצים לתיקון', `${am.studentsCount} חניכים`,
           groupsOn ? `חריגות: חוסר ${am.byCategory.missing} · כפילות ${am.byCategory.duplicate} · חשודים ${am.byCategory.suspect} (חוסר לפי סף שיבוץ כיתתי)` : 'לא ניתן לקבוע — חסר קובץ קבוצות לשכבה', groupsOn)}
-        ${card('data-go="bagrut" data-chip="notok" data-scope="all"', 'משימה 2 — זכאות ויעד 30%', `${risk.length} חניכים בסיכון`,
-          bagrutOn ? `${near} קרובים לסף · ${completion} נדרש להשלים ציון בית-ספרי (30%)` : 'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn)}
+        ${card('data-go="bagrut" data-chip="notok" data-scope="all"',         'משימה 2 — זכאות לבגרות', `${risk.length} חניכים בסיכון`,
+                  bagrutOn ? `${near} קרובים לסף · איתור חניכים בסיכון לטיפול שוטף` :  'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn)}
         ${card('data-go="sadin" data-strip="all"', 'משימה 3 — התראה מקדימה (שוטף)', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
           sadinOn ? 'פתיחת מסך ההתראה המקדימה' : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה', sadinOn)}
       </div>
