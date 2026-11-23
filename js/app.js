@@ -67,9 +67,9 @@ const App = {
   /* ------------------------------------------------------------------
      אתחול
      ------------------------------------------------------------------ */
-  /** מסך הפתיחה: מוצג לפחות 850ms ולכל היותר 1600ms מרגע הטעינה, גם אם האתחול (ענן / רשת) עוד לא הסתיים */
+  /** מסך הפתיחה: מוצג לפחות SPLASH_MIN_MS ונסגר רק אחרי סיום האתחול והרינדור הראשוני של "היום"; SPLASH_MAX_MS הוא חסם בטיחות קשיח (למשל כשהענן/הרשת איטיים) */
   SPLASH_MIN_MS: 2350,
-  SPLASH_MAX_MS: 3100,
+  SPLASH_MAX_MS: 8000,
   startSplash() {
     const t0 = window.__splashT0 || Date.now();
     this._splashT0 = t0;
@@ -78,7 +78,15 @@ const App = {
   },
   finishSplash() {
     clearTimeout(this._splashMin);
-    this._splashMin = setTimeout(() => this.hideSplash(), Math.max(0, this.SPLASH_MIN_MS - (Date.now() - (this._splashT0 || Date.now()))));
+    let done = false;
+    const schedule = () => {
+      if (done) return;
+      done = true;
+      this._splashMin = setTimeout(() => this.hideSplash(), Math.max(0, this.SPLASH_MIN_MS - (Date.now() - (this._splashT0 || Date.now()))));
+    };
+    /* ממתינים לציור הראשון של הפאנל שעבר רינדור; אם הלשונית מוסתרת ואין פריים, מגבה טיימר קצר */
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(schedule));
+    setTimeout(schedule, 250);
   },
   hideSplash() {
     clearTimeout(this._splashFailsafe); clearTimeout(this._splashMin);
@@ -90,6 +98,10 @@ const App = {
 
   async init() {
     this.startSplash();
+    try { await this.initCore(); } finally { this.finishSplash(); }
+  },
+
+  async initCore() {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
@@ -116,7 +128,6 @@ const App = {
     if ((Config.rules().version || 0) < RULES_VERSION) {
       this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ הגדרות ומצבת ← חוקי בגרות ושאלונים ← שחזור ברירות מחדל.', 'info');
     }
-    this.finishSplash();
   },
 
   icons() { try { if (window.lucide) window.lucide.createIcons(); } catch (e) { /* noop */ } },
