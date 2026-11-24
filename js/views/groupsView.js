@@ -141,6 +141,11 @@
   },
 
   renderGroupsPanel() {
+    if ($('panel-groups') && !$('weakness-styles')) {
+      const link = document.createElement('link');
+      link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
+      document.head.appendChild(link);
+    }
     this.syncGroupLayout();
     this.renderFreshnessBar('groups');
     const st = this.state.groups, explorer = this.state.groupsViewMode === 'explorer';
@@ -206,6 +211,14 @@
     const mode = this.state.groupsViewMode;
     const next = mode === 'explorer' ? 'anomalies' : 'explorer';
     const label = mode === 'explorer' ? 'חזרה לשיבוצים לתיקון' : 'סייר קבוצות';
+    if (mode !== 'explorer') {
+      const grade = this.state.filters.grade;
+      box.innerHTML = `<div class="gm-row ga-toolbar">
+        <div class="ga-title"><h2>שיבוצים לתיקון</h2><span>קטגוריה אחת בכל פעם · ${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</span></div>
+        <div id="groups-mode-extra" class="gm-extra ga-tools">
+          <button type="button" class="btn btn-ghost btn-sm ga-explorer" data-act="groupsMode" data-mode="${next}">${label}</button></div></div>`;
+      return;
+    }
     box.innerHTML = `<div class="gm-row"><div class="flex items-center gap-3"><h2 class="font-bold text-lg text-[#355747]">${mode === 'explorer' ? 'סייר קבוצות' : 'שיבוצים לתיקון'}</h2>
       <button type="button" class="btn btn-ghost btn-sm" data-act="groupsMode" data-mode="${next}">${label}</button></div><div id="groups-mode-extra" class="gm-extra"></div></div>`;
   },
@@ -227,17 +240,25 @@
     if (!categories.has(cat)) categories.set(cat, new Set());
     const treated = categories.get(cat);
 
-    const card = (id, cls, label, explanation) => {
+    const explanations = {
+      missing: 'סף שיבוץ כיתתי (30%): חסר במקצוע שבו לפחות 30% מהכיתה משובצים',
+      missing_major: 'חניכים ללא קבוצת מגמה',
+      duplicate: 'רשומים ב-2 קבוצות ויותר',
+      suspect: 'כולל פערי נתונים מול הסדין'
+    };
+    const card = (id, cls, label) => {
       const items = forCategory(id), n = studentCount(items);
+      const explanation = explanations[id];
       return `<button type="button" class="an-card ${cls}" data-act="anCat" data-cat="${id}" aria-pressed="${cat === id}" title="${E(explanation)}">
-        <span class="top"><span class="t">${label}</span><span><span class="n">${n}</span> חניכים ייחודיים</span></span>
-        <span class="s" style="white-space:normal">${items.length} חריגות · ${explanation}</span></button>`;
+        <span class="top"><span class="t"><span class="ga-dot" aria-hidden="true"></span>${label}</span><span class="ga-count"><span class="n">${n}</span> חניכים</span></span>
+        <span class="s">${items.length} חריגות <span class="ga-visually-hidden">· ${explanation}</span></span></button>`;
     };
     setHtml('groups-kpis',
-      card('missing', 'an-sage', 'היעדר מקצוע ליבה', 'סף שיבוץ כיתתי (30%): חסר במקצוע שבו לפחות 30% מהכיתה משובצים') +
-      card('missing_major', 'an-terra', 'ללא שיבוץ מגמה', 'חניכים ללא קבוצת מגמה') +
-      card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע', 'רשומים ב-2 קבוצות ויותר') +
-      card('suspect', 'an-peach', 'חשד לשיבוץ שגוי', 'כולל פערי נתונים מול הסדין'));
+      card('missing', 'an-sage', 'היעדר מקצוע ליבה') +
+      card('missing_major', 'an-terra', 'ללא שיבוץ מגמה') +
+      card('duplicate', 'an-mustard', 'כפילות קבוצה במקצוע') +
+      card('suspect', 'an-peach', 'חשד לשיבוץ שגוי') +
+      `<p class="ga-category-note">${E(explanations[cat])}</p>`);
 
     const filteredRows = categoryRows.filter(r => subject === 'all' || r.subject === subject);
     const { anomSort: sortCol, anomDir: sortDir } = state.groups;
@@ -247,10 +268,11 @@
       if (!byTrainee.has(r.tz)) byTrainee.set(r.tz, []);
       byTrainee.get(r.tz).push(r);
     });
-    setHtml('groups-mode-extra', `<p class="text-xs text-slate-600">כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים. סימון כטופל הוא זמני ולכל קטגוריה בנפרד.</p>
-      <label class="flex items-center gap-2 text-xs font-semibold text-[#355747]">סינון לפי מקצוע
-        <select class="inp" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${categoryRows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select></label>
-      <button type="button" class="routine-toggle" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount} חריגות)</button>`);
+    const help = 'כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים. סימון כטופל הוא זמני ולכל קטגוריה בנפרד.';
+    setHtml('groups-mode-extra', `<select class="inp ga-subject" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${categoryRows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select>
+      <button type="button" class="btn btn-ghost btn-sm ga-explorer" data-act="groupsMode" data-mode="explorer">סייר קבוצות</button>
+      <button type="button" class="routine-toggle ga-routine" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount} חריגות)</button>
+      <button type="button" class="ga-help" title="${E(help)}" aria-label="${E(help)}">i</button>`);
 
     const groupTxt = g => `<span dir="ltr" class="font-semibold">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
     const currentText = r => {
@@ -261,7 +283,7 @@
     const ordered = [...byTrainee.values()];
     const pending = ordered.filter(items => !treated.has(items[0].tz));
     const completed = ordered.filter(items => treated.has(items[0].tz));
-    const body = pending.slice(0, 1500).concat(completed).map(items => {
+    const renderRow = items => {
       const r = items[0];
       const bySubject = new Map();
       items.forEach(item => {
@@ -278,18 +300,20 @@
             item.category === 'suspect' ? `<span class="an-k an-k-suspect">${E(item.kindLabel)}</span>` : '';
           return [description, item.isRoutineDuplicate ? '<span class="routine-tag">מקצוע מערכתי</span>' : '', currentText(item)].filter(Boolean).join(' ');
         }).filter(Boolean).join(' · ');
-        return `<span class="inline-block align-top max-w-full ml-3 mb-1 text-xs">
-          <button type="button" class="font-semibold text-[#355747] underline text-right" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>${findingDetails ? `: <span class="text-slate-600">${findingDetails}</span>` : ''}
+        return `<span class="ga-finding">
+          <button type="button" class="ga-subject-chip" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>${findingDetails ? ` <span class="ga-finding-details">${findingDetails}</span>` : ''}
           </span>`;
       }).join('');
-      return `<tr>
-        <td class="text-right"><button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>
+      return `<tr${treated.has(r.tz) ? ' class="ga-treated"' : ''}>
+        <td class="text-right"><button type="button" class="ga-student" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
         <td class="text-right">${details}</td>
         <td class="text-right whitespace-nowrap">${items.length} חריגות</td>
-        <td class="text-right"><button type="button" class="text-xs text-[#75977D] underline" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button>
-          <button type="button" class="text-xs text-[#355747] underline" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'החזר לסדר רגיל' : 'הורד לסוף הרשימה'}</button></td></tr>`;
-    }).join('');
+        <td class="text-right"><div class="ga-row-actions"><button type="button" class="ga-row-button" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button>
+          <button type="button" class="ga-row-button" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'החזר ↑' : 'הורד לסוף ↓'}</button></div></td></tr>`;
+    };
+    const body = pending.slice(0, 1500).map(renderRow).join('') +
+      (completed.length ? `<tr class="ga-treated-heading"><th scope="rowgroup" colspan="5">הורדו לסוף הרשימה (${completed.length})</th></tr>${completed.map(renderRow).join('')}` : '');
     const th = (col, label) => {
       const active = sortCol === col;
       return `<th class="text-right cursor-pointer select-none" aria-sort="${active ? (sortDir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="font-semibold cursor-pointer select-none" data-act="grpAnomSort" data-col="${col}" title="מיון לפי ${E(label)}">${E(label)}<span class="${active ? '' : 'opacity-40'}" aria-hidden="true"> ${active ? (sortDir > 0 ? '▲' : '▼') : '⇅'}</span></button></th>`;
@@ -299,9 +323,9 @@
       return `<button type="button" class="underline" data-act="grpAnomSort" data-col="${col}" aria-pressed="${active}" title="מיון לפי הממצא הראשון של החניך">${label}${active ? (sortDir > 0 ? ' ▲' : ' ▼') : ''}</button>`;
     };
     const signals = signalSummary(this.filtered(), am.outside, this.state.sim, state.showRoutineDuplicates);
-    const filteredSummary = `<div class="px-4 py-2 text-sm text-slate-600">${byTrainee.size} חניכים · ${shown.length} חריגות${pending.length > 1500 ? ' · מוצגים 1500 חניכים לא מסומנים ראשונים וכל המסומנים' : ''}</div>`;
+    const filteredSummary = `<div class="ga-table-summary">${byTrainee.size} חניכים · ${shown.length} חריגות${pending.length > 1500 ? ' · מוצגים 1500 חניכים לא מסומנים ראשונים וכל המסומנים' : ''}</div>`;
     setHtml('groups-table', `${filteredSummary}
-      <table class="grid w-full" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
+      <table class="grid w-full" data-category="${E(cat)}" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
         ${th('name', 'שם החניך')}${th('cls', 'כיתת אם')}<th class="text-right">ממצאים ופעולות <span class="text-xs font-normal">· מיון לפי ${sortFinding('subject', 'מקצוע')} / ${sortFinding('kind', 'סוג')} / ${sortFinding('current', 'קבוצה')}</span></th><th class="text-right">מספר חריגות</th><th class="text-right">פעולות</th></tr></thead>
         <tbody>${body || '<tr><td colspan="5" class="text-center text-[#355747] py-8">לא נמצאו חריגות שיבוץ בסינון הנוכחי</td></tr>'}</tbody></table>${signals}`);
     $('groups-table').querySelectorAll('[data-groups-treated]').forEach(button => button.addEventListener('click', () => {
