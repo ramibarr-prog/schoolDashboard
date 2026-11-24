@@ -34,7 +34,7 @@ const App = {
     tab: 'overview',
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
     sim: { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false },
-    bagrut: { chip: 'all', sort: 'class', dir: 1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all' },
+    bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all' },
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
     bagrutScopeSet: false,

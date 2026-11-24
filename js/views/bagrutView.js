@@ -8,6 +8,15 @@
   const noBagrutData = (signal, sim) =>
     !signal.prereqs.hasBagrut && !(sim.useCurrent && signal.prereqs.hasSadin);
 
+  document.addEventListener('click', event => {
+    const tab = event.target.closest && event.target.closest('[data-tab="bagrut"]');
+    const app = window.App;
+    if (tab && app && app.state.tab !== 'bagrut' && app.state.bagrut.drill === 'all' && !app.state.bagrut.targets) {
+      app.state.bagrut.chip = 'risk';
+      app.dirty.add('bagrut');
+    }
+  }, true);
+
   const PINS_KEY = 'schoolDashboard.bagrut.pins.v1';
   let pinsCache = null;
   function loadPins() {
@@ -31,9 +40,9 @@
   }
 
   function signalSummary(rows, signals, sim) {
-    const quality = rows.filter(({ t }) => signals.get(t.tz).ev.manualReview.required &&
+    const quality = rows.filter(({ t }) => signals.get(t.tz).ev.tier !== 5 && signals.get(t.tz).ev.manualReview.required &&
       signals.get(t.tz).dataQuality.some(f => f.id === 'data.manual_review')).length;
-    const missing = [...new Set(rows.map(r => r.t.gradeKey))].filter(grade => {
+    const missing = [...new Set(rows.filter(r => signals.get(r.t.tz).ev.tier !== 5).map(r => r.t.gradeKey))].filter(grade => {
       const p = SignalEngine.prerequisitesFor(grade);
       return !p.hasBagrut && !(sim.useCurrent && p.hasSadin);
     });
@@ -107,7 +116,7 @@
 
   bagrutSort(el) {
     const st = this.state.bagrut, key = el.dataset.key;
-    if (st.sort === key) st.dir *= -1; else { st.sort = key; st.dir = 1; }
+    if (st.sort === key) st.dir *= -1; else { st.sort = key; st.dir = key === 'tier' ? -1 : 1; }
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
@@ -374,12 +383,20 @@
   renderBagrutScope(info) {
     const box = $('bagrut-scope');
     if (!box) return;
-    if (!Store.hasData() || !info.show) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+    const select = $('bagrutSubjectDrillSelect'), simulation = $('bagrutSimulation');
     const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} · חניכים (${info.counts[id]})</button>`;
     box.classList.remove('hidden');
     const cohort = gk => ` • ${E(Config.getCohortNameForGrade(gk))}`;
-    box.innerHTML = `<div class="scope-bar" role="group" aria-label="היקף שכבות בצפי הזכאות">
+    const grade = this.state.filters.grade;
+    box.innerHTML = `<div class="bagrut-toolbar">
+      <div class="bagrut-title"><h1>זכאות לבגרות</h1><p>ליווי פרטני של חניכים לקראת קו הסיום · ${grade === 'all' ? 'כל השכבות' : `שכבת ${E(Util.gl(grade))}`}</p></div>
+      <div class="bagrut-controls"><span class="bagrut-subject-slot"></span>
+        <button type="button" class="btn btn-ghost btn-sm bagrut-tool" data-act="bagrutTargets" aria-pressed="${!!this.state.bagrut.targets}">${this.state.bagrut.targets ? 'חזרה לזכאות' : 'יעד 30% וייצוא'}</button>
+        <span class="bagrut-simulation-slot"></span></div></div>
+      <div class="scope-bar bagrut-legacy-scope" role="group" aria-label="היקף שכבות בצפי הזכאות" hidden>
       ${pill('12', `🎓 שכבת י"ב${cohort('יב')}`)}${pill('11', `📈 שכבת י"א${cohort('יא')}`)}${pill('10', `🌱 שכבת י'${cohort('י')}`)}${pill('all', '📋 כל השכבות')}</div>`;
+    if (select) box.querySelector('.bagrut-subject-slot').appendChild(select);
+    if (simulation) box.querySelector('.bagrut-simulation-slot').appendChild(simulation);
   },
 
   /** חניכים הדורשים תשומת לב: סיכון בבגרות או 2+ מקצועות בסיכון בסדין (אותה הגדרה כמו כרטיס חדר הבקרה) */
@@ -401,8 +418,12 @@
     const ev = r.ev;
     if (chip === 'attention') return this.attentionTzs().has(r.t.tz);
     if (chip === 'all') return true;
+    if (chip === 'pinned') return loadPins().has(r.t.tz);
+    if (chip === 'track12') return ev.tier === 5;
     if (chip === 'exception') return ev.manual;
     if (isUnknown(signal)) return chip === 'tier0';
+    if (chip === 'risk') return ev.tier !== 5 && (this.tierBased(ev) ? ev.tier === 4 : ev.paceStatus === 'pace_lag');
+    if (chip === 'completion') return ev.tier !== 5 && (this.tierBased(ev) ? ev.tier === 3 : ev.paceStatus === 'pace_warning');
     if (chip === 'suspect') return !ev.manual && ev.isPotentialException;
     if (chip === 'manualReview') return !!(ev.manualReview && ev.manualReview.required);
     if (chip === 'near') return ev.singleBlocker;
@@ -442,6 +463,11 @@
   },
 
   renderBagrutPanel() {
+    if ($('panel-bagrut') && !$('weakness-styles')) {
+      const link = document.createElement('link');
+      link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
+      document.head.appendChild(link);
+    }
     this.renderFreshnessBar('bagrut');
     this.syncBagrutScope();
     const scope = this.bagrutScopeInfo(this.dashRows());
@@ -483,7 +509,6 @@
       .filter(r => !drill.currentOn || ((!st.readinessClass || r.t.classKey === st.readinessClass) && this.readinessMatch(r, st.readinessFilter)))
       .map(r => ({ t: r.t })) : list;
     const summary = signalSummary(displayed, signals, sim);
-    const toggle = `<div class="flex flex-wrap items-center gap-2 mb-3"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutTargets" aria-pressed="${!!st.targets}">${st.targets ? 'חזרה לטבלת הזכאות' : 'תצוגת יעד 30% מינימלי'}</button></div>`;
     if (st.targets) {
       const hasBagrut = SignalEngine.prerequisitesFor('יב').hasBagrut;
       const targets = hasBagrut ? BagrutView.target30Rows.call(this, list) : [];
@@ -502,7 +527,7 @@
       const body = targets.map(r => `<tr><td><button type="button" class="font-bold text-indigo-700 hover:underline" data-act="openProfile" data-tz="${E(r.t.tz)}">${E(r.t.name)}</button></td>
         <td>${E(Config.classLabel(r.t.classKey))}</td><td>${E(r.subject)}</td><td>${E(r.current)}</td><td>${E(r.target)}</td><td>${E(r.note)}</td></tr>`).join('');
       const th = (key, label) => `<th aria-sort="${sort === key ? (dir > 0 ? 'ascending' : 'descending') : 'none'}"><button type="button" class="font-semibold" data-act="bagrutTargetSort" data-key="${key}">${label}${sort === key ? (dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
-      return setHtml('bagrut-table', `${toggle}
+      return setHtml('bagrut-table', `
         <div class="card p-3 mb-3 text-sm"><div class="flex flex-wrap items-center gap-3"><strong>יעד מינימלי בציון בית-ספרי (30%)</strong>
         <span>${students} חניכים · ${targets.length} מקצועות</span>
         <button type="button" class="btn btn-primary btn-sm" data-act="exportTargets30"${targets.length ? '' : ' disabled'}>ייצוא יעד 30% (CSV/Excel)</button></div>
@@ -511,8 +536,8 @@
         `<table class="grid w-full text-right"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('subject', 'מקצוע')}<th>מצב/ציון נוכחי</th>${th('target', 'יעד מינימלי ב-30%')}<th>הערה</th></tr></thead>
         <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">אין רכיבי 30% חסרים בסינון הנוכחי</td></tr>'}</tbody></table>`}`);
     }
-    if (drill) return setHtml('bagrut-table', toggle + summary + this.bagrutSubjectMatrix(drill, signals));
-    setHtml('bagrut-table', toggle + summary + this.bagrutTable(list, signals));
+    if (drill) return setHtml('bagrut-table', summary + this.bagrutSubjectMatrix(drill, signals));
+    setHtml('bagrut-table', summary + this.bagrutTable(list, signals));
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
@@ -521,49 +546,39 @@
     if (!box) return;
     if (!Store.hasData()) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     if (drill) { box.classList.remove('hidden'); box.innerHTML = this.subjectReadinessKpis(drill); return; }
-    if (!stats.total && !paceRows.length && rows.length) {
-      box.classList.remove('hidden');
-      box.innerHTML = `<div class="card px-4 py-2.5">${UI.signalBadge('bagrut.unknown', 'לא ניתן לקבוע — חסרים נתוני בגרות לשכבה')}
-        ${this.state.bagrut.chip !== 'all' ? '<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all">✕ הצג הכל</button>' : ''}</div>`;
-      return;
-    }
     const active = this.state.bagrut.chip;
-    const pct = (value, label, title) => `<div class="flex items-baseline gap-2" title="${E(title)}"><span class="text-2xl font-extrabold leading-none text-slate-900">${value}%</span><span class="text-xs font-semibold text-slate-600">${label}</span></div>`;
-    const quick = (id, cls, label, count, title) => `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(`${title} · ${count} חניכים`)}">
-      <span class="text-xs font-bold text-slate-700 whitespace-nowrap">${label} · חניכים</span><span class="text-sm font-extrabold px-2 py-0.5 rounded bg-slate-100">${count}</span></button>`;
+    const signals = signalsFor(rows, this.state.sim);
+    const pct = (value, label, title, known) => `<div title="${E(title)}"><strong>${known ? `${value}%` : '—'}</strong> <span>${label}</span></div>`;
+    const quick = (id, cls, label) => {
+      const count = this.filterByChip(rows, id, signals).length;
+      return `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(`${label} · ${count} חניכים`)}">
+        <span>${label}</span><span class="bagrut-tab-count">${count}</span></button>`;
+    };
     const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
-    const divider = '<span class="hidden sm:block h-8 w-px bg-slate-200" aria-hidden="true"></span>';
-    const eligible = stats.total > 0 || !paceRows.length ? `
-      <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
-        ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis)}
-        ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis)}
-      </div>${divider}
-      <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי צפי">
-        ${quick('eligible', 'gstat-ok', 'זכאים', tierCount[1] + tierCount[2], `${TT[1]} + ${TT[2]}`)}
-        ${quick('tier3', 'gstat-amber', 'השלמה או החלטה', tierCount[3], TT[3])}
-        ${quick('tier4', 'gstat-bad', 'בסיכון', tierCount[4], TT[4])}
-      </div>` : '';
+    const eligible = stats.total > 0 || !paceRows.length ? `<div class="bagrut-summary-metric">
+      ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis, stats.counted)}
+      ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis, stats.counted)}</div>` : '';
     let pace = '';
     if (paceRows.length) {
       const ps = BagrutAdvisor.summarizePace(paceRows.map(r => r.ev));
       const grades = Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
       const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}); שאלוני שכבות עליונות אינם נספרים כחוסר`;
-      pace = `${eligible ? divider : ''}
-      <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
-        ${pct(ps.pctInclSpecialEd, `תקינות צבירה (${grades}) · כולל חנ"מ`, paceBasis)}
-        ${pct(ps.pctExSpecialEd, 'תקינות צבירה · ללא חנ"מ', paceBasis)}
-      </div>${divider}
-      <div class="flex flex-wrap items-center gap-2" role="group" aria-label="סינון מהיר לפי תקינות צבירה">
-        ${quick('pace:on_track', 'gstat-ok', 'תקין לקצב', ps.onTrack, 'ללא כשלים ושאלון חסר שמועדו הגיע')}
-        ${quick('pace:not_started', 'gstat-violet', 'טרם החלו', ps.notStarted, 'טרם החלו היבחנות')}
-        ${quick('pace:pace_warning', 'gstat-amber', 'חסם יחיד', ps.warning, 'חסם צבירה יחיד לשכבה')}
-        ${quick('pace:pace_lag', 'gstat-bad', 'בפיגור', ps.lag, 'בפיגור צבירה לשכבה')}
-      </div>`;
+      pace = `<div class="bagrut-summary-metric">
+        ${pct(ps.pctExSpecialEd, `תקינות צבירה (${grades}) · ללא חנ"מ`, paceBasis, ps.counted)}
+        ${pct(ps.pctInclSpecialEd, 'תקינות צבירה · כולל חנ"מ', paceBasis, ps.counted)}</div>`;
     }
     box.classList.remove('hidden');
     const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
-    box.innerHTML = `<div class="card px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2">${eligible}${pace}
-      ${attention ? `<div class="w-full rounded bg-amber-100 px-3 py-2 text-sm font-bold text-amber-900" role="status">במעקב: ${attention.tzSet.size} חניכים · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all">✕ הצג הכל</button></div>` : ''}</div>`;
+    box.innerHTML = `<div class="card bagrut-summary"><div class="bagrut-summary-values">${eligible}${pace}</div>
+      <div class="bagrut-tabs" role="group" aria-label="סינון חניכים לפי מצב">
+        ${quick('risk', 'gstat-bad', 'בסיכון')}
+        ${quick('completion', 'gstat-amber', 'השלמה או החלטה')}
+        ${quick('eligible', 'gstat-ok', 'זכאים')}
+        ${quick('pinned', 'gstat-violet', 'במעקב צמוד')}
+        ${paceRows.length ? quick('pace:on_track', 'gstat-ok', 'תקין לקצב') + quick('pace:not_started', 'gstat-violet', 'טרם החלו') : ''}
+        ${rows.some(r => r.ev.tier === 5) ? quick('track12', 'gstat-violet', '12 שנ"ל') : ''}
+      </div>
+      ${attention ? `<div class="bagrut-attention" role="status">במעקב: ${attention.tzSet.size} חניכים · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all"><span>✕ הצג הכל</span><span>${rows.length}</span></button></div>` : ''}</div>`;
   },
 
   /** מודל אחד למקצוע בודד, משותף לפס המוכנות שב-#bagrut-kpis ולמטריצת השאלונים */
@@ -699,7 +714,9 @@
 
   bagrutList(rows, signals) {
     const { chip, sort, dir } = this.state.bagrut;
-    const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: this.tierBased(r.ev) ? r.ev.tier : BagrutEngine.PACE_TIER[r.ev.paceStatus], tz: r.t.tz, diag: r.ev.diagnostic })[sort];
+    const severity = ev => ev.tier === 5 ? -1 : this.tierBased(ev) ? ev.tier :
+      ({ pace_lag: 4, pace_warning: 3, on_track: 1, not_started: 0, no_data: 0 })[ev.paceStatus] ?? 0;
+    const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: severity(r.ev), tz: r.t.tz, diag: r.ev.diagnostic })[sort];
     const pins = loadPins();
     return this.filterByChip(rows, chip, signals).sort((a, b) => {
       const x = val(a), y = val(b);
@@ -753,103 +770,94 @@
     const { sort, dir } = this.state.bagrut;
     const sim = this.state.sim;
     if (!signals) signals = signalsFor(list, sim);
-    const rules = Config.rules();
-    const th = (key, label, cls = '') => `<th class="${cls}"><button type="button" class="font-semibold" data-act="bagrutSort" data-key="${key}">${label}${sort === key ? (dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`;
-    const plain = (label, cls = '') => `<th class="${cls}">${label}</th>`;
-    const coreCols = BAGRUT_CORE.filter(([id]) => rules.coreSubjects.some(s => s.id === id && s.enabled !== false));
-    const tip = text => `data-act="mxPop" data-tip="${E(text)}"`;
-
-    const subjectTd = (c, label, s, ev, grade) => {
-      if (!c) return '<td class="text-slate-300 text-xs">—</td>';
-      const major = label === 'מגמה 5 יח"ל' && c.name;
-      let value = major ? `${c.text}${c.text === 'לומד' ? ' ' : ' • '}${c.name}` :
-        c.state === 'comp' ? `${c.text} ${c.sub.startsWith('פיצוי') ? 'פיצוי' : 'קיזוז'}` : c.text;
-      let detail = value, targetLine = '';
-      if (s && (s.incomplete || s.partial) && s.reportedScore != null) {
-        const target = target30(s, ev, Config.rulesForGrade(grade));
-        const forecast = s.forecast || s.filled.length || s.comps.some(comp => comp.magenForecast);
-        detail = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נקודות ${forecast ? 'לפי תחזית' : 'נצברו'} (חסר ${s.missingPct}% ממשקל המקצוע); דווחו ${s.reportedPct}% ממשקל המקצוע` :
-          `${Util.fmt(s.reportedScore, 0)} ממוצע רכיבים מדווחים; דווחו ${s.reportedPct}% ממשקל המקצוע`;
-        value = s.incomplete && s.earnedScore != null ? `${s.earnedScore} נק׳ ${forecast ? 'תחזית' : 'נצברו'}` :
-          `ממוצע ${Util.fmt(s.reportedScore, 0)}`;
-        if (target) {
-          targetLine = `יעד 30%: ${target.target}`;
-          detail += `; יעד בציון בית-ספרי (30%): ${target.target}${sim.useCurrent ? ' (לפי סימולציה)' : ''} — ${target.note}`;
-        }
+    const showClass = this.state.filters.cls === 'all';
+    const tip = text => `data-act="mxPop" data-tip="${E(text)}" title="${E(text)}" tabindex="0" role="button"`;
+    const matrixCache = new Map();
+    const majorPoints = (t, cand) => {
+      const key = `${t.gradeKey}:${cand.id}`;
+      if (!matrixCache.has(key)) {
+        const trainees = list.filter(r => r.t.gradeKey === t.gradeKey).map(r => r.t);
+        const matrix = BagrutAdvisor.subjectMatrix(`major:${cand.id}`, trainees);
+        matrixCache.set(key, new Map(matrix ? matrix.rows.map(r => [r.t.tz, r]) : []));
       }
-      const numeric = Number(c.text);
-      const failed = ['fail', 'lost', 'missing', 'noshow', 'none'].includes(c.state) || (c.text.trim() !== '' && Number.isFinite(numeric) && numeric < rules.passGrade);
-      const style = c.state === 'future' ? 'future-cell' : c.state === 'comp' || c.state === 'exempt' ? 'text-amber-700 font-semibold' : failed ? 'score-alert' :
-        c.state === 'noenroll' || c.text === 'לומד' || c.text === '—' || c.text === 'בתהליך' ? 'text-slate-400' : 'text-slate-800 font-normal';
-      const fullTip = detail === value ? c.tip : `${c.tip} | ${detail}`;
-      return `<td class="mx-cell" ${tip(fullTip)} title="${E(fullTip)}" tabindex="0" role="button" aria-label="${E(`${label}: ${detail}${c.sub ? ' ' + c.sub : ''}`)}"><span class="${style}${detail !== value ? ' whitespace-nowrap' : ''}">${E(value)}</span>${targetLine ? `<span class="block text-xs text-slate-600 whitespace-nowrap">${E(targetLine)}</span>` : ''}</td>`;
+      const row = matrixCache.get(key).get(t.tz);
+      return row && row.doneW > 0 && row.remainingW > 0 ? row.accumulated : null;
     };
-    const internalsTd = ev => {
-      const cells = ev.internalCells;
-      if (!cells.length) return '<td class="text-slate-300 text-xs">—</td>';
-      const allDone = cells.every(c => c.state === 'ok' || c.state === 'na');
-      const missing = cells.some(c => c.state === 'miss');
-      const text = allDone ? '✓ תקין' : ev.internals.some(i => i.explicitFail) ? 'לא עבר' : missing ? 'חסר' : 'בתהליך';
-      const cls = allDone ? 'text-emerald-800' : missing ? 'text-rose-800 font-bold' : 'text-slate-600';
-      const detail = ['מקצועות פנימיים', ...cells.map(c => c.tip)].join(' | ');
-      return `<td class="whitespace-nowrap"><span class="${cls}" ${tip(detail)} tabindex="0" role="button" aria-label="${E(detail)}">${text}</span></td>`;
+    const coreCell = (ev, id, label) => {
+      const s = ev.subjects.find(x => x.id === id), c = this.subjectDisplayCell(ev, id);
+      if (!s || !c) return '<td>—</td>';
+      const blocked = ev.tier !== 5 && (this.tierBased(ev)
+        ? ev.blockers.some(b => b.gate === 1 && !b.info && b.k !== 'units' && b.text.includes(s.name))
+        : ev.paceInfo.blockedSubjects.includes(s.name));
+      const numeric = s.comps.filter(comp => comp.state === 'num');
+      const weight = s.comps.reduce((sum, comp) => sum + comp.weight, 0);
+      const points = numeric.length && weight ? Math.round(numeric.reduce((sum, comp) => sum + (comp.reportedNum ?? comp.num) * comp.weight, 0) / weight) : null;
+      const partial = s.incomplete || s.partial;
+      let state = 'neutral', text = s.group || s.learning ? 'לומד' : '—';
+      if (blocked) { state = 'bad'; text = 'חסם'; }
+      else if (partial && points != null) { state = 'partial'; text = `${points} נק׳`; }
+      else if ((s.status === 'pass' || s.compApplied) && s.source === 'bagrut' && !s.forecast && !s.comps.some(comp => comp.magenForecast)) {
+        state = 'ok'; text = s.compApplied ? 'עבר בקיזוז' : 'עבר';
+      } else if (s.exempt) { state = 'partial'; text = 'פטור'; }
+      const detail = `${c.tip}${partial && points != null ? ` | נצברו ${points} נקודות מציונים מדווחים` : ''}`;
+      return `<td class="mx-cell" ${tip(detail)} aria-label="${E(`${label}: ${text}`)}"><span class="bagrut-cell bagrut-cell-${state}${state === 'bad' ? ' score-alert' : ''}">${E(text)}</span></td>`;
     };
-    const focusTd = (ev, unknown) => {
-      if (unknown) return '<td class="mx-focus text-slate-500">לא ניתן לקבוע ללא נתוני בגרות לשכבה</td>';
-      const reviewReasons = ev.blockers.filter(b => b.k === 'exempt-review').map(b => b.text);
-      // Pace focus starts with reviewCount coordinator-review entries.
-      const paceReviews = new Set(ev.paceInfo.focus.slice(0, ev.paceInfo.reviewCount).map(f => f.text));
-      const MAX = 1, items = ev.focus.filter(f => !paceReviews.has(f.text) && !reviewReasons.some(reason => f.text.includes(reason)));
-      let body;
-      if (ev.tier === 0) body = `<span class="text-xs text-slate-600">${E(ev.diagnostic)}</span>`;
-      else if (!items.length) body = ev.manualReview.required
-        ? '<span class="text-xs text-slate-600">לא אותרו חסמים פדגוגיים נוספים</span>'
-        : '<span class="text-xs text-emerald-800">✓ תקין</span>';
-      else {
-        const b = x => `<span class="badge ${x.hard ? 'tier-4' : x.target ? 'bg-sky-100 text-sky-800' : 'tier-3'}">${E(x.text)}</span>`;
-        const more = items.length - MAX;
-        body = items.slice(0, MAX).map(b).join(' ') + (more > 0 ? ` <span class="badge fresh-slate border" title="${E(items.slice(MAX).map(x => x.text).join(' · '))}">+${more}</span>` : '');
-      }
-      return `<td class="mx-focus" title="${E(items.map(x => x.text).join(' · '))}">${body}${this.advisoryHtml(ev)}</td>`;
+    const majorCell = (t, ev) => {
+      const c = this.majorDisplayCell(ev);
+      const electives = ev.major.cands.filter(x => !x.coreId);
+      const cand = electives.find(x => x.name === c.name || x.name.split('/')[0].trim() === c.name);
+      const blocked = ev.tier !== 5 && ev.blockers.some(b => b.gate === 2 && !b.info &&
+        (b.k === 'major-none' || (cand && b.text.includes(cand.name))));
+      let state = 'neutral', text = cand && cand.enrolled ? 'לומד' : '—';
+      const points = cand && !cand.complete && cand.bagrut != null ? majorPoints(t, cand) : null;
+      if (blocked) { state = 'bad'; text = 'חסם'; }
+      else if (points != null) { state = 'partial'; text = `${points} נק׳`; }
+      else if (cand && cand.status === 'pass' && cand.complete && cand.source === 'bagrut' && !cand.forecast) { state = 'ok'; text = 'עבר'; }
+      else if (cand && cand.exempt) { state = 'partial'; text = 'פטור'; }
+      const more = Math.max(0, electives.length - 1);
+      const detail = `${c.tip}${points != null ? ` | נצברו ${points} נקודות מציונים מדווחים` : ''}`;
+      return `<td class="mx-cell" ${tip(detail)} aria-label="${E(`מגמה: ${text}`)}"><span class="bagrut-cell bagrut-cell-${state}${state === 'bad' ? ' score-alert' : ''}">${E(text)}</span>${more ? ` <span class="bagrut-more">+${more}</span>` : ''}</td>`;
     };
-    const pill = (ev, signal) => {
-      let text = ev.tierText;
-      const held = ev.manualReview.required, real = ev.blockers.filter(b => !b.info).length;
-      if (ev.adaptive && ev.tier === 3 && !ev.manual && real > 0) text += ` (חסם ${real})`;
-      const status = isUnknown(signal) ? UI.overallBadge('unknown') :
-        !this.tierBased(ev) ? this.paceBadge(ev) : ev.tier === 1 ? `<span class="text-emerald-700 font-medium whitespace-nowrap" title="${E(ev.diagnostic)}">✓ ${E(text)}</span>` :
-        ev.tier === 0 || ev.tier === 5 ? `<span class="text-slate-400 whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>` :
-        `<span class="badge pill-t${ev.tier} whitespace-nowrap" title="${E(ev.diagnostic)}">${E(text)}</span>`;
-      const quality = signal.dataQuality.find(f => f.id === 'data.manual_review');
-      const review = quality ? `<div aria-label="איכות נתונים" title="${E(quality.detail)}">${UI.signalBadge(quality, held ? 'נדרשת החלטת רכזת' : 'נדרשת בדיקה ידנית')}</div>` : '';
-      return `<div>${status}</div>${noBagrutData(signal, sim) ? '' : `<div>${this.unitsBadge(ev)}</div>`}
-        ${review}`;
+    const status = (ev, signal) => {
+      if (ev.tier === 5) return '<span class="bagrut-status bagrut-status-neutral">מסלול 12 שנות לימוד</span>';
+      if (isUnknown(signal)) return UI.overallBadge('unknown');
+      const text = ev.manualReview.required ? 'נדרשת החלטת רכזת' : this.tierBased(ev) ? ev.tierText : ev.paceText;
+      const kind = this.tierBased(ev) ? (ev.tier === 4 ? 'bad' : ev.tier === 3 ? 'partial' : ev.tier === 0 ? 'neutral' : 'ok') :
+        (ev.paceStatus === 'pace_lag' ? 'bad' : ev.paceStatus === 'pace_warning' ? 'partial' : ev.paceStatus === 'on_track' ? 'ok' : 'neutral');
+      return `<span class="bagrut-status bagrut-status-${kind}" title="${E(ev.diagnostic)}">${E(text)}</span>`;
     };
-
+    const required = (ev, unknown) => {
+      if (ev.tier === 5) return 'מסלול 12 שנות לימוד';
+      if (unknown) return 'לא ניתן לקבוע ללא נתוני בגרות לשכבה';
+      const items = this.tierBased(ev)
+        ? ev.blockers.filter(b => !b.info).sort((a, b) => Number(!!b.hard) - Number(!!a.hard)).map(b => b.text)
+        : ev.paceInfo.focus.map(f => f.text);
+      if (ev.manualReview.required && !items.some(x => x.includes('החלטת רכזת'))) items.unshift('נדרשת החלטת רכזת');
+      return [...new Set(items)].join(' · ') || 'לא אותרו חסמים';
+    };
     const pins = loadPins();
-    const cols = 6 + coreCols.length;
+    const cols = 3 + (showClass ? 1 : 0) + BAGRUT_CORE.length + 1;
     const renderRow = ({ t, ev }) => {
-      const track = this.trackOf(t);
       const signal = signals.get(t.tz), unknown = noBagrutData(signal, sim);
       const noDataCell = '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>';
-      return `
-      <tr>
-        <td><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 text-right hover:underline whitespace-nowrap cursor-pointer" data-act="openProfile" data-tz="${E(t.tz)}"         title="ת.ז ${E(t.tz)}">${E(t.name)}</button>
-                  <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" title="${pins.has(t.tz) ? 'הסר נעיצה' : 'נעץ לראש הרשימה'}">${pins.has(t.tz) ? 'נעוץ • הסר' : 'נעץ'}</button></td>
-        <td><span class="inline-flex items-center gap-1.5 whitespace-nowrap text-slate-800">${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)}${track && track !== 'רגילה' ? ` <span class="badge fresh-slate border">${E(track)}</span>` : ''}</span></td>
-        <td>${pill(ev, signal)}</td>
-        ${coreCols.map(([id, label]) => unknown ? noDataCell : subjectTd(this.subjectDisplayCell(ev, id), label, ev.subjects.find(s => s.id === id), ev, t.gradeKey)).join('')}
-        ${unknown ? noDataCell : subjectTd(this.majorDisplayCell(ev), 'מגמה 5 יח"ל')}
-        ${unknown ? noDataCell : internalsTd(ev)}
-        ${focusTd(ev, unknown)}
-      </tr>`;
+      const text = required(ev, unknown);
+      return `<tr${pins.has(t.tz) ? ' class="bagrut-pinned-row"' : ''}>
+        <td><div class="bagrut-student"><button type="button" class="bagrut-pin" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" aria-label="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}: ${E(t.name)}" title="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}">${pins.has(t.tz) ? '★' : '☆'}</button>
+        <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></div></td>
+        ${showClass ? `<td>${E(Config.classLabel(t.classKey))}</td>` : ''}
+        <td>${status(ev, signal)}</td><td class="bagrut-required" title="${E(text)}"><span>${E(text)}</span></td>
+        ${BAGRUT_CORE.map(([id, label]) => unknown ? noDataCell : coreCell(ev, id, label)).join('')}
+        ${unknown ? noDataCell : majorCell(t, ev)}</tr>`;
     };
-    const visible = list.slice(0, 1500), pinnedRows = visible.filter(r => pins.has(r.t.tz));
+    const pinnedRows = list.filter(r => pins.has(r.t.tz));
     const body = (pinnedRows.length ? `<tr class="room-divider"><td colspan="${cols}">📌 נעוצים (${pinnedRows.length} חניכים)</td></tr>${pinnedRows.map(renderRow).join('')}` : '') +
-      this.homeroomRows(visible.filter(r => !pins.has(r.t.tz)), cols, renderRow);
+      list.filter(r => !pins.has(r.t.tz)).map(renderRow).join('');
     const coreHead = ([id, l]) => `<th><button type="button" class="font-semibold hover:underline" data-act="bagrutDrill" data-sel="core:${id}" title="מטריצת שאלונים – ${E(l)}">${l}</button></th>`;
-    return `<table class="grid mx w-full text-center"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('tier', 'סטטוס זכאות / צבירה')}${coreCols.map(coreHead).join('')}${plain('מגמה 5 יח"ל')}${plain('פנימיים')}${plain('מיקוד פדגוגי (מה נדרש)', 'mx-focus')}</tr></thead>
-      <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>`;
+    const sortButton = (key, label) => `<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutSort" data-key="${key}" aria-pressed="${sort === key}">${label}${sort === key ? (dir > 0 ? ' ↑' : ' ↓') : ''}</button>`;
+    return `<div class="bagrut-sort" role="group" aria-label="מיון חניכים"><span>מיון לפי:</span>${sortButton('tier', 'חומרת סיכון')}${sortButton('class', 'כיתה')}${sortButton('name', 'שם')}</div>
+      <table class="grid mx bagrut-grid w-full text-center"><thead><tr><th>חניך</th>${showClass ? '<th>כיתה</th>' : ''}<th>סטטוס זכאות / צבירה</th><th>מה נדרש</th>${BAGRUT_CORE.map(coreHead).join('')}<th>מגמה 5 יח"ל</th></tr></thead>
+      <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>
+      <div class="bagrut-legend"><span><i class="bagrut-cell-ok"></i> עבר</span><span><i class="bagrut-cell-bad"></i> חסם פעיל</span><span><i class="bagrut-cell-partial"></i> נקודות שנצברו</span><span><i class="bagrut-cell-neutral"></i> לומד / אין נתון</span></div>`;
   },
 
   /** חלון מידע צף (ריחוף / לחיצה / מקלדת) לפירוט תא בגיליון השליטה */
