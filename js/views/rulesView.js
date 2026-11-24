@@ -458,6 +458,7 @@
     if (conflict) conflict.hidden = s.kind !== 'conflict';
     let t;
     if (!url) t = '💾 נתונים מקומיים (ללא סנכרון ענן)';
+    else if (!this.cloudService().configured() && s.kind !== 'conflict') t = '☁️ נדרשת התחברות עם Google · הנתונים נשמרו מקומית';
     else if (s.text) t = s.text;
     else if (this.cloudService().hasUnpublished()) t = '☁️ מסנכרן...';
     else t = (s.updatedAt || this.cloudService().meta().syncedAt) ? '☁️ מסונכרן' : '☁️ טרם סונכרן';
@@ -469,23 +470,37 @@
   renderCloudCard() {
     const body = $('cloudBody');
     if (!body) return;
+    const cloud = this.cloudService();
     body.innerHTML = `
-      <p class="text-xs text-slate-500">הסנכרון דורש כתובת, אסימון API וקוד בית-ספר להצפנה. יש להשתמש באותם פרטים בכל מחשבי הצוות. גרסאות שרת מונעות דריסה אוטומטית של שינויים מתנגשים.</p>
-      <p class="text-xs text-amber-700">אסימון וקישור הצטרפות מעניקים גישה לנתוני בית הספר. שתפו רק בערוץ פרטי עם אנשי צוות מורשים. הפרטים נשמרים בדפדפן זה.</p>
+      <p class="text-xs text-slate-500">הסנכרון דורש כתובת שרת, התחברות אישית עם Google וקוד בית-ספר להצפנה. יש להשתמש באותו קוד בכל מחשבי הצוות.</p>
+      ${cloud._onboarding ? '<p class="text-xs text-amber-700">כדי להצטרף יש להתחבר עם Google ולהזין ולשמור את קוד ההצפנה של בית הספר.</p>' : ''}
       <div class="grid md:grid-cols-2 gap-3">
         <label class="flex flex-col gap-1">כתובת Web App של Google Apps Script
-          <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(this.cloudService().url())}"></label>
-        <label class="flex flex-col gap-1">אסימון API (כמו API_TOKEN בשרת)
-          <input id="cloudToken" type="password" class="inp" dir="ltr" autocomplete="off" value="${E(this.cloudService().apiToken())}"></label>
+          <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(cloud.url())}"></label>
+        <label class="flex flex-col gap-1">Google Client ID
+          <input id="cloudClientId" class="inp" dir="ltr" value="${E(cloud.clientId())}"></label>
         <label class="flex flex-col gap-1">קוד בית-ספר (חובה להצפנה בענן)
-          <input id="cloudPass" type="password" class="inp" autocomplete="off" value="${E(this.cloudService().passcode())}"></label>
+          <input id="cloudPass" type="password" class="inp" autocomplete="off" value="${E(cloud.passcode())}"></label>
       </div>
+      <div id="cloudGoogleAuth"></div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSave">שמירת הגדרות</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">⬇️ משיכה מהענן</button>
         <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">☁️ סנכרן לענן כעת</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudJoinLink">העתקת קישור הצטרפות לצוות</button>
       </div>`;
+    this.renderCloudAuth();
+  },
+
+  renderCloudAuth() {
+    const container = $('cloudGoogleAuth');
+    if (!container) return;
+    const cloud = this.cloudService(), identity = cloud.identity();
+    container.innerHTML = `<div class="flex flex-wrap items-center gap-2">
+      <span>${identity ? `מחובר עם Google: ${E(identity.email)}` : 'נדרשת התחברות עם Google כדי לסנכרן'}</span>
+      ${identity ? '<button type="button" class="btn btn-ghost btn-sm" data-act="cloudGoogleSignOut">התנתקות מחשבון Google</button>' : '<div id="googleSignIn"></div>'}</div>
+      ${!identity && !(window.google && window.google.accounts && window.google.accounts.id) ? '<p class="text-xs text-slate-500">כפתור Google יופיע כשהשירות יהיה זמין; ניתן להמשיך לעבוד מקומית.</p>' : ''}`;
+    if (!identity) cloud.renderGoogleButton($('googleSignIn'));
   },
 
   /** מחילה תמונת מצב חדשה על כל התצוגות */
@@ -682,7 +697,7 @@
 
   async cloudSave() {
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       this.renderSync();
       this.toast('הגדרות הענן נשמרו', 'ok');
       if (this.cloudService().configured()) await this.cloudRefresh(() => this.cloudService().pullCloudState());
@@ -697,7 +712,7 @@
   },
   async cloudSync() {
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       if (!this.cloudService().url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
       const r = await this.cloudRefresh(() => this.cloudService().pullCloudState());
       if (!r || r === 'kept-local') return;
@@ -714,7 +729,7 @@
   },
   async cloudJoinLink() {
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, apiToken: $('cloudToken').value, passcode: $('cloudPass').value });
+      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       await navigator.clipboard.writeText(this.cloudService().teamJoinLink());
       this.toast('קישור ההצטרפות הועתק. יש לשתף רק בערוץ פרטי עם הצוות.', 'ok');
     } catch (e) { this.toast(`העתקת הקישור נכשלה: ${e.message}`, 'error'); }
@@ -722,6 +737,11 @@
   async backupExport() {
     try { await this.cloudService().exportBackup(); }
     catch (e) { this.toast(`ייצוא הגיבוי נכשל: ${e.message}`, 'error'); }
+  },
+  cloudGoogleSignOut() {
+    this.cloudService().signOutGoogle();
+    this.renderSync();
+    this.renderCloudCard();
   },
   async cloudWipeLocal() {
     if (!this.confirmAction('פעולה זו מנתקת את המחשב הזה בלבד ומוחקת ממנו את הנתונים ואת קוד הגישה, כדי שמשתמשים אחרים במחשב המשותף לא יוכלו לראות פרטי תלמידים.\n\nהנתונים של בית הספר בענן לא יימחקו ויישארו שמורים.\n\nשינויים שעדיין לא נשמרו בענן יאבדו, והדף ייטען מחדש. להמשיך?')) return;

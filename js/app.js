@@ -105,6 +105,18 @@ const App = {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
     window.addEventListener('sd:cloud-status', () => this.renderSync());
+    window.addEventListener('sd:cloud-auth', async () => {
+      this.renderSync();
+      this.renderCloudAuth();
+      if (!CloudSync.configured() || CloudSync.status.kind === 'conflict') return;
+      try {
+        const result = await CloudSync.pullCloudState();
+        if (result === 'applied') this.afterDataChange();
+        else if (result === 'kept-local') this.toast('השינויים המקומיים נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
+      } catch (e) { this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
+    });
+    window.addEventListener('sd:cloud-signedout', () => this.renderCloudAuth());
+    window.addEventListener('sd:google-ready', () => this.renderCloudAuth());
     window.addEventListener('sd:cloud-auto-error', e => {
       const message = `נשמר מקומית בלבד — ${(e.detail && e.detail.error) || 'הסנכרון לענן נכשל'}`, now = Date.now();
       if (this._autoErrorToast && this._autoErrorToast.message === message && now - this._autoErrorToast.at < 60000) return;
@@ -1192,6 +1204,7 @@ const App = {
   promptAction(message) { return prompt(message); },
   renderSync(...args) { return RulesView.renderSync.apply(this, args); },
   renderCloudCard(...args) { return RulesView.renderCloudCard.apply(this, args); },
+  renderCloudAuth(...args) { return RulesView.renderCloudAuth.apply(this, args); },
   cloudRefresh(...args) { return RulesView.cloudRefresh.apply(this, args); },
 
   CALIB_ORDER: ['עברית', 'היסטוריה', 'אזרחות', 'תנ"ך', 'ספרות', 'אנגלית', 'מתמטיקה'],
@@ -1216,6 +1229,7 @@ const App = {
     cloudSync(...args) { return RulesView.cloudSync.apply(this, args); },
     cloudForcePush(...args) { return RulesView.cloudForcePush.apply(this, args); },
     cloudJoinLink(...args) { return RulesView.cloudJoinLink.apply(this, args); },
+    cloudGoogleSignOut(...args) { return RulesView.cloudGoogleSignOut.apply(this, args); },
     backupExport(...args) { return RulesView.backupExport.apply(this, args); },
     cloudWipeLocal(...args) { return RulesView.cloudWipeLocal.apply(this, args); },
     calibAdd(...args) { return RulesView.calibAdd.apply(this, args); },

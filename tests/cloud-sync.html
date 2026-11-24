@@ -12,39 +12,58 @@ window.fetch = (url, options) => {
   return localFetch(target, options);
 };
 </script>
+<script id="googleIdentityScript"></script>
 <script src="../js/config.js"></script>
 <script src="../js/storage.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/views/profileView.js"></script>
+<script src="../js/views/sadinView.js"></script>
+<script src="../js/views/rulesView.js"></script>
 <script>
 (async () => {
   const results = document.getElementById('results'), passed = [];
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
+  const clone = value => JSON.parse(JSON.stringify(value));
   const rejects = async (fn, text) => {
     let error;
     try { await fn(); } catch (e) { error = e; }
     assert(error && (!text || error.message.includes(text)), 'Expected rejection: ' + text);
   };
   const originalPut = Config._storePut, originalWrite = Config._write;
+  const token = 'header.' + btoa(JSON.stringify({ email: 'teacher@example.test', aud: Config.GOOGLE_CLIENT_ID, exp: Math.floor(Date.now() / 1000) + 3600 })) + '.signature';
   const tz = '000000123';
-  let posts = [], remote = { ok: true, rev: 0, updatedAt: 0, payload: null }, failPull = false, failPush = false, holdPull = null, holdPost = null;
+  let posts = [], remote = { ok: true, rev: 0, updatedAt: 0, payload: null }, failPull = false, failPush = false, authError = '', holdPull = null, holdPost = null;
   const stopTimer = () => clearTimeout(CloudSync._timer);
   try {
     await Config.ready;
-    CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', apiToken: 'test-token', passcode: 'test-school-pass' });
+    let googleReady = 0;
+    const onGoogleReady = () => { googleReady++; };
+    window.addEventListener('sd:google-ready', onGoogleReady);
+    document.getElementById('googleIdentityScript').dispatchEvent(new Event('load'));
+    assert(googleReady === 1, 'Delayed GIS load was not announced without an onboarding link');
+    CloudSync.saveSettings({ clientId: 'another-client' });
+    assert(googleReady === 2, 'Changing client ID while signed out did not refresh GIS');
+    CloudSync.saveSettings({ clientId: '' });
+    window.removeEventListener('sd:google-ready', onGoogleReady);
+    CloudSync.saveSettings({ url: 'https://cloud-sync.test/exec', passcode: 'test-school-pass' });
+    CloudSync.acceptGoogleCredential(token);
+    assert(!Object.keys(localStorage).some(key => String(localStorage.getItem(key)).includes(token)), 'ID token persisted to localStorage');
     window.fetch = async (url, options = {}) => {
       assert(url === 'https://cloud-sync.test/exec', 'Unexpected outbound request blocked');
       assert(options.method === 'POST' && !url.includes('token='), 'Only POST allowed');
       const body = JSON.parse(options.body);
-      assert(body.token === 'test-token', 'Missing token');
+      assert(body.idToken === token && !('token' in body), 'Missing Google ID token or legacy token sent');
       posts.push(body);
+      if (authError) return { ok: true, json: async () => ({ ok: false, error: authError }) };
       if (body.action === 'meta') return { ok: true, json: async () => ({ ...remote, payload: undefined }) };
       if (body.action === 'pull') {
         if (failPull) throw new Error('Test offline');
-        const snapshot = structuredClone(remote);
+        const snapshot = clone(remote);
         if (holdPull) await holdPull;
         return { ok: true, json: async () => snapshot };
       }
       if (holdPost) await holdPost;
-      if (failPush) return { ok: true, json: async () => ({ ok: false, error: 'Test write failure' }) };
+      if (failPush) return { ok: true, json: async () => ({ ok: false, error: 'invalid_envelope' }) };
       if (body.baseRev !== remote.rev && !body.force) return { ok: true, json: async () => ({ ok: false, conflict: true, rev: remote.rev, updatedAt: remote.updatedAt }) };
       remote = { ok: true, rev: remote.rev + 1, updatedAt: Date.now(), payload: body.payload };
       return { ok: true, json: async () => ({ ok: true, rev: remote.rev, updatedAt: remote.updatedAt }) };
@@ -63,8 +82,22 @@ window.fetch = (url, options) => {
     assert((await CloudSync.open(remote.payload)).studentMeta[tz].note === 'Local note', 'Encrypted round trip');
     passed.push('Authenticated POST pull/push; aes2 round trip and persisted server revision');
 
+    CloudSync._setMeta({ dirty: true });
+    authError = 'token_expired';
+    await rejects(() => CloudSync._post({ action: 'meta' }), 'להתחבר מחדש');
+    assert(!CloudSync.identity() && CloudSync.hasUnpublished(), 'Expired server token retained identity or lost local edits');
+    authError = '';
+    CloudSync.acceptGoogleCredential(token);
+    CloudSync._setMeta({ dirty: false });
+    passed.push('Expired server token clears RAM identity and retains unpublished local changes');
+
     CloudSync._set('pass', '');
     await rejects(() => CloudSync.seal({}), 'קוד בית-ספר');
+    await rejects(() => CloudSync.open({ enc: 'none', data: '{}' }), 'אינם מוצפנים');
+    const savedRemote = remote;
+    remote = { ...remote, payload: { enc: 'none', data: '{}' } };
+    await rejects(() => CloudSync.pullCloudState({ force: true }), 'אינם מוצפנים');
+    remote = savedRemote;
     CloudSync._set('pass', 'test-school-pass');
     await rejects(() => CloudSync.open({ enc: 'none', data: '{}' }), 'אינם מוצפנים');
     const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
@@ -155,7 +188,7 @@ window.fetch = (url, options) => {
     passed.push('New server revision warns without advancing local revision; dirty unload is prevented');
 
     failPush = true;
-    await rejects(() => CloudSync.pushCloudState({ force: true }), 'Test write failure');
+    await rejects(() => CloudSync.pushCloudState({ force: true }), 'מעטפת ההצפנה');
     assert(CloudSync.hasUnpublished() && CloudSync.status.kind === 'error', 'Write error lost dirty data');
     failPush = false;
     CloudSync._ready = false; failPull = true;
@@ -176,7 +209,7 @@ window.fetch = (url, options) => {
     assert(Config.getException(tz).note === 'Edited while downloading', 'Concurrent note lost');
     passed.push('Forced pull preserves edits made during download');
 
-    const bad = structuredClone(state);
+    const bad = clone(state);
     bad.rosterData.data[0].tz = '123';
     bad.groupsData.data.push(null, [], 'invalid', { tz: { unexpected: true } });
     bad.studentMeta = { '123': { note: 'Normalized', isException: 'false', reason: {} }, bad: null };
@@ -190,7 +223,7 @@ window.fetch = (url, options) => {
     passed.push('Untrusted rows, IDs, metadata and override types sanitized; grade semantics preserved');
 
     const previousData = JSON.stringify(Config.data), previousRoster = JSON.stringify(Config.getRosterEntry());
-    let previousDataset = structuredClone(Config.getDataset('groupsData'));
+    let previousDataset = clone(Config.getDataset('groupsData'));
     let failOnce = true;
     Config._storePut = async function(key, entry) {
       if (key === 'sadinData' && failOnce) { failOnce = false; return { ok: false, error: 'Test quota' }; }
@@ -216,7 +249,7 @@ window.fetch = (url, options) => {
     await entered;
     Config.setException(tz, { note: 'Edited during IndexedDB' }); stopTimer();
     assert((await Config.setDataset('groupsData', [{ tz, groupId: 'new-local-group' }], 'new-local.csv')).ok, 'Concurrent dataset save failed');
-    previousDataset = structuredClone(Config.getDataset('groupsData'));
+    previousDataset = clone(Config.getDataset('groupsData'));
     stopTimer();
     releasePut();
     assert(await applying === 'kept-local', 'Concurrent IndexedDB edit not detected');
@@ -238,15 +271,17 @@ window.fetch = (url, options) => {
 
     const link = CloudSync.teamJoinLink();
     const storageSource = await (await localFetch('../js/storage.js')).text();
+    const join = JSON.parse(new TextDecoder().decode(CloudSync._unb64(link.split('#cloud=')[1].replace(/-/g, '+').replace(/_/g, '/'))));
+    assert(join.url === CloudSync.url() && !('token' in join) && !('pass' in join) && !('idToken' in join), 'Join link contains credentials');
     const values = new Map(), testLocation = new URL(link);
     let stripped = '';
     const isolated = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', storageSource + '\nreturn CloudSync;')(
       Config, Util,
       { getItem: k => values.get(k) || null, setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k) },
-      { addEventListener() {}, dispatchEvent() {} }, { addEventListener() {} }, testLocation,
+      { addEventListener() {}, dispatchEvent() {} }, { addEventListener() {}, getElementById() { return null; } }, testLocation,
       { replaceState: (data, title, path) => { stripped = path; } }
     );
-    assert(isolated.url() === CloudSync.url() && isolated.apiToken() === 'test-token' && isolated.passcode() === 'test-school-pass', 'Join link settings not restored');
+    assert(isolated.url() === CloudSync.url() && !isolated.passcode() && !isolated.identity() && isolated._onboarding, 'Join link must not restore credentials');
     assert(stripped === testLocation.pathname + testLocation.search, 'Join secrets left in address bar');
     passed.push('Base64url team onboarding saves settings and immediately strips secrets from hash');
 
@@ -263,13 +298,27 @@ window.fetch = (url, options) => {
       return typeof value === 'function' ? value.bind(target) : value;
     } });
     const testStore = { trainees: new Map() };
+    window.Store = testStore;
     const app = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', appSource + '\nreturn App;')(
       Util, Config, CloudSync, testDocument, async () => parsedRoster,
       message => { confirmations.push(message); return allowConfirm; }, testStore
     );
     app.renderCloudCard();
-    assert(document.getElementById('cloudToken').type === 'password', 'Token field not masked');
+    assert(!document.getElementById('cloudToken') && document.getElementById('cloudPass').type === 'password', 'Legacy token field or unmasked passcode');
     assert(document.querySelector('[data-act="cloudJoinLink"]'), 'Missing join button');
+    let googleCallback, googleRendered = false;
+    CloudSync.signOutGoogle();
+    window.google = { accounts: { id: {
+      initialize: opts => { assert(opts.client_id === Config.GOOGLE_CLIENT_ID, 'Wrong GIS client ID'); googleCallback = opts.callback; },
+      renderButton: element => { googleRendered = element.id === 'googleSignIn'; },
+      disableAutoSelect() {}
+    } } };
+    app.renderCloudCard();
+    assert(googleRendered && typeof googleCallback === 'function', 'Official Google button was not initialized');
+    googleCallback({ credential: token });
+    app.renderCloudAuth();
+    assert(CloudSync.identity().email === 'teacher@example.test' && document.querySelector('[data-act="cloudGoogleSignOut"]'), 'Google identity not shown');
+    delete window.google;
     CloudSync._conflict({ rev: 99 });
     app.renderSync();
     assert(!document.getElementById('cloudConflict').hidden, 'Conflict prompt hidden');
@@ -280,7 +329,7 @@ window.fetch = (url, options) => {
     CloudSync.pushCloudState = async () => { uiPushes++; return {}; };
     try { await app.acts.cloudSync.call(app); } finally { CloudSync.pushCloudState = realPush; }
     assert(uiPushes === 0 && uiToasts.length === 0, 'UI pushed or reported success after kept-local');
-    passed.push('Settings token masking/join button/conflict prompt; UI stops after kept-local without false success');
+    passed.push('Google account settings/join button/conflict prompt; UI stops after kept-local without false success');
 
     const hostileId = '"><b data-id-probe>marker</b><i title="';
     testStore.trainees.set(hostileId, { tz: hostileId, name: 'Test', classKey: 'י1' });
@@ -353,6 +402,7 @@ window.fetch = (url, options) => {
     passed.push('Reset, config/backup import and shared-computer wipe warn explicitly and respect Cancel');
 
     const nativeCreate = URL.createObjectURL, nativeClick = HTMLAnchorElement.prototype.click;
+    if (!URL.revokeObjectURL) URL.revokeObjectURL = () => {};
     let backupBlob;
     URL.createObjectURL = blob => { backupBlob = blob; return 'blob:' + location.origin + '/test-backup'; };
     HTMLAnchorElement.prototype.click = () => {};
@@ -387,6 +437,21 @@ window.fetch = (url, options) => {
     passed.push('Encrypted local backup round trip; wrong-pass safety; aes1/plaintext/config compatibility');
     ui.remove();
 
+    const idbDescriptor = Object.getOwnPropertyDescriptor(window, 'indexedDB');
+    let pendingOpen, lateClosed = false;
+    try {
+      Object.defineProperty(window, 'indexedDB', { configurable: true, value: { open: () => (pendingOpen = {}) } });
+      const opening = Config._openIdb();
+      pendingOpen.onblocked();
+      assert(await opening === null, 'Blocked IndexedDB open did not fail over');
+      pendingOpen.result = { close: () => { lateClosed = true; } };
+      pendingOpen.onsuccess();
+      assert(lateClosed, 'Late IndexedDB connection remained open after fallback');
+    } finally {
+      if (idbDescriptor) Object.defineProperty(window, 'indexedDB', idbDescriptor);
+      else delete window.indexedDB;
+    }
+
     const wipeValues = new Map([
       ['sd.cloud.url', 'https://cloud-sync.test/exec'], ['sd.cloud.token', 'test-token'],
       ['sd.cloud.passcode', 'test-pass'], ['sd.cloud.meta', '{"dirty":true}'],
@@ -394,6 +459,7 @@ window.fetch = (url, options) => {
     ]);
     let wipeSync, reloaded = false, startedRequest, requestCount = 0, aborted = false, timerFired = false;
     const deleted = [], writesDuringWipe = [];
+    let deleteFails = false, autoSelectDisabled = false;
     const requestStarted = new Promise(resolve => { startedRequest = resolve; });
     const wipeStorage = {
       get length() { return wipeValues.size; }, key: i => [...wipeValues.keys()][i],
@@ -401,19 +467,27 @@ window.fetch = (url, options) => {
       setItem: (k, v) => { if (wipeSync?._wiping) writesDuringWipe.push(k); wipeValues.set(k, v); }
     };
     const wipeConfig = {
-      KEYS: Config.KEYS, DATASET_KEYS: Config.DATASET_KEYS, ready: Promise.resolve(),
+      KEYS: Config.KEYS, DATASET_KEYS: Config.DATASET_KEYS, GOOGLE_CLIENT_ID: Config.GOOGLE_CLIENT_ID, ready: Promise.resolve(),
       _cache: {}, defaults: () => Config.defaults(), _invalidateRoster() {},
       _write: Config._write, _storePut: Config._storePut,
       _storeDelete: async key => { assert(wipeSync._suppress > 0, 'Wipe not suppressed before storage access'); deleted.push(key); wipeSync.markDirty(); }
     };
-    wipeSync = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', 'fetch', storageSource + '\nreturn CloudSync;')(
-      wipeConfig, Util, wipeStorage, { addEventListener() {}, dispatchEvent() {} }, { addEventListener() {} },
+    const wipeIdb = { deleteDatabase: name => {
+      assert(wipeSync._suppress > 0, 'Wipe not suppressed before storage access');
+      deleted.push(name); wipeSync.markDirty();
+      const request = {};
+      setTimeout(() => deleteFails ? request.onerror() : request.onsuccess(), 0);
+      return request;
+    } };
+    wipeSync = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', 'fetch', 'indexedDB', storageSource + '\nreturn CloudSync;')(
+      wipeConfig, Util, wipeStorage, { addEventListener() {}, dispatchEvent() {}, google: { accounts: { id: { disableAutoSelect() { autoSelectDisabled = true; } } } } }, { addEventListener() {}, getElementById() { return null; } },
       { hash: '', reload: () => { reloaded = true; } }, {},
       (url, opts) => {
         requestCount++; startedRequest();
         return new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => { aborted = true; reject(new DOMException('Aborted', 'AbortError')); }));
-      }
+      }, wipeIdb
     );
+    wipeSync.acceptGoogleCredential(token);
     wipeSync.buildState = () => ({ app: 'schoolDashboard' });
     wipeSync.seal = async () => ({ enc: 'aes2', data: 'mock' });
     const activePush = wipeSync.pushCloudState({ force: true }).catch(e => e);
@@ -424,12 +498,12 @@ window.fetch = (url, options) => {
     await Promise.all([activePush, queuedPush]);
     await new Promise(resolve => setTimeout(resolve, 30));
     assert(aborted && requestCount === 1 && !timerFired && !writesDuringWipe.length, 'Wipe allowed queued/late writes or uploads');
-    assert(reloaded && deleted.length === Config.DATASET_KEYS.length && wipeValues.size === 1 && wipeValues.get('unrelated') === 'keep', 'Wipe missed dashboard storage or removed unrelated data');
+    assert(reloaded && autoSelectDisabled && deleted.join() === 'schoolDashboard' && !wipeSync.identity() && wipeValues.size === 1 && wipeValues.get('unrelated') === 'keep', 'Wipe missed dashboard storage or removed unrelated data');
     assert(!wipeConfig._write('sd.config.v2', {}).ok && !(await wipeConfig._storePut('groupsData', { data: [] })).ok, 'A late file import could repopulate storage after wipe');
     await rejects(() => wipeSync.pushCloudState({ force: true }), 'הסנכרון חסום');
     reloaded = false;
-    wipeConfig._storeDelete = async () => { throw new Error('Test deletion failure'); };
-    await rejects(() => wipeSync.wipeLocalSession(), 'Test deletion failure');
+    deleteFails = true;
+    await rejects(() => wipeSync.wipeLocalSession(), 'מחיקת מסד הנתונים המקומי נכשלה');
     assert(!reloaded && wipeSync._wiping && wipeSync._suppress > 0, 'Failed wipe resumed syncing or reloaded as if successful');
     passed.push('Shared-computer wipe suppresses events, cancels requests/timers, blocks queued pushes and preserves unrelated keys');
 
@@ -439,8 +513,9 @@ window.fetch = (url, options) => {
     passed.push('Cloud deletions persist for roster and all datasets');
 
     const serverSource = await (await localFetch('../cloud/Code.gs')).text();
-    const props = new Map([['API_TOKEN', 'server-token']]), files = new Map(), backups = [];
-    let waited = 0, released = 0, nextId = 0;
+    const props = new Map([['ALLOWED_EMAILS', 'teacher@gmail.com']]), files = new Map(), backups = [], warnings = [];
+    let waited = 0, released = 0, nextId = 0, driveCalls = 0, authStatus = 200, authText = '';
+    let claims = { iss: 'https://accounts.google.com', aud: Config.GOOGLE_CLIENT_ID, exp: Math.floor(Date.now() / 1000) + 3600, email_verified: true, email: 'teacher@gmail.com', sub: 'subject-1' };
     const iterator = items => { let i = 0; return { hasNext: () => i < items.length, next: () => items[i++] }; };
     const folder = { getFiles: () => iterator(backups) };
     const file = (name, initial = '') => {
@@ -453,40 +528,74 @@ window.fetch = (url, options) => {
       };
       return f;
     };
-    const server = new Function('DriveApp', 'ContentService', 'MimeType', 'PropertiesService', 'LockService', serverSource + '\nreturn { doPost, doGet };')(
+    const server = new Function('DriveApp', 'ContentService', 'MimeType', 'PropertiesService', 'LockService', 'UrlFetchApp', 'console', serverSource + '\nreturn { doPost, doGet, initCloudFile };')(
       {
-        getFileById: id => { if (!files.has(id)) throw new Error('File inaccessible'); return files.get(id); },
-        createFile: (name, content) => { const f = file(name, content); const id = f.getId(); f.getId = () => id; files.set(id, f); return f; },
+        getFileById: id => { driveCalls++; if (!files.has(id)) throw new Error('sensitive exception'); return files.get(id); },
+        createFile: (name, content) => { driveCalls++; const f = file(name, content); const id = f.getId(); f.getId = () => id; files.set(id, f); return f; },
         getRootFolder: () => folder,
-        getFilesByName: name => iterator([...files.values()].filter(f => f.getName() === name))
+        getFilesByName: name => { driveCalls++; return iterator([...files.values()].filter(f => f.getName() === name)); }
       },
       { MimeType: { JSON: 'json' }, createTextOutput: text => ({ setMimeType: () => JSON.parse(text) }) },
       { PLAIN_TEXT: 'text' },
       { getScriptProperties: () => ({ getProperty: k => props.get(k) || null, setProperty: (k, v) => props.set(k, v), setProperties: obj => Object.entries(obj).forEach(([k, v]) => props.set(k, v)) }) },
-      { getScriptLock: () => ({ waitLock: ms => { assert(ms === 20000, 'Wrong lock timeout'); waited++; }, releaseLock: () => { released++; } }) }
+      { getScriptLock: () => { let locked = false; return { waitLock: ms => { assert(ms === 20000, 'Wrong lock timeout'); waited++; locked = true; }, hasLock: () => locked, releaseLock: () => { released++; locked = false; } }; } },
+      { fetch: (url, opts) => {
+        assert(url.startsWith('https://oauth2.googleapis.com/tokeninfo?id_token=') && opts.muteHttpExceptions, 'Invalid tokeninfo request');
+        return { getResponseCode: () => authStatus, getContentText: () => authText || JSON.stringify(claims) };
+      } },
+      { warn: message => warnings.push(message) }
     );
     const post = body => server.doPost({ postData: { contents: JSON.stringify(body) } });
-    assert(server.doGet({}).error === 'Use POST with token', 'GET exposes data');
-    for (const action of ['meta', 'pull', 'push']) assert(post({ action }).error === 'Unauthorized', action + ' allowed missing token');
-    props.delete('API_TOKEN');
-    assert(post({ action: 'meta' }).error === 'Server token not configured', 'Missing server token accepted');
-    props.set('API_TOKEN', 'server-token');
+    const request = body => post({ idToken: 'server-id-token', ...body });
+    assert(server.doGet({}).error === 'method_not_allowed', 'GET exposes data');
+    for (const action of ['meta', 'pull', 'push']) assert(post({ action }).error === 'unauthorized', action + ' allowed missing token');
+    authStatus = 401; assert(request({ action: 'meta' }).error === 'unauthorized', 'Invalid token accepted'); authStatus = 200;
+    authStatus = 503; assert(request({ action: 'meta' }).error === 'auth_unavailable', 'Tokeninfo outage misclassified'); authStatus = 200;
+    for (const [key, value] of [['iss', 'https://other.invalid'], ['aud', 'wrong-client'], ['email_verified', false], ['sub', '']]) {
+      const saved = claims[key]; claims[key] = value;
+      assert(request({ action: 'meta' }).error === 'unauthorized', 'Invalid ' + key + ' accepted');
+      claims[key] = saved;
+    }
+    authText = '{invalid'; assert(request({ action: 'meta' }).error === 'auth_unavailable', 'Invalid tokeninfo JSON accepted'); authText = '';
+    claims.exp = Math.floor(Date.now() / 1000) - 1;
+    assert(request({ action: 'meta' }).error === 'token_expired', 'Expired token accepted');
+    claims.exp = Math.floor(Date.now() / 1000) + 3600;
+    props.delete('ALLOWED_EMAILS'); assert(request({ action: 'meta' }).error === 'forbidden', 'Missing allowlist accepted');
+    props.set('ALLOWED_EMAILS', 'teacher@gmail.com');
+    claims.email = 'external@example.com'; props.set('ALLOWED_EMAILS', claims.email);
+    assert(request({ action: 'meta' }).error === 'forbidden', 'External non-Workspace email accepted');
+    claims.email = 'teacher@gmail.com'; props.set('ALLOWED_EMAILS', claims.email);
+    props.set('ALLOWED_SUBS', JSON.stringify({ 'teacher@gmail.com': 'another-sub' }));
+    assert(request({ action: 'meta' }).error === 'forbidden', 'Mismatched subject accepted');
+    props.delete('ALLOWED_SUBS');
+    assert(waited === 0 && driveCalls === 0, 'Unauthorized request acquired lock or accessed Drive');
+    assert(warnings.every(message => !message.includes('teacher') && !message.includes('server-id-token')), 'Sensitive auth log');
     const payload = { enc: 'aes2', salt: 'test', iv: 'test', data: 'test' };
-    let response = post({ action: 'push', token: 'server-token', baseRev: 0, updatedAt: 1, payload });
+    for (const bad of [{ enc: 'none', data: 'plain' }, { ...payload, iv: '' }, { ...payload, data: null }]) {
+      assert(request({ action: 'push', baseRev: 0, payload: bad }).error === 'invalid_envelope', 'Invalid envelope accepted');
+    }
+    let response = request({ action: 'pull' });
+    assert(response.error === 'file_id_missing' && !files.size, 'Missing snapshot pull created a file');
+    response = request({ action: 'push', baseRev: 0, payload });
+    assert(response.error === 'file_id_missing' && !files.size, 'Missing snapshot push created a file');
+    assert(JSON.parse(props.get('ALLOWED_SUBS'))['teacher@gmail.com'] === 'subject-1', 'First authorized subject not bound');
+    server.initCloudFile();
+    response = request({ action: 'push', baseRev: 0, updatedAt: 1, payload });
     assert(response.ok && response.rev === 1 && response.updatedAt > 1 && files.size === 1 && props.get('FILE_ID'), 'Initial server push incorrect');
     const today = new Date().toISOString().slice(0, 10);
     backups.push(file('school-dashboard-backup-2000-01-01.json'), file('unrelated.json'));
-    assert(post({ action: 'push', token: 'server-token', baseRev: 0, payload }).conflict, 'Stale revision accepted');
-    response = post({ action: 'push', token: 'server-token', baseRev: 1, payload });
+    assert(request({ action: 'push', baseRev: 0, payload }).conflict, 'Stale revision accepted');
+    response = request({ action: 'push', baseRev: 1, payload });
     assert(response.rev === 2 && backups.length === 3 && backups[0].trashed && !backups[1].trashed, 'Daily backup or pruning failed');
     assert(backups[2].getName() === 'school-dashboard-backup-' + today + '.json' && JSON.parse(backups[2].getBlob().getDataAsString()).rev === 1, 'Backup was not pre-overwrite content');
     assert(props.get('LAST_BACKUP_DAY') === today, 'Backup day not persisted');
-    post({ action: 'push', token: 'server-token', baseRev: 0, force: true, payload });
+    request({ action: 'push', baseRev: 0, force: true, payload });
     assert(backups.length === 3 && files.size === 1, 'Multiple daily backups or snapshot files');
-    assert(post({ action: 'meta', token: 'server-token' }).rev === 3, 'Meta revision wrong');
-    assert(post({ action: 'pull', token: 'server-token' }).payload.data === payload.data, 'Pull changed payload');
+    assert(request({ action: 'meta' }).rev === 3, 'Meta revision wrong');
+    assert(request({ action: 'pull' }).payload.data === payload.data, 'Pull changed payload');
     props.set('FILE_ID', 'inaccessible');
-    assert(!post({ action: 'pull', token: 'server-token' }).ok && files.size === 1, 'Inaccessible configured file silently replaced');
+    response = request({ action: 'pull' });
+    assert(response.error === 'internal_error' && !JSON.stringify(response).includes('sensitive exception') && files.size === 1, 'Exception leaked or file replaced');
     assert(waited === released, 'Lock not released on every path');
     passed.push('Apps Script: auth, POST-only reads, locks, fixed file, server clock, conflicts, daily backups and pruning');
 
@@ -497,29 +606,29 @@ window.fetch = (url, options) => {
     };
     const stored = JSON.stringify({ rev: 3, updatedAt: 5, payload });
     props.delete('FILE_ID'); props.set('REV', '3'); files.clear();
-    response = post({ action: 'pull', token: 'server-token' });
-    assert(response.ok && response.payload === null && files.size === 0 && !props.get('FILE_ID'), 'Pull without FILE_ID created a file');
-    response = post({ action: 'push', token: 'server-token', baseRev: 3, payload });
-    assert(response.ok && files.size === 1 && props.get('FILE_ID') === [...files.keys()][0], 'Zero existing snapshots did not create and persist a new file');
+    response = request({ action: 'pull' });
+    assert(response.error === 'file_id_missing' && files.size === 0 && !props.get('FILE_ID'), 'Pull without FILE_ID created a file');
+    response = request({ action: 'push', baseRev: 3, payload });
+    assert(response.error === 'file_id_missing' && files.size === 0 && !props.get('FILE_ID'), 'Push without FILE_ID created a file');
 
     props.delete('FILE_ID'); props.set('REV', '3'); files.clear();
     const existing = addSnapshot(stored);
     addSnapshot('{"deleted":true}', true);
-    response = post({ action: 'pull', token: 'server-token' });
+    response = request({ action: 'pull' });
     assert(response.ok && response.payload.data === payload.data && props.get('FILE_ID') === existing.getId() && files.size === 2, 'Single existing snapshot was not adopted');
     props.delete('FILE_ID');
-    response = post({ action: 'push', token: 'server-token', baseRev: 3, payload: { ...payload, data: 'adopted' } });
+    response = request({ action: 'push', baseRev: 3, payload: { ...payload, data: 'adopted' } });
     assert(response.ok && files.size === 2 && props.get('FILE_ID') === existing.getId() && JSON.parse(existing.getBlob().getDataAsString()).payload.data === 'adopted', 'Push created a new file instead of using the single existing snapshot');
 
     props.delete('FILE_ID'); props.set('REV', '4'); files.clear();
     const first = addSnapshot(stored), second = addSnapshot(stored);
     for (const body of [{ action: 'pull' }, { action: 'push', baseRev: 4, payload }]) {
-      response = post({ token: 'server-token', ...body });
-      assert(response.ok === false && response.error.includes('FILE_ID') && !props.get('FILE_ID') && files.size === 2, 'Ambiguous snapshots were guessed or a file was created for ' + body.action);
+      response = request(body);
+      assert(response.ok === false && response.error === 'multiple_files' && !props.get('FILE_ID') && files.size === 2, 'Ambiguous snapshots were guessed or a file was created for ' + body.action);
     }
     assert(first.getBlob().getDataAsString() === stored && second.getBlob().getDataAsString() === stored, 'Ambiguous snapshots were modified');
     assert(waited === released, 'Lock not released after FILE_ID migration paths');
-    passed.push('Apps Script FILE_ID migration: 0 files create, 1 file adopted, >1 files rejected without guessing');
+    passed.push('Apps Script FILE_ID migration: 0 files rejected, 1 file adopted, >1 files rejected without guessing');
 
     results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
     document.title = 'PASS - Cloud sync regression tests';

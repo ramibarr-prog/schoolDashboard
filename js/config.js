@@ -139,6 +139,7 @@ const Util = {
    ===================================================================== */
 /** כתובת ברירת המחדל של Web App בענן (נדרסת ע"י הגדרות ← סנכרון ענן) */
 const DEFAULT_CLOUD_URL = '';
+const DEFAULT_GOOGLE_CLIENT_ID = '567539420558-c7ciqfeis5vr320bjhsh47o2af0ltntb.apps.googleusercontent.com';
 
 /** גרסת קטלוג ברירות המחדל: שמורה בכללים כדי לזהות קטלוג ישן ולהציע "שחזור ברירות מחדל" */
 const RULES_VERSION = 5;
@@ -286,6 +287,7 @@ const Config = {
   STALE_DAYS: 10,
   /* כתובת הענן מוגדרת רק בהגדרות המקומיות, ולא בקוד הציבורי */
   CLOUD_SYNC_URL: DEFAULT_CLOUD_URL,
+  GOOGLE_CLIENT_ID: DEFAULT_GOOGLE_CLIENT_ID,
   KEYS: {
     config: 'sd.config.v2',
     masterRoster: 'sd.masterRoster.v2',
@@ -768,13 +770,19 @@ const Config = {
 
   _openIdb() {
     return new Promise(resolve => {
+      let settled = false;
+      const finish = db => {
+        if (settled) { if (db) db.close(); return; }
+        settled = true;
+        resolve(db);
+      };
       try {
         const req = indexedDB.open('schoolDashboard', 1);
         req.onupgradeneeded = () => req.result.createObjectStore('datasets');
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(null);
-        req.onblocked = () => resolve(null);
-      } catch (e) { resolve(null); }
+        req.onsuccess = () => finish(req.result);
+        req.onerror = () => finish(null);
+        req.onblocked = () => finish(null);
+      } catch (e) { finish(null); }
     });
   },
 

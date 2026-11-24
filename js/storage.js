@@ -67,7 +67,7 @@ function sanitizeState(s) {
 }
 
 const CloudSync = {
-  LS: { url: 'sd.cloud.url', token: 'sd.cloud.token', pass: 'sd.cloud.passcode', meta: 'sd.cloud.meta' },
+  LS: { url: 'sd.cloud.url', clientId: 'sd.cloud.clientId', pass: 'sd.cloud.passcode', meta: 'sd.cloud.meta' },
   status: { kind: 'none', text: '', updatedAt: 0 },
   _suppress: 0,
   _timer: null,
@@ -79,21 +79,33 @@ const CloudSync = {
   _wiping: false,
   _requestController: null,
   _queue: Promise.resolve(),
+  _identity: null,
+  _authTimer: null,
+  _onboarding: false,
 
   /* ---------- הגדרות ---------- */
   _get(k) { try { return localStorage.getItem(this.LS[k]) || ''; } catch (e) { return ''; } },
   _set(k, v) { if (v) localStorage.setItem(this.LS[k], v); else localStorage.removeItem(this.LS[k]); },
   url() { return (this._get('url') || '').trim(); },
-  apiToken() { return this._get('token'); },
+  clientId() { return this._get('clientId') || Config.GOOGLE_CLIENT_ID; },
   passcode() { return this._get('pass'); },
-  configured() { return !!(this.url() && this.apiToken()); },
-  saveSettings({ url, apiToken, passcode }) {
-    const previousUrl = this.url(), previousPass = this.passcode(), previousToken = this.apiToken();
+  identity() {
+    if (this._identity && this._identity.exp * 1000 <= Date.now()) this.signOutGoogle();
+    return this._identity;
+  },
+  configured() { return !!(this.url() && this.identity()); },
+  saveSettings({ url, clientId, passcode }) {
+    const previousUrl = this.url(), previousPass = this.passcode(), previousClientId = this.clientId();
     if (url && new URL(String(url).trim()).protocol !== 'https:') throw new Error('כתובת הענן חייבת להשתמש ב-HTTPS');
     if (url !== undefined) this._set('url', String(url).trim());
-    if (apiToken !== undefined) this._set('token', String(apiToken).trim());
+    if (clientId !== undefined) this._set('clientId', String(clientId).trim());
     if (passcode !== undefined) this._set('pass', passcode);
-    if (this.url() !== previousUrl || this.passcode() !== previousPass || this.apiToken() !== previousToken) {
+    if (this.clientId() !== previousClientId) {
+      const wasSignedIn = !!this._identity;
+      this.signOutGoogle();
+      if (!wasSignedIn) window.dispatchEvent(new CustomEvent('sd:google-ready'));
+    }
+    if (this.url() !== previousUrl || this.passcode() !== previousPass || this.clientId() !== previousClientId) {
       clearTimeout(this._timer);
       this._revision++;
       this._settingsRevision++;
@@ -102,6 +114,50 @@ const CloudSync = {
       this._setMeta({ syncedAt: 0, rev: 0 });
       this.emitStatus({ kind: 'none', text: '', updatedAt: 0 });
     }
+  },
+  acceptGoogleCredential(token) {
+    if (this._wiping) throw new Error('לא ניתן להתחבר בזמן מחיקת הנתונים המקומיים');
+    let claims;
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) throw new Error('invalid token');
+      claims = JSON.parse(new TextDecoder().decode(this._unb64(parts[1].replace(/-/g, '+').replace(/_/g, '/'))));
+    } catch (e) { throw new Error('לא התקבלו פרטי התחברות תקינים מ-Google'); }
+    if (!claims || typeof claims.email !== 'string' || !claims.email || claims.aud !== this.clientId() ||
+        !Number.isFinite(Number(claims.exp)) || Number(claims.exp) * 1000 <= Date.now()) {
+      throw new Error('פרטי ההתחברות פגי תוקף או אינם תקינים. יש להתחבר מחדש עם Google');
+    }
+    this._identity = { token, email: claims.email, exp: Number(claims.exp) };
+    this._revision++;
+    this._settingsRevision++;
+    this._ready = false;
+    clearTimeout(this._authTimer);
+    this._authTimer = setTimeout(() => this.signOutGoogle(), Math.min(2147483647, Math.max(0, claims.exp * 1000 - Date.now())));
+    this.emitStatus({ kind: this.status.kind === 'conflict' ? 'conflict' : 'none', text: this.status.kind === 'conflict' ? this.status.text : '' });
+    window.dispatchEvent(new CustomEvent('sd:cloud-auth'));
+  },
+  signOutGoogle() {
+    clearTimeout(this._authTimer);
+    clearTimeout(this._timer);
+    const googleId = window.google && window.google.accounts && window.google.accounts.id;
+    if (googleId && typeof googleId.disableAutoSelect === 'function') googleId.disableAutoSelect();
+    if (!this._identity) return;
+    this._identity = null;
+    this._revision++;
+    this._settingsRevision++;
+    this._ready = false;
+    if (this._requestController) this._requestController.abort();
+    window.dispatchEvent(new CustomEvent('sd:cloud-signedout'));
+    if (this.status.kind !== 'conflict') this.emitStatus({ kind: 'error', text: 'נדרשת התחברות מחדש עם Google. הנתונים נשמרו מקומית.', error: '' });
+  },
+  renderGoogleButton(element) {
+    const id = window.google && window.google.accounts && window.google.accounts.id;
+    if (!element || !id) return;
+    id.initialize({ client_id: this.clientId(), callback: response => {
+      try { this.acceptGoogleCredential(response.credential); }
+      catch (e) { this.emitStatus({ kind: 'error', text: e.message, error: e.message }); }
+    } });
+    id.renderButton(element, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'he' });
   },
   meta() {
     let m;
@@ -159,8 +215,8 @@ const CloudSync = {
     });
   },
   teamJoinLink() {
-    if (!this.configured() || !this.passcode()) throw new Error('יש להגדיר כתובת, אסימון וקוד בית-ספר לפני שיתוף');
-    const json = JSON.stringify({ url: this.url(), token: this.apiToken(), pass: this.passcode() });
+    if (!this.url()) throw new Error('יש להגדיר כתובת ענן לפני שיתוף');
+    const json = JSON.stringify({ url: this.url(), ...(this.clientId() !== Config.GOOGLE_CLIENT_ID ? { clientId: this.clientId() } : {}) });
     const hash = this._b64(new TextEncoder().encode(json)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     return `${location.origin}${location.pathname}${location.search}#cloud=${hash}`;
   },
@@ -295,8 +351,7 @@ const CloudSync = {
   async open(env) {
     if (!env || typeof env !== 'object') throw new Error('תמונת מצב ריקה בענן');
     if (env.enc === 'none') {
-      if (this.passcode()) throw new Error('הנתונים בענן אינם מוצפנים, אך הוגדר קוד בית-ספר במכשיר זה');
-      return JSON.parse(env.data);
+      throw new Error('הנתונים בענן אינם מוצפנים. יש להשתמש בתמונת מצב מוצפנת ולהזין קוד בית-ספר');
     }
     const pass = this.passcode();
     if (!pass) throw new Error('הנתונים בענן מוצפנים – יש להזין קוד בית-ספר בהגדרות הסנכרון');
@@ -326,18 +381,32 @@ const CloudSync = {
     const url = this.url();
     if (!url) throw new Error('לא הוגדרה כתובת סנכרון ענן');
     if (new URL(url).protocol !== 'https:') throw new Error('כתובת הענן חייבת להשתמש ב-HTTPS');
-    const token = this.apiToken();
-    if (!token) throw new Error('יש להזין אסימון API בהגדרות הענן');
+    const identity = this.identity();
+    if (!identity) throw new Error('נדרשת התחברות מחדש עם Google. הנתונים נשמרו מקומית.');
     const controller = new AbortController();
     this._requestController = controller;
     try {
       let res;
       try {
-        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, token }), signal: controller.signal });
+        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, idToken: identity.token }), signal: controller.signal });
       } catch (e) { throw this._networkError(e); }
       if (!res.ok) throw new Error(`שגיאת שרת ${res.status}`);
       const json = await res.json();
-      if (!json.ok && !json.conflict) throw new Error(json.error || 'השרת דחה את הבקשה');
+      if (!json.ok && !json.conflict) {
+        if (json.error === 'unauthorized' || json.error === 'token_expired') {
+          if (this._identity === identity) this.signOutGoogle();
+          throw new Error('ההתחברות פגה או נדחתה. יש להתחבר מחדש עם Google; הנתונים נשמרו מקומית.');
+        }
+        const messages = {
+          forbidden: 'חשבון Google אינו מורשה לגשת לנתוני בית הספר',
+          auth_unavailable: 'לא ניתן לאמת את חשבון Google כרגע',
+          file_id_missing: 'לא הוגדר קובץ ענן. יש לפנות למנהל המערכת',
+          multiple_files: 'נמצאו כמה קובצי ענן. יש לפנות למנהל המערכת',
+          invalid_envelope: 'מעטפת ההצפנה אינה תקינה',
+          internal_error: 'שגיאה פנימית בשרת הענן'
+        };
+        throw new Error(messages[json.error] || 'שרת הענן דחה את הבקשה');
+      }
       return json;
     } finally {
       if (this._requestController === controller) this._requestController = null;
@@ -408,6 +477,7 @@ const CloudSync = {
         this._setMeta({ rev: json.rev, syncedAt: json.updatedAt });
         this.emitStatus({ kind: 'none', text: '☁️ אין עדיין נתונים בענן' }); return 'empty';
       }
+      if (json.payload.enc === 'none') throw new Error('הנתונים בענן אינם מוצפנים. יש להשתמש בתמונת מצב מוצפנת ולהזין קוד בית-ספר');
       const meta = this.meta();
       if (!opts.force && json.rev === this._tabRev && meta.syncedAt) {
         this.emitStatus({ kind: 'ok', updatedAt: meta.syncedAt, text: '' });
@@ -474,6 +544,7 @@ const CloudSync = {
     clearTimeout(this._timer);
     this._wiping = true;
     Config._sessionClosing = true;
+    this.signOutGoogle();
     this._revision++;
     this._settingsRevision++;
     this._tabRev = 0;
@@ -481,11 +552,20 @@ const CloudSync = {
     // Drain in-flight/queued work before deletion so late responses cannot restore data.
     await this._queue;
     await Config.ready;
-    for (const key of Config.DATASET_KEYS) await Config._storeDelete(key);
     const dashboardKeys = new Set([...Object.keys(Config.KEYS), ...Object.values(Config.KEYS)]);
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
       if (key && (key.startsWith('sd.') || dashboardKeys.has(key))) localStorage.removeItem(key);
+    }
+    localStorage.removeItem('apiToken');
+    if (Config._idb) { Config._idb.close(); Config._idb = null; }
+    if (typeof indexedDB !== 'undefined') {
+      await new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase('schoolDashboard');
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(new Error('מחיקת מסד הנתונים המקומי נכשלה'));
+        request.onblocked = () => reject(new Error('מחיקת מסד הנתונים נחסמה; יש לסגור לשוניות אחרות ולנסות שוב'));
+      });
     }
     Config._cache = {};
     Config.data = Config.defaults();
@@ -495,20 +575,26 @@ const CloudSync = {
   },
 
   init() {
+    localStorage.removeItem('sd.cloud.token');
+    localStorage.removeItem('sd.cloud.apiToken');
+    localStorage.removeItem('apiToken');
     this._tabRev = this.meta().rev || 0;
     if (location.hash.startsWith('#cloud=')) {
       const hash = location.hash.slice(7);
       history.replaceState(null, '', location.pathname + location.search);
       try {
         const settings = JSON.parse(new TextDecoder().decode(this._unb64(hash.replace(/-/g, '+').replace(/_/g, '/'))));
-        if (!settings || typeof settings.url !== 'string' || typeof settings.token !== 'string' || typeof settings.pass !== 'string' ||
-            !settings.url || !settings.token || !settings.pass) throw new Error('פרטי הצטרפות חסרים');
-        this.saveSettings({ url: settings.url, apiToken: settings.token, passcode: settings.pass });
+        if (!settings || typeof settings.url !== 'string' || !settings.url ||
+            (settings.clientId !== undefined && typeof settings.clientId !== 'string')) throw new Error('פרטי הצטרפות חסרים');
+        this.saveSettings({ url: settings.url, clientId: settings.clientId || '' });
+        this._onboarding = true;
       } catch (e) {
         console.error('cloud onboarding', e);
         this.emitStatus({ kind: 'error', text: 'קישור ההצטרפות לענן אינו תקין', error: e.message });
       }
     }
+    const googleScript = document.getElementById('googleIdentityScript');
+    if (googleScript) googleScript.addEventListener('load', () => window.dispatchEvent(new CustomEvent('sd:google-ready')));
     ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && this.configured()) this.checkCloudMeta().catch(e => console.error('cloud meta', e));

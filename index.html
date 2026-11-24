@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com https://cdn.sheetjs.com https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://accounts.google.com/gsi/; frame-src 'self' https://accounts.google.com/gsi/; img-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>לוח בקרה פדגוגי – בגרות ושיבוצים</title>
@@ -43,6 +43,7 @@
   </script>
   <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script id="googleIdentityScript" src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     :root {
       --forest: #355747; --sage: #75977D; --sage-soft: #B4CBB6; --sage-tint: #EBF2EC; --cream-bg: #FAF7EF; --card-bg: #FFFFFF; --card-border: #E6ECE6; --track: #ECEFE9;
@@ -963,8 +964,8 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261119_8"></script>
-  <script src="js/storage.js?v=20261119_4"></script>
+  <script src="js/config.js?v=20261124_1"></script>
+  <script src="js/storage.js?v=20261124_1"></script>
   <script src="js/parser.js?v=20261119_6"></script>
   <script src="js/bagrutFacts.js?v=20261120_3"></script>
   <script src="js/bagrutPolicies.js?v=20261120_1"></script>
@@ -978,8 +979,8 @@
   <script src="js/views/groupsView.js"></script>
   <script src="js/views/sadinView.js"></script>
   <script src="js/views/bagrutView.js"></script>
-  <script src="js/views/rulesView.js"></script>
+  <script src="js/views/rulesView.js?v=20261124_1"></script>
   <script src="js/importQuarantine.js"></script>
-  <script src="js/app.js?v=20261119_19"></script>
+  <script src="js/app.js?v=20261124_1"></script>
 </body>
 </html>
