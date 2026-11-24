@@ -33,6 +33,8 @@
     const counted = scored.some(e => e.weight > 0) ? scored.filter(e => e.weight > 0) : scored;
     return !(s.avg === 0 && counted.length && counted.every(e => e.score === 0 && s.missed.has(e.key)));
   };
+  const confirmedRiskSubjects = (row, hasGroups) => Config.withRulesForGrade(row.t.gradeKey, () =>
+    [...row.subjects.values()].filter(s => failingSubject(s) || confirmedMissed(s, hasGroups, row.t.tz)));
   const riskSubject = s => (s.avg != null && !SignalEngine.isPassingScore(s.avg, { social: isSocial(s.name) })) || s.missed.size > 0;
   const hasEventData = ev => ev && (ev.score != null || String(ev.scoreRaw || '').trim() !== '');
   const RISK_RULES_KEY = 'schoolDashboard.hotspots.riskRules.v1';
@@ -189,12 +191,12 @@
 
   function weaknessModel(roster, st, rules) {
     const prereqs = prerequisitesByGrade(roster), cells = new Map(), classes = new Map(), coreRanks = new Map();
-    const failed = new Set(), averages = [], teachers = new Map();
+    const failed = new Set(), riskTzs = new Set(), averages = [], teachers = new Map();
     roster.forEach(t => {
       if (!classes.has(t.classKey)) classes.set(t.classKey, { key: t.classKey, grade: t.gradeKey, total: 0, risk: 0, scores: [] });
       classes.get(t.classKey).total++;
     });
-    let missedTotal = 0, riskyStudents = 0, uncertain = false;
+    let missedTotal = 0, uncertain = false;
     GroupAnalyzer.sadinSheet(roster, st).forEach(row => Config.withRulesForGrade(row.t.gradeKey, () => {
       const hasGroups = prereqs.get(row.t.gradeKey).hasGroups, scores = [], classScores = [];
       let fails = 0, missedForStudent = 0;
@@ -237,7 +239,7 @@
       if (scores.length) averages.push(scores.reduce((a, b) => a + b, 0) / scores.length);
       const cls = classes.get(row.t.classKey);
       if (classScores.length) cls.scores.push(classScores.reduce((a, b) => a + b, 0) / classScores.length);
-      if (fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) { cls.risk++; riskyStudents++; }
+      if (fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) { cls.risk++; riskTzs.add(row.t.tz); }
     }));
     const list = [...cells.values()];
     list.forEach(c => { c.risk = c.students.filter(s => s.risk).length; c.rate = c.risk / c.students.length * 100; });
@@ -271,7 +273,7 @@
       riskyClasses += group.slice(0, Math.ceil(group.length / 3)).filter(c => c.risk > 0).length;
     });
     return { cells, ranked, subjects, coreRanks, classes: [...classes.keys()].sort(natural), failed: failed.size, missed: missedTotal,
-      riskyClasses, riskyStudents, averages, teachers: [...teachers.values()], uncertain };
+      riskyClasses, riskyStudents: riskTzs.size, riskTzs: [...riskTzs], averages, teachers: [...teachers.values()], uncertain };
   }
 
   const mean = values => values.length ? Util.fmt(values.reduce((a, b) => a + b, 0) / values.length, 1) : '—';
@@ -280,7 +282,13 @@
   window.SadinView = {
   getHotspotsSummary(roster, filters = this.state.sadin) {
     const model = weaknessModel(roster, filters, weaknessRiskRules(this));
-    return { model, hotspots: model.ranked.filter(c => c.risk).slice(0, 3) };
+    const ranked = model.ranked.filter(c => c.risk);
+    return {
+      model, riskStudentsCount: model.riskyStudents, riskStudentTzs: model.riskTzs,
+      riskClassesCount: model.riskyClasses, totalClassesCount: model.classes.length,
+      hotspotsCount: ranked.length, hotspots: ranked.slice(0, 3),
+      average: model.averages.length ? model.averages.reduce((a, b) => a + b, 0) / model.averages.length : null
+    };
   },
 
   earlyWarningRows(roster, filters = {}) {
@@ -424,10 +432,11 @@
 
   sadinSummary(sheet) {
     const graded = sheet.filter(r => r.overall != null);
+    const prereqs = prerequisitesByGrade(sheet.map(r => r.t));
     return {
       avg: graded.length ? graded.reduce((sum, r) => sum + r.overall, 0) / graded.length : null,
       gradedCount: graded.length,
-      cleanCount: graded.filter(r => !GroupAnalyzer.riskSubjects(r).length).length,
+      cleanCount: graded.filter(r => !confirmedRiskSubjects(r, prereqs.get(r.t.gradeKey).hasGroups).length).length,
       totalCount: sheet.length
     };
   },
@@ -540,8 +549,7 @@
     if (!early) all = all.map(r => normalizeRow(r, false));
     const prereqs = prerequisitesByGrade(roster);
     const missed = r => [...r.subjects.values()].reduce((n, s) => n + confirmedMissed(s, prereqs.get(r.t.gradeKey).hasGroups, r.t.tz), 0);
-    const risks = r => Config.withRulesForGrade(r.t.gradeKey, () => [...r.subjects.values()].filter(s =>
-      failingSubject(s) || confirmedMissed(s, prereqs.get(r.t.gradeKey).hasGroups, r.t.tz)));
+    const risks = r => confirmedRiskSubjects(r, prereqs.get(r.t.gradeKey).hasGroups);
     const filters = [
       ['all', early ? 'כל החניכים לטיפול' : 'כל החניכים', all.length],
       ['fail', 'עם נכשל שוטף', all.filter(r => r.failing > 0).length],
@@ -552,7 +560,6 @@
     const selectedFilter = filters.find(([key]) => key === st.strip);
     const rows = all.filter(r => st.strip === 'all' || (st.strip === 'fail' && r.failing > 0) || (st.strip === 'multiple' && risks(r).length >= 2) || (st.strip === 'missed' && missed(r) > 0));
     const summary = this.sadinSummary(rows);
-    summary.cleanCount = rows.filter(r => r.overall != null && !risks(r).length).length;
     $('sadinFilterSelect').title = `${selectedFilter ? `${selectedFilter[1]} (${selectedFilter[2]}) · ` : ''}ממוצע כללי בסינון: ${Util.fmt(summary.avg, 1)}`;
     summaryBox.classList.remove('hidden');
     summaryBox.innerHTML = `<span><strong>ממוצע כללי בסינון:</strong> ${Util.fmt(summary.avg, 1)}</span>

@@ -175,10 +175,11 @@
     const covered = (loaded, key) => loaded && grades.every(g => SignalEngine.prerequisitesFor(g)[key]);
     const groupsOn = covered(Store.loaded.groups, 'hasGroups');
     const bagrutOn = covered(Store.loaded.bagrut, 'hasBagrut');
-    const sadinOn = covered(Store.loaded.grades, 'hasSadin');
+    const sadinOn = Store.loaded.grades;
+    const sadinComplete = covered(sadinOn, 'hasSadin');
     const risk = bagrutOn ? this.filterByChip(m.rows, 'notok') : [];
     const near = risk.filter(r => r.ev.singleBlocker).length;
-    const currentRisk = sadinOn ? SadinView.earlyWarningRows(m.list).length : 0;
+    const weakness = sadinOn ? SadinView.getHotspotsSummary.call(this, m.list, { ...this.state.sadin, subject: 'all', teacher: 'all' }) : null;
     const completion = m.bagrutOn ? this.filterByChip(m.bench.rows, 'completion').filter(r => r.ev.tier !== 0 && r.ev.tier !== 5) : [];
     const completionIds = new Set(completion.map(r => r.t.tz));
     const counted = m.bench.rows.filter(r => r.ev.tier !== 0 && r.ev.tier !== 5 &&
@@ -202,8 +203,10 @@
         (this.tierBased(ev) ? ev.blockers.filter(b => !b.info).map(b => b.text) : ev.paceInfo.focus.map(item => item.text))[0] || 'לא אותרו חסמים';
       return `<li><span class="ov-task-star" aria-hidden="true">★</span><button type="button" class="ov-task-link" data-act="openProfile" data-tz="${E(t.tz)}">${E(t.name)}</button><span>${E(Config.classLabel(t.classKey))}</span><span class="ov-task-truncate" title="${E(focus)}">${E(focus)}</span></li>`;
     }).join('');
-    const hotspots = sadinOn ? SadinView.getHotspotsSummary.call(this, m.list, { ...this.state.sadin, subject: 'all', teacher: 'all' }).hotspots : [];
-    const hotspotList = hotspots.map(c => `<li><button type="button" class="ov-hotspot" data-act="ovHotspot" data-class="${E(c.cls)}" data-subject="${E(c.subject)}"><span>${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${Math.round(c.rate)}% בסיכון${c.students.length < 3 ? ` · ${c.risk}/${c.students.length}` : ''}</strong></button></li>`).join('');
+    const hotspotList = (weakness ? weakness.hotspots : []).map(c => `<li><button type="button" class="ov-hotspot" data-act="ovHotspot" data-class="${E(c.cls)}" data-subject="${E(c.subject)}"><span>${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}% בסיכון`}</strong></button></li>`).join('');
+    const weaknessDetail = weakness
+      ? `${weakness.riskClassesCount} מתוך ${weakness.totalClassesCount} כיתות בסיכון · ${weakness.hotspotsCount} מוקדים בוערים${!sadinComplete ? ' · נתוני ציונים חלקיים' : ''}${!groupsOn || weakness.model.uncertain ? ' · החמצות ללא שיבוץ מאומת אינן נספרות' : ''}`
+      : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה';
     const card = (attrs, label, title, value, detail, ready, body, action) => `<section class="card ov-task">
       <button type="button" class="ov-card" data-act="ovGo" ${attrs}>
         <span class="ov-label">${label}</span><strong class="ov-task-title">${title}</strong>
@@ -236,8 +239,8 @@
           ${card('data-go="bagrut" data-chip="notok" data-scope="all"', 'מעקב יומיומי', 'זכאות לבגרות', `${risk.length} חניכים בסיכון`,
             bagrutOn ? `${near} קרובים לסף` : 'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn,
             `<h4>במעקב צמוד</h4><ul class="ov-task-list">${pinnedList || '<li>אין חניכים נעוצים בסינון הנוכחי</li>'}</ul>${pins.length > 3 ? `<p class="ov-task-note">ועוד ${pins.length - 3} חניכים</p>` : ''}`, 'למעקב הזכאות')}
-          ${card('data-go="sadin" data-strip="all"', 'מבט שכבתי', 'מוקדי חולשה', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
-            sadinOn ? 'מוקדים בוערים לפי הגדרת הסיכון' : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה', sadinOn,
+          ${card('data-go="sadin" data-strip="all"', 'מבט שכבתי', 'מוקדי חולשה', `${weakness ? weakness.riskStudentsCount : 0} חניכים בסיכון`,
+            weaknessDetail, sadinOn,
             `<ul class="ov-task-list">${hotspotList || `<li>${sadinOn ? 'לא נמצאו מוקדים בסיכון' : 'אין נתוני מוקדים זמינים'}</li>`}</ul>`, 'למבט השכבתי')}
         </div>
       </div>`);
