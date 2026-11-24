@@ -6,6 +6,11 @@
   const prerequisites = list => new Map([...new Set(list.map(t => t.gradeKey))]
     .map(grade => [grade, SignalEngine.prerequisitesFor(grade)]));
 
+  document.addEventListener('click', event => {
+    const target = event.target.closest && event.target.closest('[data-act="bagrutPin"], [data-act="weaknessRiskApply"]');
+    if (target && window.App) window.App.dirty.add('overview');
+  }, true);
+
   window.OverviewView = {
   overviewList(ignoreClass = false) {
     const f = this.state.filters;
@@ -159,6 +164,11 @@
   },
 
   renderOverviewPanel() {
+    if ($('panel-overview') && !$('weakness-styles')) {
+      const link = document.createElement('link');
+      link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
+      document.head.appendChild(link);
+    }
     if (!Store.hasData()) return this.noRoster([], 'overview-body');
     const m = this.overviewModel(), f = this.state.filters, am = m.anomaliesModel;
     const grades = f.grade === 'all' ? [...m.coverage.keys()] : [f.grade];
@@ -169,10 +179,40 @@
     const risk = bagrutOn ? this.filterByChip(m.rows, 'notok') : [];
     const near = risk.filter(r => r.ev.singleBlocker).length;
     const currentRisk = sadinOn ? SadinView.earlyWarningRows(m.list).length : 0;
-    const card = (attrs, title, value, detail, ready) => `<button type="button" class="ov-card" data-act="ovGo" ${attrs}>
-      <span class="ov-label">${title}</span>
-      ${ready ? `<span class="ov-value">${value}</span><span class="ov-sub">${detail}</span>` : `<span class="ov-sub">${detail}</span>`}
-      </button>`;
+    const completion = m.bagrutOn ? this.filterByChip(m.bench.rows, 'completion').filter(r => r.ev.tier !== 0 && r.ev.tier !== 5) : [];
+    const completionIds = new Set(completion.map(r => r.t.tz));
+    const counted = m.bench.rows.filter(r => r.ev.tier !== 0 && r.ev.tier !== 5 &&
+      (!m.bench.pace || !['no_data', 'twelve_years'].includes(r.ev.paceStatus)) && this.trackOf(r.t) !== Config.SPECIAL_ED);
+    const projectedEvals = m.bench.rows.map(r => completionIds.has(r.t.tz)
+      ? { ...r.ev, tier: 1, paceStatus: 'on_track' } : r.ev);
+    const projected = m.bench.pace ? BagrutAdvisor.summarizePace(projectedEvals).pctExSpecialEd
+      : BagrutAdvisor.summarize(projectedEvals).eligibilityExSpecialEd;
+    const current = m.bench.pace ? m.stats.pctExSpecialEd : m.stats.eligibilityExSpecialEd;
+    const measure = m.bench.pace ? 'תקינות הצבירה' : 'צפי הזכאות';
+    const bannerTitle = !m.bagrutOn ? 'אין נתונים מספקים להצגת תמונת השכבה'
+      : completion.length ? `${completion.length} חניכים ${m.bench.pace ? 'קרובים לחזרה לקצב' : 'במסלול השלמה או החלטה'}` : 'אין חניכים במסלול השלמה או החלטה';
+    const bannerDetail = !m.bagrutOn ? 'יש לטעון נתוני בגרות לשכבת הייחוס.'
+      : !counted.length ? 'אין חניכים ללא חנ״מ לחישוב המדד.'
+      : completion.length ? `טיפול בהם עשוי להעלות את ${measure} מ-${current}% ל-${projected}% · המדד ללא חנ״מ`
+      : `${measure}: ${current}% ללא חנ״מ`;
+    const pins = this.filterByChip(m.rows, 'pinned');
+    const pinnedList = pins.slice(0, 3).map(({ t, ev }) => {
+      const focus = ev.tier === 5 ? 'מסלול 12 שנות לימוד' :
+        !m.coverage.get(t.gradeKey)?.hasBagrut ? 'אין נתוני בגרות לשכבה' :
+        (this.tierBased(ev) ? ev.blockers.filter(b => !b.info).map(b => b.text) : ev.paceInfo.focus.map(item => item.text))[0] || 'לא אותרו חסמים';
+      return `<li><span class="ov-task-star" aria-hidden="true">★</span><button type="button" class="ov-task-link" data-act="openProfile" data-tz="${E(t.tz)}">${E(t.name)}</button><span>${E(Config.classLabel(t.classKey))}</span><span class="ov-task-truncate" title="${E(focus)}">${E(focus)}</span></li>`;
+    }).join('');
+    const hotspots = sadinOn ? SadinView.getHotspotsSummary.call(this, m.list, { ...this.state.sadin, subject: 'all', teacher: 'all' }).hotspots : [];
+    const hotspotList = hotspots.map(c => `<li><button type="button" class="ov-hotspot" data-act="ovHotspot" data-class="${E(c.cls)}" data-subject="${E(c.subject)}"><span>${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${Math.round(c.rate)}% בסיכון${c.students.length < 3 ? ` · ${c.risk}/${c.students.length}` : ''}</strong></button></li>`).join('');
+    const card = (attrs, label, title, value, detail, ready, body, action) => `<section class="card ov-task">
+      <button type="button" class="ov-card" data-act="ovGo" ${attrs}>
+        <span class="ov-label">${label}</span><strong class="ov-task-title">${title}</strong>
+        ${ready ? `<span class="ov-value">${value}</span>` : ''}
+        <span class="ov-sub">${detail}</span>
+      </button>
+      <div class="ov-task-body">${body}</div>
+      <button type="button" class="btn btn-primary ov-task-action" data-act="ovGo" ${attrs}>${action}</button>
+    </section>`;
     const quality = [];
     if (m.signals.some(s => s.dataQuality.some(flag => flag.id === 'data.manual_review'))) quality.push('שאלונים זרים או פטורים');
     if (m.signals.some(s => s.dataQuality.some(flag => flag.id === 'data.sadin_not_enrolled'))) quality.push('ציונים ללא שיבוץ');
@@ -180,17 +220,27 @@
     if (window.ImportQuarantine && window.ImportQuarantine.list().length) quality.push('פריטים בהסגר קליטה');
     const scope = f.cls !== 'all' ? `כיתה ${Config.classLabel(f.cls)}` : f.grade !== 'all' ? `שכבת ${Util.gl(f.grade)}` : 'כלל בית הספר';
     setHtml('overview-body', `
-      <div><h2 class="ov-title text-2xl font-extrabold text-[#355747]">היום — משימות לטיפול</h2>
-        <p class="text-sm text-slate-500 mt-1">${E(scope)}</p></div>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        ${card('data-go="groups" data-view="anomalies"', 'משימה 1 — שיבוצים לתיקון', `${am.studentsCount} חניכים`,
-          groupsOn ? `חריגות: חוסר ${am.byCategory.missing} · כפילות ${am.byCategory.duplicate} · חשודים ${am.byCategory.suspect} (חוסר לפי סף שיבוץ כיתתי)` : 'לא ניתן לקבוע — חסר קובץ קבוצות לשכבה', groupsOn)}
-        ${card('data-go="bagrut" data-chip="notok" data-scope="all"',         'משימה 2 — זכאות לבגרות', `${risk.length} חניכים בסיכון`,
-                  bagrutOn ? `${near} קרובים לסף · איתור חניכים בסיכון לטיפול שוטף` :  'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn)}
-        ${card('data-go="sadin" data-strip="all"', 'משימה 3 — מוקדי חולשה', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
-          sadinOn ? 'פתיחת מסך ההתראה המקדימה' : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה', sadinOn)}
-      </div>
-      ${quality.length ? `<button type="button" class="fresh-bar fresh-slate w-full text-right" data-act="openDataQuality">איכות נתונים והסגר קליטה: ${E(quality.join(' · '))}</button>` : ''}`);
+      <div class="ov-dashboard">
+        <header class="ov-dashboard-head"><div><h2>היום</h2><span class="ov-dashboard-scope">משימות לטיפול · ${E(scope)}</span></div>
+          ${quality.length ? `<button type="button" class="ov-dashboard-quality" data-act="openDataQuality" title="${E(quality.join(' · '))}" aria-label="${E(`איכות נתונים: ${quality.join(' · ')}`)}">${quality.length} לבדיקה</button>` : ''}</header>
+        <section class="ov-opportunity" aria-label="${m.bench.pace ? 'הזדמנות לחזרה לקצב' : 'הזדמנות להרמת הזכאות'}">
+          <div><span class="ov-opportunity-label">${m.bench.pace ? 'הזדמנות מהירה לחזרה לקצב' : 'הזדמנות מהירה להרמת הזכאות'} · ${E(m.bench.label)}</span>
+            <h3>${E(bannerTitle)}</h3><p>${E(bannerDetail)}</p></div>
+          <div class="ov-opportunity-actions"><button type="button" class="btn ov-opportunity-primary" data-act="ovCompletion" data-scope="${E(m.bench.scope)}">לחניכים להשלמה</button>
+            <button type="button" class="btn ov-opportunity-secondary" data-act="ovCompletion" data-scope="${E(m.bench.scope)}" data-simulation="true">סימולציית מה-אם</button></div>
+        </section>
+        <div class="ov-task-grid">
+          ${card('data-go="groups" data-view="anomalies"', 'שיבוצים', 'שיבוצים לתיקון', `${am.studentsCount} חניכים`,
+            groupsOn ? `<span class="ov-task-chips"><span>חוסר ${am.byCategory.missing}</span><span>כפילות ${am.byCategory.duplicate}</span><span>חשודים ${am.byCategory.suspect}</span></span>` : 'לא ניתן לקבוע — חסר קובץ קבוצות לשכבה', groupsOn,
+            '<p class="ov-task-note">חוסר לפי סף שיבוץ כיתתי.</p>', 'לתיקון שיבוצים')}
+          ${card('data-go="bagrut" data-chip="notok" data-scope="all"', 'מעקב יומיומי', 'זכאות לבגרות', `${risk.length} חניכים בסיכון`,
+            bagrutOn ? `${near} קרובים לסף` : 'לא ניתן לקבוע — חסר קובץ בגרות לשכבה', bagrutOn,
+            `<h4>במעקב צמוד</h4><ul class="ov-task-list">${pinnedList || '<li>אין חניכים נעוצים בסינון הנוכחי</li>'}</ul>${pins.length > 3 ? `<p class="ov-task-note">ועוד ${pins.length - 3} חניכים</p>` : ''}`, 'למעקב הזכאות')}
+          ${card('data-go="sadin" data-strip="all"', 'מבט שכבתי', 'מוקדי חולשה', `${currentRisk} חניכים עם נכשל/החמצה בשוטף`,
+            sadinOn ? 'מוקדים בוערים לפי הגדרת הסיכון' : 'לא ניתן לקבוע — חסר קובץ ציונים שוטפים לשכבה', sadinOn,
+            `<ul class="ov-task-list">${hotspotList || `<li>${sadinOn ? 'לא נמצאו מוקדים בסיכון' : 'אין נתוני מוקדים זמינים'}</li>`}</ul>`, 'למבט השכבתי')}
+        </div>
+      </div>`);
   },
 
   animateOverviewBars() {

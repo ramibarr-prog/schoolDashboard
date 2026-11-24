@@ -1267,6 +1267,24 @@ const App = {
       }
       this.showTab(go);
     },
+    ovCompletion(el) {
+      this.resetOverviewDrillFilters();
+      if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
+      Object.assign(this.state.bagrut, { chip: 'completion', drill: 'all', targets: false, readinessClass: '', readinessFilter: 'all' });
+      this.dirty.add('bagrut');
+      this.showTab('bagrut');
+      if (el.dataset.simulation === 'true') {
+        const simulation = $('bagrutSimulation');
+        if (simulation) simulation.open = true;
+      }
+    },
+    ovHotspot(el) {
+      this.resetOverviewDrillFilters();
+      Object.assign(this.state.sadin, { mode: 'early', strip: 'all', subject: 'all', teacher: 'all', cell: { cls: el.dataset.class, subject: el.dataset.subject } });
+      this.alertOut = [];
+      this.dirty.add('sadin');
+      this.showTab('sadin');
+    },
     ovReadiness(el) {
       this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
@@ -1301,6 +1319,8 @@ const App = {
     profBack() { this.profBack(); },
     bagrutSort(el) { return BagrutView.bagrutSort.call(this, el); },
     bagrutPin(el) { return BagrutView.bagrutPin.call(this, el); },
+    bagrutDrawerOpen(el) { return BagrutView.bagrutDrawerOpen.call(this, el); },
+    bagrutDrawerClose() { return BagrutView.bagrutDrawerClose.call(this, true); },
     bagrutDrill(el) { return BagrutView.bagrutDrill.call(this, el); },
     readinessFilter(el) { return BagrutView.readinessFilter.call(this, el); },
     bagrutReadinessClass(el) { return BagrutView.bagrutReadinessClass.call(this, el); },

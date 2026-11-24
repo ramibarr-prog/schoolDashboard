@@ -32,6 +32,86 @@
     try { window.localStorage.setItem(PINS_KEY, JSON.stringify([...loadPins()])); } catch (e) { /* האחסון לא זמין: הסיכות תקפות לסשן הנוכחי */ }
   }
 
+  function hideBreakdownTooltip() {
+    const tip = $('bg-drawer-tooltip');
+    if (tip) tip.remove();
+    document.querySelectorAll('#bagrut-table .bg-drawer-required[aria-describedby]').forEach(el => el.removeAttribute('aria-describedby'));
+  }
+
+  function showBreakdownTooltip(cell) {
+    hideBreakdownTooltip();
+    const lines = JSON.parse(cell.dataset.breakdownLines);
+    const tip = document.createElement('div');
+    tip.id = 'bg-drawer-tooltip';
+    tip.className = 'bg-drawer-tooltip';
+    tip.setAttribute('role', 'tooltip');
+    tip.innerHTML = `${lines.map(line => `<div>${E(line)}</div>`).join('')}<small>לחיצה על השורה לפירוט מלא</small>`;
+    document.body.appendChild(tip);
+    cell.setAttribute('aria-describedby', tip.id);
+    const r = cell.getBoundingClientRect(), width = tip.offsetWidth, height = tip.offsetHeight;
+    tip.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - width - 8))}px`;
+    tip.style.top = `${r.bottom + height + 8 <= window.innerHeight ? r.bottom + 4 : Math.max(8, r.top - height - 4)}px`;
+  }
+
+  function renderBreakdownDrawer(app, list, signals) {
+    const tz = app.state.bagrut.drawerTz;
+    const row = list.find(r => r.t.tz === tz);
+    if (!row) return BagrutView.bagrutDrawerClose.call(app);
+    const table = $('bagrut-table'), parent = $('panel-bagrut') || table.parentElement;
+    let drawer = $('bagrut-breakdown-drawer');
+    if (!drawer) {
+      drawer = document.createElement('aside');
+      drawer.id = 'bagrut-breakdown-drawer';
+      drawer.className = 'bg-drawer';
+      drawer.setAttribute('role', 'dialog');
+      drawer.setAttribute('aria-label', 'פירוט זכאות לחניך');
+      parent.appendChild(drawer);
+    }
+    const breakdown = UI.buildBagrutBreakdown(row.t, row.ev, {
+      className: Config.classLabel(row.t.classKey), noData: noBagrutData(signals.get(tz), app.state.sim)
+    });
+    drawer.innerHTML = `<button type="button" class="bg-drawer-close" data-act="bagrutDrawerClose" aria-label="סגירת פירוט זכאות">✕</button>${UI.renderBagrutBreakdown(breakdown, { showHeader: true, showPin: true, pinned: loadPins().has(tz), showOpen360: true })}`;
+    table.querySelectorAll('tr[data-act="bagrutDrawerOpen"]').forEach(el => el.classList.toggle('bg-drawer-row-active', el.dataset.tz === tz));
+  }
+
+  document.addEventListener('mouseover', event => {
+    const cell = event.target.closest && event.target.closest('#bagrut-table .bg-drawer-required');
+    if (cell && !cell.contains(event.relatedTarget)) showBreakdownTooltip(cell);
+  });
+  document.addEventListener('mouseout', event => {
+    const cell = event.target.closest && event.target.closest('#bagrut-table .bg-drawer-required');
+    if (cell && !cell.contains(event.relatedTarget)) hideBreakdownTooltip();
+  });
+  document.addEventListener('focusin', event => {
+    const cell = event.target.closest && event.target.closest('#bagrut-table .bg-drawer-required');
+    if (cell) showBreakdownTooltip(cell);
+  });
+  document.addEventListener('focusout', event => {
+    if (event.target.closest && event.target.closest('#bagrut-table .bg-drawer-required')) hideBreakdownTooltip();
+  });
+  document.addEventListener('scroll', hideBreakdownTooltip, true);
+  document.addEventListener('click', event => {
+    const app = window.App;
+    if (!app || app.state.tab !== 'bagrut' || !app.state.bagrut.drawerTz) return;
+    const target = event.target;
+    if (target.closest && (target.closest('#bagrut-breakdown-drawer') || target.closest('#bagrut-table tr[data-act="bagrutDrawerOpen"]'))) return;
+    BagrutView.bagrutDrawerClose.call(app);
+  }, true);
+  document.addEventListener('keydown', event => {
+    const app = window.App;
+    if (event.key === 'Escape' && app && app.state.tab === 'bagrut' && app.state.bagrut.drawerTz) {
+      BagrutView.bagrutDrawerClose.call(app, true);
+      event.preventDefault(); event.stopImmediatePropagation();
+      return;
+    }
+    const row = event.target.closest && event.target.closest('tr[data-act="bagrutDrawerOpen"]');
+    if (row && (event.target === row || event.target.classList.contains('bg-drawer-required')) &&
+        (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      row.click();
+    }
+  }, true);
+
   function signalsFor(rows, sim) {
     const adaptive = sim.fullMode && rows.some(r => r.t.gradeKey !== 'יב')
       ? SignalEngine.computeAll({ ...sim, fullMode: false }).byTz : null;
@@ -127,6 +207,32 @@
     if (pins.has(tz)) pins.delete(tz); else pins.add(tz);
     savePins();
     this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
+  bagrutDrawerOpen(el) {
+    const rows = this.dashRows(), signals = signalsFor(rows, this.state.sim);
+    const list = this.bagrutList(rows, signals);
+    if (!list.some(r => r.t.tz === el.dataset.tz)) {
+      this.toast('החניך אינו זמין בסינון הנוכחי.', 'warn');
+      return;
+    }
+    this.state.bagrut.drawerTz = el.dataset.tz;
+    hideBreakdownTooltip();
+    renderBreakdownDrawer(this, list, signals);
+  },
+
+  bagrutDrawerClose(restoreFocus = false) {
+    const tz = this.state.bagrut.drawerTz;
+    this.state.bagrut.drawerTz = null;
+    const drawer = $('bagrut-breakdown-drawer'), table = $('bagrut-table');
+    if (drawer) drawer.remove();
+    hideBreakdownTooltip();
+    if (table) {
+      const rows = [...table.querySelectorAll('tr[data-act="bagrutDrawerOpen"]')];
+      rows.forEach(row => row.classList.remove('bg-drawer-row-active'));
+      const row = restoreFocus && rows.find(el => el.dataset.tz === tz);
+      if (row) row.focus();
+    }
   },
 
   bagrutDrill(el) {
@@ -510,13 +616,17 @@
     setHtml('bagrutSubjectDrillSelect',
       `<option value="all" ${st.drill === 'all' ? 'selected' : ''}>📊 מבט על – כל המקצועות</option>` +
       drillOpts.map(o => `<option value="${E(o.value)}" ${st.drill === o.value ? 'selected' : ''}>${E(o.label)}</option>`).join(''));
-    if (!Store.hasData()) return this.noRoster([], 'bagrut-table');
+    if (!Store.hasData()) {
+      BagrutView.bagrutDrawerClose.call(this);
+      return this.noRoster([], 'bagrut-table');
+    }
     const displayed = drill && drill.m ? drill.m.rows
       .filter(r => !drill.currentOn || ((!st.readinessClass || r.t.classKey === st.readinessClass) && this.readinessMatch(r, st.readinessFilter)))
       .map(r => ({ t: r.t })) : list;
     const qualitySlot = document.querySelector('.bagrut-toolbar .bagrut-quality-slot');
     if (qualitySlot) qualitySlot.innerHTML = signalSummary(displayed, signals, sim);
     if (st.targets) {
+      BagrutView.bagrutDrawerClose.call(this);
       const hasBagrut = SignalEngine.prerequisitesFor('יב').hasBagrut;
       const targets = hasBagrut ? BagrutView.target30Rows.call(this, list) : [];
       const { targetSort: sort, targetDir: dir } = st;
@@ -543,8 +653,12 @@
         `<table class="grid w-full text-right"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('subject', 'מקצוע')}<th>מצב/ציון נוכחי</th>${th('target', 'יעד מינימלי ב-30%')}<th>הערה</th></tr></thead>
         <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">אין רכיבי 30% חסרים בסינון הנוכחי</td></tr>'}</tbody></table>`}`);
     }
-    if (drill) return setHtml('bagrut-table', this.bagrutSubjectMatrix(drill, signals));
+    if (drill) {
+      BagrutView.bagrutDrawerClose.call(this);
+      return setHtml('bagrut-table', this.bagrutSubjectMatrix(drill, signals));
+    }
     setHtml('bagrut-table', this.bagrutTable(list, signals));
+    if (st.drawerTz) renderBreakdownDrawer(this, list, signals);
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
@@ -833,26 +947,17 @@
         (ev.paceStatus === 'pace_lag' ? 'bad' : ev.paceStatus === 'pace_warning' ? 'partial' : ev.paceStatus === 'on_track' ? 'ok' : 'neutral');
       return `<span class="bagrut-status bagrut-status-${kind}" title="${E(ev.diagnostic)}">${E(text)}</span>`;
     };
-    const required = (ev, unknown) => {
-      if (ev.tier === 5) return 'מסלול 12 שנות לימוד';
-      if (unknown) return 'לא ניתן לקבוע ללא נתוני בגרות לשכבה';
-      const items = this.tierBased(ev)
-        ? ev.blockers.filter(b => !b.info).sort((a, b) => Number(!!b.hard) - Number(!!a.hard)).map(b => b.text)
-        : ev.paceInfo.focus.map(f => f.text);
-      if (ev.manualReview.required && !items.some(x => x.includes('החלטת רכזת'))) items.unshift('נדרשת החלטת רכזת');
-      return [...new Set(items)].join(' · ') || 'לא אותרו חסמים';
-    };
     const pins = loadPins();
     const cols = 3 + (showClass ? 1 : 0) + BAGRUT_CORE.length + 1;
     const renderRow = ({ t, ev }) => {
       const signal = signals.get(t.tz), unknown = noBagrutData(signal, sim);
       const noDataCell = '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>';
-      const text = required(ev, unknown);
-      return `<tr${pins.has(t.tz) ? ' class="bagrut-pinned-row"' : ''}>
+      const breakdown = UI.buildBagrutBreakdown(t, ev, { noData: unknown });
+      return `<tr class="${pins.has(t.tz) ? 'bagrut-pinned-row' : ''}${this.state.bagrut.drawerTz === t.tz ? ' bg-drawer-row-active' : ''}" data-act="bagrutDrawerOpen" data-tz="${E(t.tz)}" tabindex="0" aria-label="${E(`פירוט זכאות: ${t.name}`)}">
         <td><div class="bagrut-student"><button type="button" class="bagrut-pin" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" aria-label="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}: ${E(t.name)}" title="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}">${pins.has(t.tz) ? '★' : '☆'}</button>
         <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></div></td>
         ${showClass ? `<td>${E(Config.classLabel(t.classKey))}</td>` : ''}
-        <td>${status(ev, signal)}</td><td class="bagrut-required" title="${E(text)}"><span>${E(text)}</span></td>
+        <td>${status(ev, signal)}</td><td class="bagrut-required bg-drawer-required" tabindex="0" data-breakdown-lines="${E(JSON.stringify(breakdown.tooltipLines))}"><span>${E(breakdown.cellSummary)}</span></td>
         ${BAGRUT_CORE.map(([id, label]) => unknown ? noDataCell : coreCell(ev, id, label)).join('')}
         ${unknown ? noDataCell : majorCell(t, ev)}</tr>`;
     };

@@ -278,6 +278,11 @@
   const severity = rate => rate < 20 ? 0 : rate < 40 ? 1 : rate < 60 ? 2 : 3;
 
   window.SadinView = {
+  getHotspotsSummary(roster, filters = this.state.sadin) {
+    const model = weaknessModel(roster, filters, weaknessRiskRules(this));
+    return { model, hotspots: model.ranked.filter(c => c.risk).slice(0, 3) };
+  },
+
   earlyWarningRows(roster, filters = {}) {
     return GroupAnalyzer.sadinSheet(roster, filters).map(r => normalizeRow(r, true)).filter(r => {
       const ex = Config.getException(r.t.tz);
