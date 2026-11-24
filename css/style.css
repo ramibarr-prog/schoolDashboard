@@ -4,6 +4,20 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-title h1 { margin: 0; color: var(--forest); font-size: 1.5rem; font-weight: 700; }
 .weak-title p, .weak-muted { margin: .25rem 0 0; color: var(--muted); font-size: .8rem; }
 .weak-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.weak-risk-control { position: relative; }
+.weak-risk-trigger { display: inline-flex; align-items: center; gap: .45rem; padding: .4rem .7rem; border: 1px solid var(--mustard); border-radius: .65rem; background: rgba(232, 185, 95, .18); color: var(--forest); font-size: .8rem; font-weight: 600; }
+.weak-risk-trigger:focus-visible, .weak-risk-stepper button:focus-visible, .weak-risk-reset:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.weak-risk-popover { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 40; width: min(24rem, calc(100vw - 2rem)); max-height: 75vh; overflow-y: auto; padding: 1rem; text-align: right; }
+.weak-risk-popover h2 { margin: 0 0 .75rem; color: var(--forest); font-size: 1rem; font-weight: 700; }
+.weak-risk-row { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .65rem 0; color: var(--ink); font-size: .85rem; }
+.weak-risk-stepper { display: inline-flex; align-items: center; gap: .35rem; }
+.weak-risk-stepper button { width: 1.8rem; height: 1.8rem; border: 1px solid var(--sage-soft); border-radius: .4rem; color: var(--forest); background: var(--card-bg); font-size: 1rem; }
+.weak-risk-stepper button:disabled { opacity: .4; cursor: not-allowed; }
+.weak-risk-value { min-width: 2rem; text-align: center; font-weight: 700; }
+.weak-risk-help { margin: .75rem 0; color: var(--muted); font-size: .75rem; }
+.weak-risk-preview { padding: .7rem; border-radius: .5rem; background: var(--sage-tint); color: var(--forest); font-size: .8rem; font-weight: 600; }
+.weak-risk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; }
+.weak-risk-reset { color: var(--forest); font-size: .8rem; text-decoration: underline; }
 .weak-sheet-button { border-style: dashed; }
 .weakness-screen { min-width: 0; }
 .weak-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: .75rem; }

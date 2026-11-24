@@ -1023,6 +1023,9 @@ const App = {
   bindEvents() {
     /* תפיסה בשלב ה-capture: האפליקציה שולטת בטאבים, בהעלאה ובמגירה ואינה תלויה בסקריפט מעטפת */
     document.addEventListener('click', e => {
+      if (this.state.sadin.weakRiskDraft && !(e.target.closest && e.target.closest('.weak-risk-control'))) {
+        SadinView.weaknessRiskClose.call(this);
+      }
       if (e.target.closest('[data-go-overrides]')) {
         e.stopPropagation();
         this.state.settingsView = 'overrides';
@@ -1111,6 +1114,11 @@ const App = {
     /* Esc בכרטיס חניך חוזר למסך המקור כשאין חלון פתוח ולא מקלידים בשדה */
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
+      if (this.state.sadin.weakRiskDraft) {
+        SadinView.weaknessRiskClose.call(this, true);
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
       const mapping = $('mappingModal');
       const modalOpen = !!($('modal-root') && $('modal-root').children.length) || !!(mapping && !mapping.classList.contains('hidden'));
       const active = document.activeElement;
@@ -1204,6 +1212,10 @@ const App = {
     closeModal() { this.closeModal(); },
     sadinAlerts() { this.openSadinAlerts(); },
     sadinMode(el) { return SadinView.sadinMode.call(this, el); },
+    weaknessRiskToggle() { return SadinView.weaknessRiskToggle.call(this); },
+    weaknessRiskAdjust(el) { return SadinView.weaknessRiskAdjust.call(this, el); },
+    weaknessRiskReset() { return SadinView.weaknessRiskReset.call(this); },
+    weaknessRiskApply() { return SadinView.weaknessRiskApply.call(this); },
     sadinSelectCell(el) { return SadinView.selectWeakness.call(this, el); },
     sadinCellEligibility(el) { return SadinView.openWeaknessEligibility.call(this, el); },
     sadinCellAlerts(el) { return SadinView.openWeaknessAlerts.call(this, el); },

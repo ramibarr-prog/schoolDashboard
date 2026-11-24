@@ -51,7 +51,8 @@
     const rank = core ? CORE_ORDER.indexOf(core.id) : -1;
     return rank >= 0 ? rank : CORE_ALIASES.findIndex(aliases => Util.matchKeywords(name, aliases));
   };
-  const validRiskRules = rules => rules && [1, 2, 3].includes(rules.minFails) && [0, 1, 2, 3].includes(rules.minMissed);
+  const validRiskRules = rules => rules && Number.isInteger(rules.minFails) && rules.minFails >= 1 && rules.minFails <= 5 &&
+    Number.isInteger(rules.minMissed) && rules.minMissed >= 0 && rules.minMissed <= 5;
   function weaknessRiskRules(app) {
     const st = app.state.sadin;
     if (st.weakRiskRules) return st.weakRiskRules;
@@ -72,6 +73,55 @@
     }
     st.weakRiskRules = validRiskRules(saved) ? { minFails: saved.minFails, minMissed: saved.minMissed } : { minFails: 1, minMissed: 1 };
     return st.weakRiskRules;
+  }
+
+  function saveWeaknessRiskRules(app, rules) {
+    app.state.sadin.weakRiskRules = { ...rules };
+    try { window.localStorage.setItem(RISK_RULES_KEY, JSON.stringify(app.state.sadin.weakRiskRules)); }
+    catch (error) {
+      console.warn('weakness risk rules storage', error);
+      app.toast('לא ניתן לשמור את הגדרת הסיכון באחסון; היא תקפה לסשן הנוכחי בלבד.', 'warn');
+    }
+  }
+
+  function riskPopover() {
+    const stepper = (key, label, suffix) => `<div class="weak-risk-row"><span>${label}</span>
+      <div class="weak-risk-stepper"><button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="-1" aria-label="הפחתת ${suffix}">−</button>
+      <span class="weak-risk-value" data-key="${key}"></span>
+      <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="1" aria-label="הגדלת ${suffix}">+</button></div><span>${suffix}</span></div>`;
+    return `<div id="weak-risk-popover" class="card weak-risk-popover" role="dialog" aria-labelledby="weak-risk-heading" tabindex="-1">
+      <h2 id="weak-risk-heading">מתי חניך נחשב בסיכון?</h2>
+      ${stepper('minFails', 'נכשל לפחות ב-', 'מקצועות')}
+      ${stepper('minMissed', 'הוחמצו לו לפחות', 'הערכות')}
+      <p class="weak-risk-help">מספיק שאחד התנאים יתקיים. ההגדרה חלה על כל המסך.</p>
+      <div class="weak-risk-preview" role="status" aria-live="polite"></div>
+      <div class="weak-risk-actions"><button type="button" class="btn btn-primary btn-sm" data-act="weaknessRiskApply">החל</button>
+      <button type="button" class="weak-risk-reset" data-act="weaknessRiskReset">איפוס לברירת מחדל</button></div></div>`;
+  }
+
+  function updateRiskPopover(app) {
+    const pop = $('weak-risk-popover'), rules = app.state.sadin.weakRiskDraft;
+    if (!pop || !rules) return;
+    pop.style.transform = '';
+    const rect = pop.getBoundingClientRect();
+    const shift = rect.left < 8 ? 8 - rect.left : rect.right > window.innerWidth - 8 ? window.innerWidth - 8 - rect.right : 0;
+    if (shift) pop.style.transform = `translateX(${shift}px)`;
+    pop.querySelectorAll('.weak-risk-value').forEach(el => {
+      const value = rules[el.dataset.key];
+      el.textContent = el.dataset.key === 'minMissed' && value === 0 ? 'ללא' : String(value);
+    });
+    pop.querySelectorAll('[data-act="weaknessRiskAdjust"]').forEach(el => {
+      const min = el.dataset.key === 'minFails' ? 1 : 0, value = rules[el.dataset.key];
+      el.disabled = Number(el.dataset.step) < 0 ? value <= min : value >= 5;
+    });
+    const preview = pop.querySelector('.weak-risk-preview'), roster = app.filtered();
+    if (!Store.loaded.grades && roster.length) {
+      preview.textContent = 'לא ניתן לקבוע ללא נתוני ציונים שוטפים.';
+      return;
+    }
+    const model = weaknessModel(roster, app.state.sadin, rules);
+    const incomplete = [...prerequisitesByGrade(roster).values()].some(p => !p.hasSadin || (rules.minMissed > 0 && !p.hasGroups));
+    preview.textContent = `בהגדרה הזו: ${model.riskyClasses} מתוך ${model.classes.length} כיתות בסיכון · ${model.riskyStudents} חניכים בסיכון בסינון${incomplete || (rules.minMissed > 0 && model.uncertain) ? ' · הנתונים עשויים להיות חלקיים' : ''}`;
   }
 
   function relevantSubject(s) {
@@ -144,7 +194,7 @@
       if (!classes.has(t.classKey)) classes.set(t.classKey, { key: t.classKey, grade: t.gradeKey, total: 0, risk: 0, scores: [] });
       classes.get(t.classKey).total++;
     });
-    let missedTotal = 0, uncertain = false;
+    let missedTotal = 0, riskyStudents = 0, uncertain = false;
     GroupAnalyzer.sadinSheet(roster, st).forEach(row => Config.withRulesForGrade(row.t.gradeKey, () => {
       const hasGroups = prereqs.get(row.t.gradeKey).hasGroups, scores = [], classScores = [];
       let fails = 0, missedForStudent = 0;
@@ -187,7 +237,7 @@
       if (scores.length) averages.push(scores.reduce((a, b) => a + b, 0) / scores.length);
       const cls = classes.get(row.t.classKey);
       if (classScores.length) cls.scores.push(classScores.reduce((a, b) => a + b, 0) / classScores.length);
-      if (fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) cls.risk++;
+      if (fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) { cls.risk++; riskyStudents++; }
     }));
     const list = [...cells.values()];
     list.forEach(c => { c.risk = c.students.filter(s => s.risk).length; c.rate = c.risk / c.students.length * 100; });
@@ -221,7 +271,7 @@
       riskyClasses += group.slice(0, Math.ceil(group.length / 3)).filter(c => c.risk > 0).length;
     });
     return { cells, ranked, subjects, coreRanks, classes: [...classes.keys()].sort(natural), failed: failed.size, missed: missedTotal,
-      riskyClasses, averages, teachers: [...teachers.values()], uncertain };
+      riskyClasses, riskyStudents, averages, teachers: [...teachers.values()], uncertain };
   }
 
   const mean = values => values.length ? Util.fmt(values.reduce((a, b) => a + b, 0) / values.length, 1) : '—';
@@ -237,10 +287,64 @@
   },
 
   sadinMode(el) {
+    if (el.dataset.mode === 'full') SadinView.weaknessRiskClose.call(this);
     this.state.sadin.mode = el.dataset.mode;
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
     this.state.sadin.strip = 'all';
     this.dirty.add('sadin'); this.renderTab('sadin');
+  },
+
+  weaknessRiskToggle() {
+    const st = this.state.sadin;
+    if (st.weakRiskDraft) return SadinView.weaknessRiskClose.call(this, true);
+    const control = document.querySelector('#sadin-mode .weak-risk-control');
+    if (!control) return;
+    st.weakRiskDraft = { ...weaknessRiskRules(this) };
+    control.insertAdjacentHTML('beforeend', riskPopover());
+    control.querySelector('[data-act="weaknessRiskToggle"]').setAttribute('aria-expanded', 'true');
+    updateRiskPopover(this);
+    $('weak-risk-popover').focus();
+  },
+
+  weaknessRiskClose(restoreFocus = false) {
+    this.state.sadin.weakRiskDraft = null;
+    const pop = $('weak-risk-popover');
+    if (pop) pop.remove();
+    const button = document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]');
+    if (button) {
+      button.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) button.focus();
+    }
+  },
+
+  weaknessRiskAdjust(el) {
+    const st = this.state.sadin, draft = st.weakRiskDraft, key = el.dataset.key, step = Number(el.dataset.step);
+    if (!draft || !['minFails', 'minMissed'].includes(key) || ![-1, 1].includes(step) ||
+        !validRiskRules({ ...draft, [key]: draft[key] + step })) {
+      this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');
+      return;
+    }
+    draft[key] += step;
+    updateRiskPopover(this);
+  },
+
+  weaknessRiskReset() {
+    if (!this.state.sadin.weakRiskDraft) return;
+    this.state.sadin.weakRiskDraft = { minFails: 1, minMissed: 1 };
+    updateRiskPopover(this);
+  },
+
+  weaknessRiskApply() {
+    const draft = this.state.sadin.weakRiskDraft;
+    if (!validRiskRules(draft)) {
+      this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');
+      return;
+    }
+    saveWeaknessRiskRules(this, draft);
+    SadinView.weaknessRiskClose.call(this);
+    this.dirty.add('sadin'); this.renderTab('sadin');
+    const button = document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]');
+    if (button) button.focus();
   },
 
   weaknessRiskChange(el) {
@@ -250,12 +354,7 @@
       this.dirty.add('sadin'); this.renderTab('sadin');
       return;
     }
-    this.state.sadin.weakRiskRules = { ...current, [key]: value };
-    try { window.localStorage.setItem(RISK_RULES_KEY, JSON.stringify(this.state.sadin.weakRiskRules)); }
-    catch (error) {
-      console.warn('weakness risk rules storage', error);
-      this.toast('לא ניתן לשמור את הגדרת הסיכון באחסון; היא תקפה לסשן הנוכחי בלבד.', 'warn');
-    }
+    saveWeaknessRiskRules(this, { ...current, [key]: value });
     this.dirty.add('sadin'); this.renderTab('sadin');
     const next = document.querySelector(`[data-chg="weaknessRiskRules"][data-key="${key}"]`);
     if (next) next.focus();
@@ -358,14 +457,18 @@
       home.actions.insertBefore(home.alertButton, $('unknown-sadinData'));
     }
     const grade = this.state.filters.grade;
+    const riskRules = early ? weaknessRiskRules(this) : null;
+    const riskLabel = riskRules ? `סיכון: נכשל ${riskRules.minFails}+${riskRules.minMissed ? ` או החמצה ${riskRules.minMissed}+` : ' בלבד'}` : '';
     modeBox.className = early ? 'weak-toolbar' : 'flex flex-wrap gap-2 mb-2';
     modeBox.innerHTML = early
-      ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div><div class="weak-controls"></div>
+      ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div><div class="weak-controls">
+        <div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div></div>
         <button type="button" class="btn btn-ghost btn-sm weak-sheet-button" data-act="sadinMode" data-mode="full">סדין מלא</button>`
       : `<button type="button" class="btn btn-ghost btn-sm" data-act="sadinMode" data-mode="early">חזרה למוקדי חולשה</button>`;
     if (early && home) {
       const controls = modeBox.querySelector('.weak-controls');
-      controls.appendChild(subjectSelect); controls.appendChild(teacherSelect); controls.appendChild(home.alertButton);
+      const riskControl = controls.querySelector('.weak-risk-control');
+      controls.insertBefore(subjectSelect, riskControl); controls.insertBefore(teacherSelect, riskControl); controls.appendChild(home.alertButton);
       home.alertButton.textContent = 'התראות למורים';
     } else if (home) home.alertButton.textContent = '🔔 התראות';
     let summaryBox = $('sadin-summary');
@@ -406,6 +509,7 @@
     const option = (v, label, selected) => `<option value="${E(v)}" ${v === selected ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('sadinSubjectSelect', option('all', 'כל המקצועות', st.subject) + subjects.map(s => option(s, s, st.subject)).join(''));
     setHtml('sadinTeacherSelect', option('all', 'כל המורים', st.teacher) + teachers.map(t => option(t, t, st.teacher)).join(''));
+    if (early && st.weakRiskDraft) updateRiskPopover(this);
     if (!Store.hasData()) {
       setHtml('sadinFilterSelect', option('all', 'כל החניכים (0)', 'all'));
       return this.noRoster([], 'sadin-table');
@@ -499,10 +603,6 @@
       ${incompleteSadin ? '<p class="weak-notice">חסרים נתוני ציונים לחלק מהשכבות; הנתונים עשויים להיות חלקיים.</p>' : ''}
       ${quality ? '<button type="button" class="badge gate-warn weak-quality" data-act="openDataQuality">איכות נתונים · לבדיקה</button>' : ''}
       <div class="weak-layout"><div class="weak-main"><section class="card weak-card"><h2>מפת חום: כיתה × מקצוע</h2>
-        <p class="weak-muted">הגדרת סיכון: חניך/כיתה = לפחות ${rules.minFails} מקצועות נכשלים${rules.minMissed ? ` או ${rules.minMissed} החמצות מאומתות` : ''} • בתא מקצוע = נכשל במקצוע${rules.minMissed ? ` או לפחות ${rules.minMissed} החמצות מאומתות במקצוע` : ''}</p>
-        <div class="weak-risk-rules" role="group" aria-label="הגדרת חניך בסיכון"><label>נכשלים:
-          <select class="inp" data-chg="weaknessRiskRules" data-key="minFails" aria-label="מספר מקצועות נכשלים">${[1, 2, 3].map(n => `<option value="${n}" ${rules.minFails === n ? 'selected' : ''}>${n}+</option>`).join('')}</select></label>
-          <label>החמצות מאומתות: <select class="inp" data-chg="weaknessRiskRules" data-key="minMissed" aria-label="מספר החמצות מאומתות">${[1, 2, 3, 0].map(n => `<option value="${n}" ${rules.minMissed === n ? 'selected' : ''}>${n ? `${n}+` : 'ללא'}</option>`).join('')}</select></label></div>
         <p class="weak-muted">אחוז החניכים בסיכון מתוך החניכים עם נתונים במקצוע; מדגם קטן משלושה מוצג כמספר חניכים.</p>
         <div class="weak-scroll"><table class="weak-table"><thead><tr><th scope="col">כיתה</th>${model.subjects.map((s, index) => `<th scope="col"${separator(index)}>${E(s)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
         ${model.subjects.length ? '' : '<p class="weak-muted">אין נתונים זמינים בסינון הנוכחי.</p>'}
