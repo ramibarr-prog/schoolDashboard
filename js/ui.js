@@ -126,7 +126,7 @@
     const open360 = opts.showOpen360 ? `<button type="button" class="bg-bd-open" data-act="openProfile" data-tz="${esc(b.tz)}">פתח כרטיס 360 מלא</button>` : '';
     if (opts.matrixSubjects) {
       const cellBadge = (text, state, forecast = false) => `<span class="bagrut-cell bagrut-cell-${esc(state)}${state === 'bad' ? ' score-alert' : ''}${forecast ? ' bagrut-cell-forecast' : ''}">${esc(text)}</span>`;
-      const rows = opts.matrixSubjects.map(s => `<li class="bg-drawer-subject${s.state === 'bad' && !s.forecastOnly ? ' bg-drawer-subject-blocked' : ''}"><span class="bg-drawer-subject-name">${esc(s.label)}</span>${cellBadge(s.text, s.state, s.forecastOnly)}${s.reportedText ? cellBadge(s.reportedText, 'partial') : ''}${s.forecastExtra ? cellBadge(s.forecastExtra.text, s.forecastExtra.state, true) : ''}${s.more ? `<span class="bagrut-more">+${esc(s.more)}</span>` : ''}${s.gap ? `<span class="bg-drawer-subject-gap">${esc(s.gap)}</span>` : ''}</li>`).join('');
+      const rows = opts.matrixSubjects.map(s => `<li class="bg-drawer-subject${s.state === 'bad' && !s.forecastOnly ? ' bg-drawer-subject-blocked' : ''}"><span class="bg-drawer-subject-name">${esc(s.label)}</span>${cellBadge(s.text, s.state, s.forecastOnly)}${s.more ? `<span class="bagrut-more">+${esc(s.more)}</span>` : ''}${s.gap ? `<span class="bg-drawer-subject-gap">${esc(s.gap)}</span>` : ''}</li>`).join('');
       const internalContent = neutral ? (b.isTrack12 ? 'מסלול 12 שנות לימוד' : 'לא ניתן לקבוע ללא נתוני בגרות') : internalTags || '<span>לא אותרו חסמים פנימיים</span>';
       return `<div class="bg-bd"><div class="bg-drawer-body">${header}${metrics}
         <section class="bg-bd-section"><h3>מקצועות</h3><ul class="bg-drawer-subjects">${rows}</ul></section>

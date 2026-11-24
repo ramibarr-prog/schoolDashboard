@@ -89,8 +89,9 @@
       const count = new Set(tags.filter(tag => tag.code).map(tag => tag.code)).size;
       const gaps = [...new Set(tags.filter(tag => !tag.code).map(tag => tag.label))];
       if (count) gaps.push(`${count} ${count === 1 ? 'שאלון' : 'שאלונים'}`);
+      if (cell.forecastSecondary) gaps.push(cell.forecastSecondary);
       return { label: cell.label, text: cell.text, state: cell.state, more: cell.more, gap: gaps.join(' · '),
-        forecastOnly: cell.forecastOnly, forecastExtra: cell.forecastExtra, reportedText: cell.reportedText };
+        forecastOnly: cell.forecastOnly };
     });
     drawer.innerHTML = `<button type="button" class="bg-drawer-close" data-act="bagrutDrawerClose" aria-label="סגירת פירוט זכאות">✕</button>${UI.renderBagrutBreakdown(breakdown, { showHeader: true, showPin: true, pinned: loadPins().has(tz), showOpen360: true, matrixSubjects })}`;
     table.querySelectorAll('tr[data-act="bagrutDrawerOpen"]').forEach(el => el.classList.toggle('bg-drawer-row-active', el.dataset.tz === tz));
@@ -629,6 +630,7 @@
     }
     this.renderFreshnessBar('bagrut');
     this.syncBagrutScope();
+    if (!st.targets && ['י', 'יא'].includes(this.state.filters.grade) && st.chip === 'eligible') st.chip = 'all';
     const scope = this.bagrutScopeInfo(this.dashRows());
     this.renderBagrutScope(scope);
     const rows = st.targets ? scope.rows.filter(r => r.t.gradeKey === 'יב') : scope.rows;
@@ -728,13 +730,15 @@
         <span>${label}</span><span class="bagrut-tab-count">${count}</span></button>`;
     };
     const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
-    const eligible = stats.total > 0 || !paceRows.length ? `<div class="bagrut-summary-metric">
+    const juniorGrade = ['י', 'יא'].includes(this.state.filters.grade);
+    const eligible = !juniorGrade && (stats.total > 0 || !paceRows.length) ? `<div class="bagrut-summary-metric">
       ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis, stats.counted)}
       ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis, stats.counted)}</div>` : '';
     let pace = '';
-    if (paceRows.length) {
+    if (paceRows.length || juniorGrade) {
       const ps = BagrutAdvisor.summarizePace(paceRows.map(r => r.ev));
-      const grades = Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
+      const grades = juniorGrade ? Util.gl(this.state.filters.grade) :
+        Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
       const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}); שאלוני שכבות עליונות אינם נספרים כחוסר`;
       pace = `<div class="bagrut-summary-metric">
         ${pct(ps.pctExSpecialEd, `תקינות צבירה (${grades}) · ללא חנ"מ`, paceBasis, ps.counted)}
@@ -748,7 +752,7 @@
         ${quick('all', 'gstat-ok', 'הכל')}
         ${quick('risk', 'gstat-bad', 'בסיכון')}
         ${quick('completion', 'gstat-amber', 'השלמה או החלטה')}
-        ${quick('eligible', 'gstat-ok', 'זכאים')}
+        ${juniorGrade ? '' : quick('eligible', 'gstat-ok', 'זכאים')}
         ${quick('pinned', 'gstat-violet', 'במעקב צמוד')}
         ${paceRows.length ? quick('pace:on_track', 'gstat-ok', 'תקין לקצב') + quick('pace:not_started', 'gstat-violet', 'טרם החלו') : ''}
         ${rows.some(r => r.ev.tier === 5) ? quick('track12', 'gstat-violet', '12 שנ"ל') : ''}
@@ -950,22 +954,24 @@
     const matrixCache = new Map();
     const matrixRows = new Map();
     const forecastCell = (t, value) => ({
-      text: `~${Util.fmt(value, 1)}`,
+      text: `שוטף ${Math.round(value)}`,
       state: Config.withRulesForGrade(t.gradeKey, () => SignalEngine.isPassingScore(value)) ? 'ok' : 'bad'
     });
-    const addForecast = (cell, t, value, reportedText, blocked) => {
+    const addForecast = (cell, t, value, hasReported, points, blocked) => {
       const forecast = forecastCell(t, value);
-      if (blocked || reportedText) {
-        if (blocked) cell.reportedText = reportedText;
-        else { cell.text = reportedText; cell.state = 'partial'; }
-        cell.forecastExtra = forecast;
+      if (hasReported || (blocked && forecast.state !== 'bad')) {
+        if (!blocked && points != null && cell.state === 'neutral') {
+          cell.text = `${points} נק׳`;
+          cell.state = 'partial';
+        }
+        cell.forecastSecondary = forecast.text;
       } else {
         cell.text = forecast.text;
         cell.state = forecast.state;
         cell.forecastOnly = true;
       }
       cell.detail += ` | תחזית מציון שוטף: ${Util.fmt(value, 1)}`;
-      cell.ariaLabel = `${cell.label}: ${cell.text}${cell.reportedText ? ` · ${cell.reportedText}` : ''}${cell.forecastExtra ? ` · ${forecast.text}` : ''} · תחזית מציון שוטף`;
+      cell.ariaLabel = `${cell.label}: ${cell.text}${cell.forecastSecondary ? ` · ${forecast.text}` : ''} · תחזית מציון שוטף`;
       return cell;
     };
     const majorPoints = (t, cand) => {
@@ -998,7 +1004,8 @@
       const cell = { id, label, state, text, detail, ariaLabel: `${label}: ${text}` };
       const usesCurrent = sim.useCurrent && !s.exempt && Number.isFinite(s.current) &&
         (s.source === 'current' || s.filled.length > 0 || s.comps.some(comp => comp.magenForecast));
-      return usesCurrent ? addForecast(cell, t, s.current, points == null ? '' : `${points} נק׳`, blocked) : cell;
+      const hasReported = s.comps.some(comp => comp.state === 'num' || comp.state === 'pass' || comp.failed || comp.blocked);
+      return usesCurrent ? addForecast(cell, t, s.current, hasReported, points, blocked) : cell;
     };
     const majorCell = (t, ev) => {
       const c = this.majorDisplayCell(ev);
@@ -1017,12 +1024,13 @@
       const cell = { id: 'major', label: majorLabel, state, text, detail, ariaLabel: `מגמה: ${text}`, more };
       const usesCurrent = sim.useCurrent && cand && !cand.exempt && Number.isFinite(cand.current) &&
         (cand.source === 'current' || (cand.bagrut != null && cand.missing.length > 0 && cand.grade != null));
-      return usesCurrent ? addForecast(cell, t, cand.current, points == null ? '' : `${points} נק׳`, blocked) : cell;
+      const hasReported = cand && (cand.bagrut != null || cand.bagrutPass || cand.failed || cand.blocked);
+      return usesCurrent ? addForecast(cell, t, cand.current, hasReported, points, blocked) : cell;
     };
     const badge = (text, state, forecast = false) => `<span class="bagrut-cell bagrut-cell-${state}${state === 'bad' ? ' score-alert' : ''}${forecast ? ' bagrut-cell-forecast' : ''}">${E(text)}</span>`;
     const renderCell = cell => cell.noData ? '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>' :
       cell.plain ? '<td>—</td>' :
-      `<td class="mx-cell" ${tip(cell.detail)} aria-label="${E(cell.ariaLabel)}">${badge(cell.text, cell.state, cell.forecastOnly)}${cell.reportedText ? ` ${badge(cell.reportedText, 'partial')}` : ''}${cell.forecastExtra ? ` ${badge(cell.forecastExtra.text, cell.forecastExtra.state, true)}` : ''}${cell.more ? ` <span class="bagrut-more">+${cell.more}</span>` : ''}</td>`;
+      `<td class="mx-cell" ${tip(cell.detail)} aria-label="${E(cell.ariaLabel)}">${badge(cell.text, cell.state, cell.forecastOnly)}${cell.more ? ` <span class="bagrut-more">+${cell.more}</span>` : ''}</td>`;
     const status = (ev, signal) => {
       if (ev.tier === 5) return '<span class="bagrut-status bagrut-status-neutral">מסלול 12 שנות לימוד</span>';
       if (isUnknown(signal)) return UI.overallBadge('unknown');
@@ -1056,7 +1064,7 @@
     return `<div class="bagrut-sort" role="group" aria-label="מיון חניכים"><span>מיון לפי:</span>${sortButton('tier', 'חומרת סיכון')}${sortButton('class', 'כיתה')}${sortButton('name', 'שם')}</div>
       <table class="grid mx bagrut-grid w-full text-center"><thead><tr><th>חניך</th>${showClass ? '<th>כיתה</th>' : ''}<th>סטטוס זכאות / צבירה</th><th>מה נדרש</th>${BAGRUT_CORE.map(coreHead).join('')}<th>${E(majorLabel)}</th></tr></thead>
       <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>
-      <div class="bagrut-legend"><span><i class="bagrut-cell-ok"></i> עבר</span><span><i class="bagrut-cell-bad"></i> חסם פעיל</span><span><i class="bagrut-cell-partial"></i> נקודות שנצברו</span><span><i class="bagrut-cell-neutral"></i> לומד / אין נתון</span>${sim.useCurrent ? '<span><i class="bagrut-cell-ok bagrut-cell-forecast"></i> ציון שוטף (תחזית)</span>' : ''}</div>`;
+      <div class="bagrut-legend"><span><i class="bagrut-cell-ok"></i> עבר</span><span><i class="bagrut-cell-bad"></i> חסם פעיל</span><span><i class="bagrut-cell-partial"></i> נקודות שנצברו</span><span><i class="bagrut-cell-neutral"></i> לומד / אין נתון</span>${sim.useCurrent ? '<span><span class="bagrut-cell bagrut-cell-ok bagrut-cell-forecast">שוטף 85</span> תחזית</span>' : ''}</div>`;
   },
 
   /** חלון מידע צף (ריחוף / לחיצה / מקלדת) לפירוט תא בגיליון השליטה */
