@@ -463,7 +463,7 @@
     modeBox.innerHTML = early
       ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div><div class="weak-controls">
         <div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div></div>
-        <button type="button" class="btn btn-ghost btn-sm weak-sheet-button" data-act="sadinMode" data-mode="full">סדין מלא</button>`
+        <button type="button" class="btn btn-ghost btn-sm weak-sheet-button" data-act="sadinMode" data-mode="full">סדין מלא</button><span class="weak-quality-slot"></span>`
       : `<button type="button" class="btn btn-ghost btn-sm" data-act="sadinMode" data-mode="early">חזרה למוקדי חולשה</button>`;
     if (early && home) {
       const controls = modeBox.querySelector('.weak-controls');
@@ -579,8 +579,9 @@
     const teacherRows = model.teachers.filter(t => t.subject === subject).sort((a, b) => natural(a.name, b.name)).map(t =>
       `<tr><th scope="row">${E(t.name)}</th><td>${mean(t.scores)}</td><td>${t.total ? Math.round(t.fail / t.total * 100) : 0}%</td><td>${t.uncertain && !t.missed ? '—' : t.missed}</td></tr>`).join('');
     const signals = SignalEngine.computeAll(this.state.sim).byTz;
-    const quality = GroupAnalyzer.unmatchedIds().some(item => item.sources.includes('סדין ציונים')) ||
-      roster.some(t => signals.get(t.tz).dataQuality.some(f => f.id === 'data.sadin_not_enrolled'));
+    const unmatched = GroupAnalyzer.unmatchedIds().some(item => item.sources.includes('סדין ציונים'));
+    const notEnrolled = roster.some(t => signals.get(t.tz).dataQuality.some(f => f.id === 'data.sadin_not_enrolled'));
+    const quality = unmatched || notEnrolled;
     const kpi = (label, value, note) => `<section class="card weak-kpi"><h2>${label}</h2><strong>${value}</strong><p>${note}</p></section>`;
     const detail = selected ? (() => {
       const students = selected.students.filter(s => s.risk).sort((a, b) => natural(a.t.name, b.t.name));
@@ -594,14 +595,20 @@
     const prereqs = [...prerequisitesByGrade(roster).values()];
     const incompleteGroups = prereqs.some(p => !p.hasGroups);
     const incompleteSadin = prereqs.some(p => !p.hasSadin);
+    const notices = [
+      model.uncertain || incompleteGroups ? 'לא ניתן לקבוע החמצות ללא שיבוץ מאומת; הנתונים עשויים להיות חלקיים.' : '',
+      incompleteSadin ? 'חסרים נתוני ציונים לחלק מהשכבות; הנתונים עשויים להיות חלקיים.' : '',
+      unmatched ? 'קיימים חניכים בקובץ הציונים שאינם במצבת.' : '',
+      notEnrolled ? 'קיימים ציונים ללא שיבוץ מאומת לקבוצה.' : ''
+    ].filter(Boolean);
+    const qualitySlot = document.querySelector('#sadin-mode .weak-quality-slot');
+    if (qualitySlot) qualitySlot.innerHTML = notices.length
+      ? `<button type="button" class="badge ${quality ? 'gate-warn' : 'gate-off'} weak-quality" data-act="openDataQuality" title="${E(notices.join(' '))}" aria-label="${E(notices.join(' '))}">${quality ? 'לבדיקה' : 'מידע חסר'}</button>` : '';
     setHtml('sadin-table', `<div class="weak-kpis">
       ${kpi('ממוצע שכבתי', mean(model.averages), 'ממוצע חניכים עם ציונים בסינון הנוכחי')}
       ${kpi('נכשלים בשוטף', model.failed, 'חניכים עם ממוצע נכשל, ללא החמצה בלבד')}
       ${kpi('אירוע הערכה שהוחמץ', !model.missed && (model.uncertain || incompleteGroups) ? '—' : model.missed, 'אירועים עם שיבוץ מאומת בלבד')}
       ${kpi('כיתות בסיכון', `${model.riskyClasses} מתוך ${model.classes.length}`, `שליש עליון מתוך ${model.classes.length} כיתות לפי שיעור סיכון בכל שכבה`)}</div>
-      ${model.uncertain || incompleteGroups ? '<p class="weak-notice">לא ניתן לקבוע החמצות ללא שיבוץ מאומת; הנתונים עשויים להיות חלקיים.</p>' : ''}
-      ${incompleteSadin ? '<p class="weak-notice">חסרים נתוני ציונים לחלק מהשכבות; הנתונים עשויים להיות חלקיים.</p>' : ''}
-      ${quality ? '<button type="button" class="badge gate-warn weak-quality" data-act="openDataQuality">איכות נתונים · לבדיקה</button>' : ''}
       <div class="weak-layout"><div class="weak-main"><section class="card weak-card"><h2>מפת חום: כיתה × מקצוע</h2>
         <p class="weak-muted">אחוז החניכים בסיכון מתוך החניכים עם נתונים במקצוע; מדגם קטן משלושה מוצג כמספר חניכים.</p>
         <div class="weak-scroll"><table class="weak-table"><thead><tr><th scope="col">כיתה</th>${model.subjects.map((s, index) => `<th scope="col"${separator(index)}>${E(s)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>

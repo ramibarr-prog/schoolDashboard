@@ -26,7 +26,9 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-kpi strong { display: block; margin: .35rem 0; color: var(--forest); font-size: 1.6rem; line-height: 1.2; }
 .weak-kpi p { color: var(--muted); font-size: .75rem; }
 .weak-notice { margin: .5rem 0; color: var(--muted); font-size: .8rem; }
-.weak-quality { cursor: pointer; margin-bottom: .75rem; }
+.weak-quality-slot { flex-shrink: 0; }
+.weak-quality-slot:empty { display: none; }
+.weak-quality { cursor: pointer; font-size: .7rem; }
 .weak-layout { display: grid; grid-template-columns: minmax(0, 68fr) minmax(0, 32fr); gap: .75rem; align-items: start; }
 .weak-main { min-width: 0; display: grid; gap: .75rem; }
 .weak-card { min-width: 0; padding: 1rem; }
@@ -101,6 +103,13 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 #localControls:has(> .bagrut-toolbar:not(.hidden)) .bagrut-controls > * { white-space: nowrap; }
 #mainContent:has(> #localControls > .bagrut-toolbar:not(.hidden)) { padding-top: .5rem; }
 #panel-bagrut > :not([hidden]) ~ :not([hidden]) { margin-top: .35rem; }
+@media (min-width: 1024px) {
+  #mainContent:has(> #panel-bagrut:not([hidden])) { display: flex; flex-direction: column; min-height: 0; }
+  #mainContent:has(> #panel-bagrut:not([hidden])) > #localControls { flex-shrink: 0; }
+  #panel-bagrut:not([hidden]) { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+  #panel-bagrut:not([hidden]) > :not(#bagrut-table) { flex-shrink: 0; }
+  #panel-bagrut #bagrut-table { flex: 1 1 auto; min-height: 12rem; max-height: none !important; }
+}
 .bagrut-quality { font-size: .7rem; }
 .bagrut-legacy-scope { display: none; }
 .bagrut-tool, .bagrut-simulation-slot summary { border-style: dashed; }
