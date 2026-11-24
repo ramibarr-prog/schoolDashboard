@@ -151,6 +151,102 @@ window.fetch = (input, options) => {
   const colIndex = (table, label) => [...table.querySelectorAll('thead th')].findIndex(th => th.textContent.trim().includes(label));
   const cellOf = (table, tz, label) => { const tr = rowFor(table, tz), i = colIndex(table, label); return tr && i >= 0 ? tr.children[i] : null; };
   const tzsIn = table => [...new Set([...table.querySelectorAll('button[data-act="openProfile"][data-tz]')].map(b => b.dataset.tz))].sort();
+  const placementCategories = ['missing', 'missing_major', 'duplicate', 'suspect'];
+  const checkPlacementCategories = (app, am, label) => {
+    const allIds = new Set(), allFindings = [];
+    for (const cat of placementCategories) {
+      const card = $id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"]`);
+      check(!!card, `${label}: ${cat} category exists`);
+      if (!card) continue;
+      const items = am.rows.filter(r => r.category === cat);
+      const ids = [...new Set(items.map(r => r.tz))].sort();
+      same(Number(card.querySelector('.n').textContent), ids.length, `${label}/${cat}: unique-student count`);
+      check(card.querySelector('.s').textContent.includes(`${items.length} חריגות`), `${label}/${cat}: finding count`);
+      app.acts.anCat.call(app, card);
+      same($id('groups-kpis').querySelector(`[data-cat="${cat}"]`).getAttribute('aria-pressed'), 'true', `${label}/${cat}: selected`);
+      const table = $id('groups-table');
+      same(tzsIn(table.querySelector('tbody')), ids, `${label}/${cat}: exact student set`);
+      ids.forEach(tz => {
+        allIds.add(tz);
+        const row = rowFor(table, tz), findings = items.filter(r => r.tz === tz);
+        if (!row) return;
+        same(parseInt(row.children[3].textContent, 10), findings.length, `${label}/${cat}/${tz}: finding count`);
+        findings.forEach(item => {
+          const subject = cat === 'missing_major' ? GroupAnalyzer.MAJOR_KEY : item.subject;
+          check([...row.querySelectorAll('[data-act="inspectGroups"]')].some(b => b.dataset.subject === subject && b.textContent.includes(item.subject)),
+            `${label}/${cat}/${tz}: finding and inspection action ${item.subject}`);
+        });
+      });
+      allFindings.push(...items);
+    }
+    same([...allIds].sort(), [...am.byTrainee.keys()].sort(), `${label}: union of category students`);
+    same(allFindings.length, am.total, `${label}: category finding partition`);
+    same(allIds.size, am.studentsCount, `${label}: unique students across categories`);
+  };
+  const checkWeaknessDestination = (app, expected, label) => {
+    const actual = SadinView.getHotspotsSummary.call(app, app.filtered());
+    same(actual.riskStudentTzs.slice().sort(), expected.riskStudentTzs.slice().sort(), `${label}: complete risk population`);
+    same(actual.riskStudentTzs.slice().sort(), independentWeaknessRiskTzs(app), `${label}: complete risk population matches grade events and active rules`);
+    same([actual.riskStudentsCount, actual.riskClassesCount, actual.totalClassesCount, actual.hotspotsCount],
+      [expected.riskStudentsCount, expected.riskClassesCount, expected.totalClassesCount, expected.hotspotsCount], `${label}: summary counts`);
+    const kpis = [...$id('sadin-table').querySelectorAll('.weak-kpi strong')].map(el => el.textContent.trim());
+    const incompleteGroups = app.filtered().some(t => !SignalEngine.prerequisitesFor(t.gradeKey).hasGroups);
+    same(kpis, [
+      expected.average == null ? '—' : Util.fmt(expected.average, 1),
+      String(expected.model.failed),
+      !expected.model.missed && (expected.model.uncertain || incompleteGroups) ? '—' : String(expected.model.missed),
+      `${expected.riskClassesCount} מתוך ${expected.totalClassesCount}`
+    ], `${label}: four destination KPIs`);
+    const buttons = [...$id('sadin-table').querySelectorAll('.weak-ranking button')].slice(0, 3);
+    same(buttons.map(b => [b.dataset.class, b.dataset.subject]), expected.hotspots.map(c => [c.cls, c.subject]), `${label}: top three destination hotspots`);
+    buttons.forEach((b, i) => {
+      const c = expected.hotspots[i];
+      same(b.querySelector('strong').textContent.trim(), c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}%`, `${label}: hotspot value ${i + 1}`);
+    });
+    SadinView.weaknessRiskToggle.call(app);
+    const preview = document.querySelector('#weak-risk-popover .weak-risk-preview');
+    check(preview && preview.textContent.includes(`${expected.riskClassesCount} מתוך ${expected.totalClassesCount} כיתות בסיכון · ${expected.riskStudentsCount} חניכים`), `${label}: risk-rule preview matches complete population`);
+    SadinView.weaknessRiskClose.call(app);
+  };
+  const checkWeaknessCard = (card, expected, label) => {
+    same(parseInt(card.querySelector('.ov-value').textContent, 10), expected.riskStudentsCount, `${label}: overview risk students`);
+    check(card.textContent.includes(`${expected.riskClassesCount} מתוך ${expected.totalClassesCount} כיתות בסיכון`) &&
+      card.textContent.includes(`${expected.hotspotsCount} מוקדים בוערים`), `${label}: overview class and hotspot counts`);
+    const buttons = [...card.closest('.ov-task').querySelectorAll('.ov-hotspot')];
+    same(buttons.map(b => [b.dataset.class, b.dataset.subject]), expected.hotspots.map(c => [c.cls, c.subject]), `${label}: overview top three hotspots`);
+    buttons.forEach((b, i) => {
+      const c = expected.hotspots[i];
+      same(b.querySelector('strong').textContent.trim(), c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}% בסיכון`, `${label}: overview hotspot value ${i + 1}`);
+    });
+  };
+  const sheetRiskFacts = (row, s) => Config.withRulesForGrade(row.t.gradeKey, () => {
+      const scored = s.events.filter(e => e.score != null);
+      const counted = scored.some(e => e.weight > 0) ? scored.filter(e => e.weight > 0) : scored;
+      const missedOnlyZero = s.avg === 0 && counted.length > 0 && counted.every(e => e.score === 0 && s.missed.has(e.key));
+      const fail = s.avg != null && !missedOnlyZero && !SignalEngine.isPassingScore(s.avg, { social: Util.norm(s.name) === Util.norm('מעורבות חברתית') });
+      const missed = SignalEngine.prerequisitesFor(row.t.gradeKey).hasGroups ? [...s.missed.values()].filter(event => {
+        const group = Store.groups.get(event.groupId);
+        return group && group.inFile && group.members.has(row.t.tz);
+      }).length : 0;
+      return { fail, missed };
+  });
+  const confirmedSheetRisks = row => [...row.subjects.values()].filter(s => {
+    const facts = sheetRiskFacts(row, s);
+    return facts.fail || facts.missed;
+  });
+  const independentWeaknessRiskTzs = app => {
+    const rules = app.state.sadin.weakRiskRules;
+    return GroupAnalyzer.sadinSheet(app.filtered(), app.state.sadin).filter(row => {
+      const subjects = [...row.subjects.values()].filter(s =>
+        ![s.name, ...s.entries.map(e => e.displaySubject || e.subject)].some(name => {
+          const text = Util.norm(name);
+          return text === 'חינוך' || /^(?:מגדר|חנג|חינוך גופני)(?:$|[\s(/-])/.test(text);
+        }));
+      const facts = subjects.map(s => sheetRiskFacts(row, s));
+      return facts.filter(f => f.fail).length >= rules.minFails ||
+        rules.minMissed > 0 && facts.reduce((n, f) => n + f.missed, 0) >= rules.minMissed;
+    }).map(r => r.t.tz).sort();
+  };
   const kpiCounts = () => [...$id('bagrut-kpis').querySelectorAll('button.gstat[data-chip]')].map(b => ({ value: b.dataset.chip, n: Number(b.querySelector('span:last-child').textContent) }));
   const optionCounts = select => [...select.options].map(o => ({ value: o.value, n: Number((/\((\d+)\)\s*$/.exec(o.textContent) || [])[1]) }));
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
@@ -290,7 +386,8 @@ window.fetch = (input, options) => {
         near(first.s.final, 56.1, 'Final with weights 30/70');
         check(first.s.status === 'pass' && first.ev.tier === 1 && first.ev.cells.history.text === '56', 'Before: pass, tier 1, advisor cell 56');
         app.renderBagrutPanel();
-        check(cellOf($id('bagrut-table'), tz, 'היסטוריה').textContent.trim() === '56', 'Before: the eligibility table must show 56');
+        const beforeCell = cellOf($id('bagrut-table'), tz, 'היסטוריה');
+        same([beforeCell.textContent.trim(), beforeCell.dataset.tip], ['עבר', app.subjectDisplayCell(first.ev, 'history').tip], 'Before: pass badge and advisor detail');
         const res = Config.updateRules(r => { const h = r.coreSubjects.find(s => s.id === 'history'); h.components[0].weight = 40; h.components[1].weight = 60; });
         check(res.ok, 'The weight change must be accepted');
         app.evals.clear();
@@ -300,7 +397,7 @@ window.fetch = (input, options) => {
         check(BagrutEngine.evaluate(tz, FULL).tier === 2, 'A fresh engine evaluation must agree');
         app.renderBagrutPanel();
         const cell = cellOf($id('bagrut-table'), tz, 'היסטוריה');
-        check(cell && /54/.test(cell.textContent) && /קיזוז/.test(cell.textContent), 'After: the eligibility table must show 54 + קיזוז');
+        same([cell.textContent.trim(), cell.dataset.tip], ['עבר בקיזוז', app.subjectDisplayCell(second.ev, 'history').tip], 'After: compensation badge and advisor detail');
         app.state.profileTz = tz;
         app.renderTrainee360Panel();
         check(/קיזוז/.test($id('profBody').textContent), 'After: the 360 card must mention the compensation');
@@ -532,8 +629,8 @@ window.fetch = (input, options) => {
         const app = newApp();
         app.renderGroupsPanel();
         const count = cat => Number(($id('groups-kpis').querySelector(`.an-card[data-cat="${cat}"] .n`) || {}).textContent);
-        same([count('all'), count('missing'), count('missing_major'), count('duplicate'), count('suspect')], [5, 1, 0, 2, 2], 'Anomaly cards on the screen');
-        check(count('all') === am.rows.length, 'The "all" card must equal the table rows');
+        same([count('missing'), count('missing_major'), count('duplicate'), count('suspect')], [1, 0, 2, 2], 'Anomaly category cards on the screen');
+        checkPlacementCategories(app, app.placementAnomaliesModel(everyone), 'Group B');
         app.renderGroupDetail(g9001, [], () => false, g9001.cat);
         check(/מוצהר 29/.test($id('groups-detail').textContent) && /תפוסה: 8/.test($id('groups-detail').textContent), 'QA-11.6: the declared-count mismatch badge must be shown');
         noGarbage('groups');
@@ -578,7 +675,7 @@ window.fetch = (input, options) => {
         app.renderGroupsPanel();
         const card = $id('groups-kpis').querySelector('.an-card[data-cat="missing"]');
         check(card && /חסר במקצוע שבו לפחות 30% מהכיתה משובצים/.test(card.textContent), 'The missing card explains the 30% rule');
-        check(/\(בכיתה: 8 מתוך 10\)/.test($id('groups-table').textContent), 'The anomalies table shows "(בכיתה: 8 מתוך 10)"');
+        same(tzsIn($id('groups-table')), [T(109), T(110)], 'The missing category displays exactly the two pupils identified by the 8/10 model');
         check(errorsOf(app).length === 0, 'No render errors');
       });
 
@@ -734,11 +831,12 @@ window.fetch = (input, options) => {
       app.renderGroupsPanel();
       const table = () => $id('groups-table');
       const domRows = () => [...table().querySelectorAll('tbody tr')].filter(tr => tr.querySelector('[data-act="openProfile"]'));
+      const currentItems = am.rows.filter(r => r.category === 'missing');
       const baseline = domRows();
-      same(baseline.length, am.studentsCount, 'One row per student');
+      same(baseline.length, new Set(currentItems.map(r => r.tz)).size, 'One row per student in the selected category');
       check(am.total > am.studentsCount, 'Fixture includes a student with multiple findings');
       baseline.forEach(tr => {
-        const id = tr.querySelector('[data-act="openProfile"]').dataset.tz, items = am.byTrainee.get(id).items;
+        const id = tr.querySelector('[data-act="openProfile"]').dataset.tz, items = currentItems.filter(r => r.tz === id);
         same(parseInt(tr.children[3].textContent, 10), items.length, `${id}: anomaly count`);
         items.forEach(item => check(tr.children[2].textContent.includes(item.subject) &&
           [...tr.querySelectorAll('[data-act="inspectGroups"]')].some(b => b.dataset.subject === item.subject),
@@ -762,17 +860,17 @@ window.fetch = (input, options) => {
         for (const dir of [1, -1]) {
           app.acts.grpAnomSort.call(app, sortBtn(col));
           const rendered = domRows().map(tr => tr.querySelector('[data-act="openProfile"]').dataset.tz);
-          const sorted = app.sortAnomalyRows(am.rows, col, dir);
+          const sorted = app.sortAnomalyRows(currentItems, col, dir);
           check(sorted.every((r, i) => !i || natural(sortValue(sorted[i - 1], col), sortValue(r, col)) * dir <= 0), `${col}/${dir}: independent primary-key order`);
           const expected = [...new Set(sorted.map(r => r.tz))];
           same(rendered, expected, `${col}/${dir}: grouped row ordering matches sorted findings`);
           same(ariaOf(col), ['name', 'cls'].includes(col) ? (dir === 1 ? 'ascending' : 'descending') : 'true', `${col}/${dir}: active accessibility state`);
           check(sortBtn(col).textContent.includes(dir === 1 ? '▲' : '▼'), `${col}/${dir}: sort arrow`);
-          same([...rendered].sort(), [...am.byTrainee.keys()].sort(), `${col}/${dir}: all students retained`);
+          same([...rendered].sort(), [...new Set(currentItems.map(r => r.tz))].sort(), `${col}/${dir}: all category students retained`);
         }
       }
 
-      same(Number($id('groups-kpis').querySelector('[data-cat="all"] .n').textContent), am.studentsCount, 'All-anomalies KPI is unchanged by sorting');
+      checkPlacementCategories(app, am, 'Sorted placement categories');
       app.acts.anCat.call(app, $id('groups-kpis').querySelector('[data-cat="duplicate"]'));
       const duplicateRows = am.rows.filter(r => r.category === 'duplicate');
       same(tzsIn(table().querySelector('tbody')), [...new Set(duplicateRows.map(r => r.tz))].sort(), 'Duplicate filter preserves its exact student set');
@@ -901,8 +999,8 @@ window.fetch = (input, options) => {
         const placement = $id('overview-body').querySelector('.ov-card[data-go="groups"]');
         const students = parseInt(placement.querySelector('.ov-value').textContent, 10);
         app.acts.ovGo.call(app, placement);
-        same(students, Number($id('groups-kpis').querySelector('.an-card[data-cat="all"] .n').textContent), 'Placement task matches destination unique students');
-        same(tzsIn($id('groups-table').querySelector('tbody')), [...model.anomaliesModel.byTrainee.keys()].sort(), 'Placement task opens exactly its student set');
+        same(students, model.anomaliesModel.studentsCount, 'Placement task matches the model unique students');
+        checkPlacementCategories(app, model.anomaliesModel, 'Placement task destination');
       });
 
       await part('INV-5 / QA-10.2 / QA-10.3 / QA-10.7 every student: engine, eligibility table and 360 card agree', async () => {
@@ -927,20 +1025,66 @@ window.fetch = (input, options) => {
           ev.subjects.forEach((s, i) => {
             const cell = cellOf(table, tz, s.name), cell360 = rows360[i];
             if (!cell || !cell360) { check(false, `${label}/${s.name}: cell missing (table ${!!cell}, 360 ${!!cell360})`); return; }
-            const shown = cell.textContent.trim(), number = /^\d+/.exec(shown), missing = /חסר \d+%/.exec(shown);
-            if (missing) {
-              const number360 = /^\d+/.exec(cell360[5]);
-              check((number ? number[0] : null) === (number360 ? number360[0] : null) && cell360[5].includes(missing[0]), `${label}/${s.name}: partial subject: the table shows "${shown}" but the 360 card shows "${cell360[5]}"`);
-            } else if (number) check(cell360[5] === number[0], `${label}/${s.name}: the table shows ${number[0]} but the 360 card shows "${cell360[5]}"`);
+            const shown = cell.textContent.trim(), blocked = ev.tier !== 5 && (app.tierBased(ev)
+              ? ev.blockers.some(b => b.gate === 1 && !b.info && b.k !== 'units' && b.text.includes(s.name))
+              : ev.paceInfo.blockedSubjects.includes(s.name));
+            const numeric = s.comps.filter(c => c.state === 'num'), weight = s.comps.reduce((sum, c) => sum + c.weight, 0);
+            const points = numeric.length && weight ? Math.round(numeric.reduce((sum, c) => sum + (c.reportedNum ?? c.num) * c.weight, 0) / weight) : null;
+            if (blocked) same(shown, 'חסם', `${label}/${s.name}: active blocker badge`);
+            else if ((s.incomplete || s.partial) && points != null) {
+              same(shown, `${points} נק׳`, `${label}/${s.name}: accumulated points from engine component weights`);
+              check(cell.dataset.tip.includes(`נצברו ${points} נקודות`), `${label}/${s.name}: tooltip identifies accumulated points`);
+            } else if ((s.status === 'pass' || s.compApplied) && s.source === 'bagrut' && !s.forecast && !s.comps.some(c => c.magenForecast)) {
+              same(shown, s.compApplied ? 'עבר בקיזוז' : 'עבר', `${label}/${s.name}: passed/compensated badge`);
+            } else if (s.exempt) same(shown, 'פטור', `${label}/${s.name}: exemption badge`);
+            else same(shown, s.group || s.learning ? 'לומד' : '—', `${label}/${s.name}: neutral badge`);
+            const display = app.subjectDisplayCell(ev, s.id);
+            check((cell.dataset.tip || '').startsWith(display.tip), `${label}/${s.name}: tooltip matches advisor details`);
+            const profileValue = s.incomplete ? display.text : s.reportedScore != null && (s.pending.length || s.unresolved.length) ? Util.fmt(s.reportedScore, 0) : s.adj != null ? Util.fmt(s.adj, 0) : null;
+            if (profileValue != null && !s.exempt) check(cell360[5].includes(profileValue), `${label}/${s.name}: 360 value matches engine/advisor`);
             s.comps.forEach(c => check((cell.dataset.tip || '').includes(`שאלון ${c.code}`) && profile360.innerHTML.includes(`שאלון ${c.code}`), `${label}/${s.name}: questionnaire ${c.code} must be detailed in both views`));
           });
 
-          const internalCell = [...tr.children].find((c, i) => i === colIndex(table, 'פנימיים'));
+          const signal = SignalEngine.computeForTrainee(tz, app.state.sim);
+          const noData = !signal.prereqs.hasBagrut && !(app.state.sim.useCurrent && signal.prereqs.hasSadin);
+          const breakdown = UI.buildBagrutBreakdown(t, ev, { noData, className: Config.classLabel(t.classKey) });
+          const required = tr.querySelector('.bg-drawer-required');
+          same(required.textContent.trim(), breakdown.cellSummary, `${label}: table summary equals shared breakdown`);
+          same(JSON.parse(required.dataset.breakdownLines), breakdown.tooltipLines, `${label}: tooltip equals shared breakdown`);
+          same(breakdown.totalUnits, breakdown.noData ? null : ev.totalUnits, `${label}: units match engine`);
+          const unitsLabel = breakdown.totalUnits == null ? 'לא ניתן לקבוע יח״ל' : breakdown.enforceUnits
+            ? `${breakdown.totalUnits} מתוך 21 יח״ל` : `${breakdown.totalUnits} יח״ל נצברו עד כה`;
+          check(badges.includes(unitsLabel), `${label}: 360 units match engine and breakdown`);
+          if (!breakdown.noData && !breakdown.isTrack12) {
+            const internalBlockers = [...new Set(ev.blockers.filter(b => !b.info && b.gate === 3)
+              .map(b => (ev.internals.find(i => b.text.includes(i.name)) || {}).name || b.text))];
+            same(breakdown.internals.map(i => i.name), internalBlockers, `${label}: internal blockers match engine`);
+            ev.subjects.forEach(subject => {
+              const isBlocked = ev.rank < 12 && !ev.manual
+                ? ev.paceInfo.failedList.some(x => x.subject === subject.name) ||
+                  ev.paceInfo.missingDueList.some(x => x.subject === subject.name) ||
+                  subject.comps.some(c => c.state === 'exempt' && ev.paceInfo.blockedSubjects.includes(subject.name))
+                : ev.blockers.some(b => !b.info && b.gate === 1 && b.k !== 'units' && (b.subject === subject.id || b.text.includes(subject.name)));
+              if (isBlocked) check(breakdown.subjects.some(s => s.name === subject.name && s.tags.length), `${label}: breakdown includes engine blocker ${subject.name}`);
+            });
+            check(badges.includes(`${breakdown.subjectCount} מקצועות חוסמים · ${breakdown.internalCount} חסמים פנימיים`), `${label}: 360 blocker counts`);
+          }
+          BagrutView.bagrutDrawerOpen.call(app, tr);
+          const drawer = $id('bagrut-breakdown-drawer'), metrics = [...drawer.querySelectorAll('.bg-bd-metric strong')].map(el => el.textContent);
+          same(metrics, [breakdown.totalUnits == null ? '—' : breakdown.enforceUnits ? `${breakdown.totalUnits}/21` : String(breakdown.totalUnits),
+            breakdown.isTrack12 || breakdown.noData ? '—' : String(breakdown.subjectCount),
+            breakdown.isTrack12 || breakdown.noData ? '—' : String(breakdown.internalCount)], `${label}: drawer metrics match breakdown`);
+          same([...drawer.querySelectorAll('.bg-bd-subjects li strong')].map(el => el.textContent), breakdown.subjects.map(s => s.name), `${label}: drawer blocking subjects`);
+          breakdown.subjects.forEach(subject => subject.tags.forEach(tag => check(drawer.textContent.includes(tag.label), `${label}: drawer tag ${subject.name}/${tag.label}`)));
+          breakdown.internals.forEach(item => check(drawer.textContent.includes(item.name), `${label}: drawer internal blocker ${item.name}`));
+          check(drawer.querySelector(`[data-act="openProfile"][data-tz="${tz}"]`) && tr.classList.contains('bg-drawer-row-active'), `${label}: drawer opens for the selected student`);
+          BagrutView.bagrutDrawerClose.call(app);
           const internal360 = [...profile360.querySelectorAll('ul.space-y-1\\.5 li')].map(li => li.textContent);
-          const tableText = internalCell ? internalCell.textContent.trim() : '';
-          check((tableText === '✓ תקין') === internal360.every(x => /✓ עבר|✓ פטור|הוזנח/.test(x)), `${label}: internal units: table "${tableText}" vs 360 ${JSON.stringify(internal360)}`);
-          check((tableText === 'לא עבר') === internal360.some(x => /לא עבר/.test(x)), `${label}: explicit internal failure must appear in both views`);
           check(ev.internals.length === internal360.length, `${label}: the same internal units in both views`);
+          ev.internals.forEach((item, i) => {
+            const expected = item.explicitFail ? 'לא עבר' : item.exempt ? '✓ פטור' : item.done ? '✓ עבר' : item.ignored ? 'הוזנח בסימולציה' : typeof item.value === 'number' ? `ציון ${item.value} – לבדיקה` : 'בתהליך';
+            check(internal360[i].includes(item.id === 'pe' ? 'חינוך גופני' : item.name) && internal360[i].includes(expected), `${label}: internal ${item.name} matches engine`);
+          });
 
           const codes360 = [...profile360.querySelectorAll('#profile-more tbody tr')].map(r => r.children[0].textContent.trim()).filter(x => /^\d+$/.test(x)).sort();
           same(codes360, Store.attemptsOf(tz).map(a => String(a.code)).sort(), `${label}: bagrut attempts in the 360 card`);
@@ -1305,9 +1449,7 @@ window.fetch = (input, options) => {
               } else check(cards()[0].textContent.includes('לא ניתן לקבוע'), `${label}: incomplete groups shown as unknown`);
               app.renderGroupsPanel();
               if (groupsReady) {
-                const groupsCard = $id('groups-kpis').querySelector('[data-cat="all"]');
-                same(groupsCard.querySelector('.n').textContent, String(am.studentsCount), `${label}: groups students`);
-                check(groupsCard.querySelector('.s').textContent.includes(`${am.total} חריגות`), `${label}: groups anomaly rows`);
+                checkPlacementCategories(app, am, `${label}/${showRoutineDuplicates}`);
               }
               const t = list[0], mine = app.placementAnomaliesModel([t]);
               app.state.profileTz = t.tz;
@@ -1340,14 +1482,16 @@ window.fetch = (input, options) => {
             app.renderSadinPanel();
             const summary = app.sadinSummary(GroupAnalyzer.sadinSheet(list, {}));
             same([m.avg, m.clean], [summary.avg, summary.cleanCount], `${label}: card 2 summary`);
+            same(summary.cleanCount, m.sheet.filter(r => r.overall != null && !confirmedSheetRisks(r).length).length, `${label}: clean count uses passing scores and verified missed events`);
             hasSummary(summary, list.length, label);
             app.state.sadin.strip = 'multiple';
             app.renderSadinPanel();
-            same(tzsIn($id('sadin-table')), m.multi.map(r => r.t.tz).sort(), `${label}: multiple destination ID set`);
+            const multipleRows = m.sheet.filter(r => confirmedSheetRisks(r).length >= 2);
+            same(tzsIn($id('sadin-table')), multipleRows.map(r => r.t.tz).sort(), `${label}: multiple destination ID set`);
             const multiple = optionCounts($id('sadinFilterSelect')).find(o => o.value === 'multiple');
-            same(multiple.n, m.multi.length, `${label}: multiple filter count`);
+            same(multiple.n, multipleRows.length, `${label}: multiple filter count`);
             check($id('sadinFilterSelect').selectedOptions[0].textContent.includes('2+ מקצועות בסיכון (שלילי/חסר)'), `${label}: multiple label`);
-            hasSummary(app.sadinSummary(m.multi), list.length, `${label}/multiple`);
+            hasSummary(app.sadinSummary(multipleRows), list.length, `${label}/multiple`);
 
             app.renderOverviewPanel();
             const risk = app.filterByChip(m.rows, 'notok').map(r => r.t.tz).sort();
@@ -1358,12 +1502,10 @@ window.fetch = (input, options) => {
             same(tzsIn($id('bagrut-table')), risk, `${label}: eligibility risk destination ID set`);
             app.renderOverviewPanel();
             const earlyCard = cards()[2];
-            const earlyIds = SadinView.earlyWarningRows(list).map(r => r.t.tz).sort();
-            const sadinReady = [...new Set(list.map(t => t.gradeKey))].every(g => SignalEngine.prerequisitesFor(g).hasSadin);
-            if (sadinReady) same(parseInt(value(earlyCard), 10), earlyIds.length, `${label}: early-warning count`);
-            else check(earlyCard.textContent.includes('לא ניתן לקבוע'), `${label}: incomplete sadin shown as unknown`);
+            const weakness = SadinView.getHotspotsSummary.call(app, list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
+            checkWeaknessCard(earlyCard, weakness, label);
             app.acts.ovGo.call(app, earlyCard);
-            same(tzsIn($id('sadin-table')), earlyIds, `${label}: exact early-warning destination IDs`);
+            checkWeaknessDestination(app, weakness, label);
             noGarbage(label);
             same(errorsOf(app), [], `${label}: no panel errors`);
           }
@@ -1386,7 +1528,7 @@ window.fetch = (input, options) => {
             app.renderSadinPanel();
             hasSummary(app.sadinSummary(GroupAnalyzer.sadinSheet(app.filtered(), {})), app.filtered().length, loaded);
             app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'multiple' } });
-            same(tzsIn($id('sadin-table')), [...att.tzSet].sort(), 'Grades-only attention destination');
+            same(tzsIn($id('sadin-table')), GroupAnalyzer.sadinSheet(app.filtered(), {}).filter(r => confirmedSheetRisks(r).length >= 2).map(r => r.t.tz).sort(), 'Grades-only destination uses confirmed sheet risks');
             world({ roster: fx.roster });
             app.renderSadinPanel();
             check($id('sadin-summary').classList.contains('hidden') && !$id('sadin-summary').textContent, 'Unloading grades clears stale summary');
@@ -1399,6 +1541,7 @@ window.fetch = (input, options) => {
         const m = app.overviewModel();
         same([m.anomaliesModel.total, m.anomaliesModel.studentsCount, m.attention.size, m.multi.length, m.avg, m.clean], [0, 0, 0, 0, null, 0], 'Empty overview metrics');
         app.state.filters.cls = 'י2';
+        app.state.sadin.mode = 'full';
         app.renderSadinPanel();
         hasSummary(app.sadinSummary([]), 0, 'Empty slice');
       });
@@ -1427,22 +1570,50 @@ window.fetch = (input, options) => {
       const expected = [T(1), T(2), T(3), T(6)].sort();
       same(SadinView.earlyWarningRows(app.overviewModel().list).map(r => r.t.tz).sort(), expected,
         'Relevant failures, missed events and social threshold only; routine and twelve-years excluded');
+      const weakness = SadinView.getHotspotsSummary.call(app, app.overviewModel().list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
+      same(weakness.riskStudentTzs.slice().sort(), [T(1), T(2), T(3), T(5), T(6)], 'Weakness model: verified absence, social threshold, routine exclusion and twelve-year student');
       app.renderOverviewPanel();
       const cards = [...$id('overview-body').querySelectorAll('button.ov-card')];
       same(cards.map(c => c.dataset.go), ['groups', 'bagrut', 'sadin'], 'Exactly three tasks in priority order');
-      same(parseInt(cards[2].querySelector('.ov-value').textContent, 10), expected.length, 'Card counts the exact early-warning population');
+      checkWeaknessCard(cards[2], weakness, 'Three-task board');
       Object.assign(app.state.sadin, { mode: 'full', subject: 'חינוך', teacher: 'מורה בדיקה', strip: 'fail' });
       Object.assign(app.state.filters, { track: 'אתגר', q: T(4) });
       app.acts.ovGo.call(app, cards[2]);
       same([app.state.sadin.mode, app.state.sadin.subject, app.state.sadin.teacher, app.state.sadin.strip], ['early', 'all', 'all', 'all'], 'Navigation resets stale local controls');
-      same(tzsIn($id('sadin-table')), expected, 'Card opens exactly the counted IDs');
+      checkWeaknessDestination(app, weakness, 'Three-task board');
+      app.state.sadin.weakRiskRules = { minFails: 2, minMissed: 0 };
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs, [], 'Two failures required and missed events disabled');
+      app.state.sadin.weakRiskRules = { minFails: 2, minMissed: 1 };
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs.slice().sort(), [T(2), T(3)], 'Stricter failure threshold retains confirmed missed events');
+      app.state.sadin.weakRiskRules = { minFails: 1, minMissed: 1 };
       same(errorsOf(app), [], 'No early-warning navigation error');
       world({ roster, sadin: sadinRows(events) });
       app.renderOverviewPanel();
       const noGroups = $id('overview-body').querySelector('[data-go="sadin"]');
+      const unverified = SadinView.getHotspotsSummary.call(app, app.overviewModel().list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
+      check(!unverified.riskStudentTzs.includes(T(3)), 'Unverified missed event does not place the student at risk');
+      checkWeaknessCard(noGroups, unverified, 'Missing groups');
+      check(noGroups.textContent.includes('החמצות ללא שיבוץ מאומת אינן נספרות'), 'Overview warns that unverified missed events are not counted');
       app.acts.ovGo.call(app, noGroups);
-      same(parseInt(noGroups.querySelector('.ov-value').textContent, 10), tzsIn($id('sadin-table')).length, 'Card and destination still agree without groups');
-      check($id('sadin-summary').textContent.includes('לא ניתן לקבוע שיבוץ'), 'Missing groups remain a neutral placement warning');
+      checkWeaknessDestination(app, unverified, 'Missing groups');
+      const notice = document.querySelector('#sadin-mode .weak-quality[data-act="openDataQuality"]');
+      check(notice && notice.title.includes('לא ניתן לקבוע החמצות ללא שיבוץ מאומת'), 'Missing groups remain a neutral tooltip warning');
+      app.state.sadin.mode = 'full';
+      app.renderSadinPanel();
+      const sheet = GroupAnalyzer.sadinSheet(app.filtered(), {});
+      const row = n => sheet.find(r => r.t.tz === T(n));
+      same([app.sadinSummary([row(3)]).cleanCount, app.sadinSummary([row(6)]).cleanCount, app.sadinSummary([row(7)]).cleanCount], [1, 0, 1], 'Full sheet: unverified absence, failing social score, passing social score');
+      const fourClasses = roster.map((t, i) => ({ ...t, homeroom: i < 3 ? 'יב1' : i === 4 || i === 5 ? 'יב2' : i === 3 ? 'יב3' : 'יב4' }));
+      world({ roster: fourClasses, groups, sadin: sadinRows(events) });
+      app.evals.clear();
+      const third = SadinView.getHotspotsSummary.call(app, app.overviewModel().list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
+      same([third.riskClassesCount, third.totalClassesCount], [2, 4], 'Top third includes exactly two risky classes out of four');
+      same(third.riskStudentTzs.slice().sort(), [T(1), T(2), T(3), T(5), T(6)], 'Risk population remains exact across classes');
+      app.renderOverviewPanel();
+      const thirdCard = $id('overview-body').querySelector('.ov-card[data-go="sadin"]');
+      checkWeaknessCard(thirdCard, third, 'Four classes');
+      app.acts.ovGo.call(app, thirdCard);
+      checkWeaknessDestination(app, third, 'Four classes');
       world({ roster, groups });
       app.renderOverviewPanel();
       check($id('overview-body').querySelector('[data-go="sadin"]').textContent.includes('לא ניתן לקבוע'), 'Missing sadin displays unknown rather than a numeric count');
@@ -1565,9 +1736,10 @@ window.fetch = (input, options) => {
         same(tzsIn($id('bagrut-table')), app.filterByChip(m.rows, 'notok').map(r => r.t.tz).sort(), 'Eligibility destination equals the overview risk population');
         narrow();
         app.state.selectedSearchTz = T(5);
+        const weakness = SadinView.getHotspotsSummary.call(app, m.list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
         app.acts.ovGo.call(app, { dataset: { go: 'sadin', strip: 'all' } });
         isReset('ovGo sadin');
-        same(tzsIn($id('sadin-table')), SadinView.earlyWarningRows(m.list).map(r => r.t.tz).sort(), 'Sadin destination equals early-warning population');
+        checkWeaknessDestination(app, weakness, 'Sadin destination after reset');
         narrow();
         const expected = app.overviewReadinessModel(app.overviewModel()).items.find(r => r.sel === 'core:history');
         app.acts.ovReadiness.call(app, readinessAction('core:history'));
