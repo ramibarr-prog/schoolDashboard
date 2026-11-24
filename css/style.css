@@ -1,4 +1,41 @@
 body.sadin-active.sadin-weak-active #localControls { display: none; }
+#panel-profile.profile-360 { display: block; }
+#panel-profile.profile-360[hidden] { display: none; }
+#panel-profile .profile-360-header { padding: .8rem 1rem; margin-bottom: .75rem; }
+#panel-profile .profile-360-header-row, #panel-profile .profile-360-identity, #panel-profile .profile-360-actions, #panel-profile .profile-360-status { display: flex; align-items: center; gap: .6rem; }
+#panel-profile .profile-360-header-row { justify-content: space-between; flex-wrap: wrap; }
+#panel-profile .profile-360-identity { min-width: 0; }
+#panel-profile .profile-360-actions { flex-wrap: wrap; }
+#panel-profile .profile-360-name { color: var(--forest); font-size: 1.3rem; font-weight: 800; }
+#panel-profile .profile-360-meta { color: var(--muted); font-size: .76rem; }
+#panel-profile .profile-360-pos { display: block; color: var(--muted); font-size: .68rem; }
+#panel-profile .profile-360-status { flex-wrap: wrap; margin-top: .65rem; padding-top: .6rem; border-top: 1px solid var(--card-border); font-size: .77rem; }
+#panel-profile .profile-360-units { min-width: 9rem; color: var(--forest); }
+#panel-profile .profile-360-progress { height: .35rem; margin-top: .25rem; border-radius: 1rem; background: var(--track); overflow: hidden; }
+#panel-profile .profile-360-progress span { display: block; height: 100%; background: var(--sage); }
+#panel-profile .profile-360-counts { margin-inline-start: auto; color: var(--muted); }
+#panel-profile .profile-360-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(15rem, 3fr); gap: .75rem; align-items: start; }
+#panel-profile .profile-360-main, #panel-profile .profile-360-side { display: grid; gap: .75rem; min-width: 0; }
+#panel-profile .profile-360-card { padding: .8rem 1rem; font-size: .8rem; }
+#panel-profile .profile-360-card h3, #panel-profile .profile-360-academic h3 { margin: 0 0 .6rem; color: var(--forest); font-size: .95rem; font-weight: 700; }
+#panel-profile .profile-360-focus-list { display: grid; gap: .3rem; margin: .35rem 0; padding: 0; list-style: none; }
+#panel-profile .profile-360-focus-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; padding: .3rem 0; border-bottom: 1px solid var(--card-border); }
+#panel-profile .profile-360-focus-tag, #panel-profile .profile-360-duplicate { padding: .15rem .4rem; border-radius: .4rem; background: var(--cream-bg); color: var(--amber-dark); font-size: .7rem; white-space: nowrap; }
+#panel-profile .profile-360-fix { margin-inline-start: auto; color: var(--forest); font-weight: 600; text-decoration: underline; }
+#panel-profile .profile-360-more { color: var(--forest); cursor: pointer; font-weight: 600; }
+#panel-profile .profile-360-academic { overflow: hidden; padding-top: .8rem; }
+#panel-profile .profile-360-academic h3 { padding: 0 1rem; }
+#panel-profile .profile-360-academic .tbl-wrap { border: 0; border-radius: 0; }
+#panel-profile .profile-360-academic tr[data-act="profileSubjectToggle"] { cursor: pointer; }
+#panel-profile .profile-360-partial { color: var(--amber-dark); }
+#panel-profile .profile-360-exam-count { display: block; color: var(--muted); font-size: .68rem; }
+#panel-profile .profile-360-details summary { color: var(--forest); cursor: pointer; font-size: 1rem; }
+#panel-profile .profile-360-detail-content { min-width: 12rem; padding: .4rem; white-space: normal; color: var(--ink); font-size: .75rem; }
+#panel-profile #profKpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem; }
+#panel-profile #profKpis .prof-kpi { min-width: 0; }
+#panel-profile #excNote { width: 100%; }
+#panel-profile .profile-360-card small { display: block; margin-top: .3rem; color: var(--muted); }
+@media (max-width: 900px) { #panel-profile .profile-360-layout { grid-template-columns: minmax(0, 1fr); } }
 .bg-bd { display: grid; gap: 1rem; color: var(--ink); text-align: right; }
 .bg-bd-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
 .bg-bd-header h2 { margin: 0; color: var(--forest); font-size: 1.2rem; font-weight: 700; }

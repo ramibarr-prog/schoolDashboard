@@ -1318,7 +1318,15 @@ const App = {
     openProfile(el) { this.openProfile(el.dataset.tz, el); },
     profBack() { this.profBack(); },
     bagrutSort(el) { return BagrutView.bagrutSort.call(this, el); },
-    bagrutPin(el) { return BagrutView.bagrutPin.call(this, el); },
+    bagrutPin(el) {
+      BagrutView.bagrutPin.call(this, el);
+      if (this.state.tab === 'profile') { this.dirty.add('profile'); this.renderTab('profile'); }
+    },
+    profileSubjectToggle(el, event) {
+      if (event.target.closest('summary, button, a, input, select')) return;
+      const details = el.querySelector('details');
+      if (details) details.open = !details.open;
+    },
     bagrutDrawerOpen(el) { return BagrutView.bagrutDrawerOpen.call(this, el); },
     bagrutDrawerClose() { return BagrutView.bagrutDrawerClose.call(this, true); },
     bagrutDrill(el) { return BagrutView.bagrutDrill.call(this, el); },

@@ -680,27 +680,29 @@
     </section>
 
     <!-- 4. כרטיס חניך 360° -->
-    <section id="panel-profile" class="panel space-y-3" role="tabpanel" aria-labelledby="tab-profile" hidden>
-      <div id="profNav" class="flex flex-wrap items-center gap-3">
-        <button type="button" id="profBack" class="nav-back hidden" data-act="profBack" title="חזרה למסך הקודם (Esc)"></button>
-        <span id="profPos" class="sr-only" role="status" aria-live="polite"></span>
-      </div>
-      <div class="card px-5 py-4">
-        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div class="min-w-0">
-            <div id="profName" class="text-2xl font-extrabold text-[#355747]">—</div>
-            <div id="profMeta" class="text-sm text-slate-500 mt-0.5"></div>
+    <section id="panel-profile" class="panel profile-360" role="tabpanel" aria-labelledby="tab-profile" hidden>
+      <div class="card profile-360-header">
+        <div class="profile-360-header-row">
+          <div class="profile-360-identity">
+            <div id="profNav">
+              <button type="button" id="profBack" class="nav-back hidden" data-act="profBack" title="חזרה למסך הקודם (Esc)"></button>
+              <span id="profPos" class="profile-360-pos" role="status" aria-live="polite"></span>
+            </div>
+            <div><div id="profName" class="profile-360-name">—</div><div id="profMeta" class="profile-360-meta"></div></div>
           </div>
-          <div id="profBadges" class="flex flex-wrap items-center gap-2"></div>
-          <div class="flex flex-wrap items-center gap-2 mr-auto">
+          <div class="profile-360-actions">
+            <button type="button" id="profilePin" class="btn btn-ghost btn-sm" data-act="bagrutPin" data-tz="" aria-pressed="false">☆ מעקב צמוד</button>
             <select id="excTrack" class="inp" aria-label="מסלול"></select>
-            <input id="excNote" type="text" class="inp w-44" placeholder="הערת מרכזת" maxlength="500" aria-label="הערת מרכזת">
             <button type="button" id="excOpen" class="btn btn-ghost btn-sm" data-act="excModal" data-tz="">⚡ הגדר מצב חריג</button>
           </div>
         </div>
-        <div id="profKpis" class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4"></div>
+        <div id="profBadges" class="profile-360-status"></div>
       </div>
-      <div id="profBody" class="space-y-3"></div>
+      <div id="profile-stable" hidden>
+        <div id="profKpis"></div>
+        <input id="excNote" type="text" class="inp" placeholder="הערת מרכזת" maxlength="500" aria-label="הערת מרכזת">
+      </div>
+      <div id="profBody"></div>
     </section>
 
     <!-- 5. הגדרות ומצבת -->

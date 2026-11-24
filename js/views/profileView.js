@@ -7,6 +7,15 @@
   const setVal = (id, value) => { const el = $(id); if (el) el.value = value; };
   const passingScore = (score, subject) => SignalEngine.isPassingScore(score, { social: Util.norm(subject) === Util.norm('מעורבות חברתית') });
 
+  function restoreProfileControls() {
+    const body = $('profBody'), parent = $('profile-stable') || (body && body.parentElement);
+    if (!body || !parent) return;
+    ['profKpis', 'excNote'].forEach(id => {
+      const el = $(id);
+      if (el && body.contains(el)) parent.appendChild(el);
+    });
+  }
+
   window.ProfileView = {
   subjectDisplayCell(ev, id) {
     const cell = ev.cells[id], s = ev.subjects.find(s => s.id === id);
@@ -170,6 +179,11 @@
 
   /** כרטיס 360°: כל התצוגה מחושבת לפי כללי המחזור המשויך לשכבת החניך */
   renderTrainee360Panel() {
+    if ($('panel-profile') && !$('weakness-styles')) {
+      const link = document.createElement('link');
+      link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
+      document.head.appendChild(link);
+    }
     const list = this.profileList();
     const t = list.find(x => x.tz === this.state.profileTz) || list[0];
     const restore = Config.pushRulesForGrade(t ? t.gradeKey : '');
@@ -187,13 +201,16 @@
   },
 
   renderTrainee360Inner() {
+    restoreProfileControls();
     const list = this.profileList();
     const sel = $('profSelect');
     if (!Store.hasData() || !list.length) {
       if (sel) sel.innerHTML = '';
       setText('profName', Store.hasData() ? 'אין חניכים בסינון הנוכחי' : 'טרם נטענה מצבת חניכים');
       ['profMeta', 'profBadges', 'profBody', 'profKpis'].forEach(id => setHtml(id, ''));
-      ['excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = true; });
+      ['excTrack', 'excNote', 'excOpen', 'profilePin'].forEach(id => { if ($(id)) $(id).disabled = true; });
+      const pin = $('profilePin');
+      if (pin) { pin.dataset.tz = ''; pin.setAttribute('aria-pressed', 'false'); pin.textContent = '☆ מעקב צמוד'; }
       this.renderProfileNav(0, 0);
       return;
     }
@@ -204,23 +221,47 @@
     const ev = this.getEval(t.tz), ex = Config.getException(t.tz), rules = Config.rules();
     const signal = SignalEngine.computeForTrainee(t.tz, this.state.sim);
     const bagrutUnknown = signal.pedagogical.some(f => f.id === 'bagrut.unknown');
-    ['excTrack', 'excNote', 'excOpen'].forEach(id => { $(id).disabled = false; });
+    const breakdown = UI.buildBagrutBreakdown(t, ev, { noData: bagrutUnknown, className: Config.classLabel(t.classKey) });
+    ['excTrack', 'excNote', 'excOpen', 'profilePin'].forEach(id => { if ($(id)) $(id).disabled = false; });
 
     if (sel) sel.innerHTML = list.map(x => `<option value="${E(x.tz)}" ${x.tz === t.tz ? 'selected' : ''}>${E(Config.classLabel(x.classKey))} · ${E(x.name)}</option>`).join('');
     this.renderProfileNav(idx + 1, list.length);
     setText('profName', t.name);
-    setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}`);
+    setHtml('profMeta', `ת.ז ${E(t.tz)} · שכבה ${E(Util.gl(t.gradeKey))} · ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))} · ${E(ev.cohortName)}`);
+    const units = breakdown.totalUnits;
+    const unitsLabel = units == null ? 'לא ניתן לקבוע יח״ל' : breakdown.enforceUnits ? `${units} מתוך 21 יח״ל` : `${units} יח״ל נצברו עד כה`;
+    const progress = breakdown.enforceUnits && units != null ? `<div class="profile-360-progress" role="progressbar" aria-label="יחידות לזכאות" aria-valuemin="0" aria-valuemax="21" aria-valuenow="${Math.min(21, Math.max(0, units))}"><span style="width:${Math.min(100, Math.max(0, units / 21 * 100))}%"></span></div>` : '';
     setHtml('profBadges', `${bagrutUnknown ? UI.signalBadge('bagrut.unknown').replace('class="badge', 'class="badge prof-status') :
       ev.manualReview.required ? `<span class="badge tier-3 prof-status" title="${E(`חישוב אוטומטי: ${ev.tierText} | ${this.manualReviewLines(ev).join(' | ')}`)}">נדרשת החלטת רכזת</span>` :
       this.tierBased(ev) ? `<span class="badge tier-${ev.tier} prof-status" title="${E(ev.diagnostic)}">${E(ev.tierText)}</span>` : this.paceBadge(ev).replace('class="badge', 'class="prof-status badge')}
-      ${bagrutUnknown ? '' : this.unitsBadge(ev)}
-      <span class="badge fresh-slate" title="כללי הזכאות של המחזור המשויך לשכבת החניך">${E(ev.cohortName)}</span>${ev.manualReview.required ? '' : this.manualReviewBadge(ev)}${this.profileModeBadge(t, ev)}`);
+      <div class="profile-360-units"><span>${E(unitsLabel)}</span>${progress}</div>
+      <span class="profile-360-counts">${breakdown.isTrack12 ? 'מסלול 12 שנות לימוד' : breakdown.noData ? 'לא ניתן לקבוע חסמים' : `${breakdown.subjectCount} מקצועות חוסמים · ${breakdown.internalCount} חסמים פנימיים`}</span>
+      ${ev.manualReview.required ? '' : this.manualReviewBadge(ev)}${this.profileModeBadge(t, ev)}`);
+    const pin = $('profilePin');
+    if (pin) {
+      const pinned = BagrutView.chipMatch.call(this, { t, ev }, 'pinned', signal);
+      pin.dataset.tz = t.tz; pin.setAttribute('aria-pressed', String(pinned));
+      pin.textContent = `${pinned ? '★' : '☆'} מעקב צמוד`;
+      pin.setAttribute('aria-label', pinned ? 'הסרה ממעקב צמוד' : 'הוספה למעקב צמוד');
+    }
     const cur = this.profileCurrentModel(t, ev, rules);
     this.renderProfileKpis(t, cur, signal.prereqs);
     const groupsFor = keywords => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, keywords));
-    const groupText = groups => groups.length ? `<span class="flex max-w-[9rem] items-center gap-1" title="${E(groups.map(g => `${g.teacher || 'ללא מורה'} [${g.groupId}]`).join(' · '))}"><span class="truncate min-w-0">${E(groups[0].teacher || 'ללא מורה')}</span>${groups.length > 1 ? `<span class="shrink-0">(+${groups.length - 1})</span>` : ''}</span>` : '<span class="text-slate-500">—</span>';
+    const anomalies = signal.prereqs.hasGroups ? this.placementAnomaliesModel([t]).rows : [];
+    const groupText = groups => {
+      if (!groups.length) return '<span class="text-slate-500">—</span>';
+      const ids = new Set(groups.map(g => g.groupId));
+      const duplicate = anomalies.some(a => a.kind === 'dup' && a.groups.filter(g => ids.has(g.groupId)).length > 1);
+      return `<span class="flex max-w-[9rem] items-center gap-1" title="${E(groups.map(g => `${g.teacher || 'ללא מורה'} [${g.groupId}]`).join(' · '))}"><span class="truncate min-w-0">${E(groups[0].teacher || 'ללא מורה')}</span>${duplicate ? '<span class="profile-360-duplicate">כפילות</span>' : groups.length > 1 ? `<span class="shrink-0">(+${groups.length - 1})</span>` : ''}</span>`;
+    };
     const scoreText = (value, detail = '', compensated = false) => value == null ? '<span class="text-slate-400">—</span>' :
       `<span class="${compensated ? 'text-amber-700 font-semibold' : value < rules.passGrade ? 'score-alert' : 'text-slate-800 font-normal'}"${detail ? ` title="${E(detail)}"` : ''}>${E(Util.fmt(value, 0))}</span>`;
+    const examProgress = (comps, subject) => comps.length ? `<span class="profile-360-exam-count">${comps.filter(c => !c.failed && !c.blocked && (c.state === 'pass' || c.state === 'num' && passingScore(c.reportedNum ?? c.num, subject))).length} מתוך ${comps.length}</span>` : '';
+    const details = (comps, reverse) => `<details class="profile-360-details"><summary aria-label="פתיחת פירוט שאלונים">⌄</summary><div class="profile-360-detail-content">${comps.length ? comps.map(c => {
+      const value = c.state === 'num' ? Util.fmt(c.reportedNum ?? c.num, 0) : c.state === 'pass' ? 'עבר' : c.state === 'exempt' ? 'פטור' : c.failed || c.blocked ? 'לא עבר' : 'טרם דווח';
+      const bad = c.failed || c.blocked || (c.state === 'num' && !passingScore(c.reportedNum ?? c.num, ''));
+      return `<div><strong>שאלון ${E(c.code)}</strong>${c.alternative ? ' (חלופה)' : ''} · <span class="${bad ? 'score-alert' : ''}">${E(value)}</span>${c.internal == null ? '' : ` · ${c.internal ? 'פנימי' : 'חיצוני'}`}${c.weight ? ` ${E(c.weight)}%` : ''}${c.magenForecast ? ' · מגן משוער' : ''}</div>`;
+    }).join('') : '<div>אין שאלונים זמינים</div>'}${reverse ? `<div>${E(BagrutPolicies.reverseNeed(reverse))}</div>` : ''}</div></details>`;
     const g1 = ev.subjects.map(s => {
       const def = rules.coreSubjects.find(x => x.id === s.id);
       const groups = def ? groupsFor(def.keywords) : [];
@@ -229,9 +270,12 @@
       const partial = s.pending.length || s.unresolved.length;
       const value = partial && s.reportedScore != null ? s.reportedScore : s.adj;
       const suffix = partial && s.reportedScore != null ? ` (${s.reportedPct}%)` : s.forecast ? ' (תחזית)' : s.source === 'current' ? ' (שוטף)' : s.boosted ? ' (סימולציה)' : '';
-      return `<tr><td><strong>${E(s.name)}</strong>${subjectUnits ? ` <span class="text-slate-500">· ${E(subjectUnits)} יח׳</span>` : ''}</td>
-        <td>${groupText(groups)}</td><td>${this.currentCell(cur.core.get(s.id))}</td><td>${this.profileComponents(external, s.variableUnits)}</td><td>${this.profileComponents(internal, false)}</td>
-        <td>${s.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : s.incomplete ? `<span class="score-alert">${E(this.subjectDisplayCell(ev, s.id).text)}</span>` : value != null ? scoreText(value, `${Util.fmt(value, 1)}${suffix}`, !!s.compApplied) : s.allPass ? 'עבר' : '—'}</td><td>${this.profileSubjectStatus(s)}</td></tr>`;
+      const status = breakdown.isTrack12 ? '<span class="badge fresh-slate">מסלול 12 שנות לימוד</span>' :
+        s.incomplete && !s.comps.some(c => c.failed || c.blocked) ? '<span class="badge tier-3">נצברו</span>' : this.profileSubjectStatus(s);
+      const final = s.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : s.incomplete ? `<span class="profile-360-partial">${E(this.subjectDisplayCell(ev, s.id).text)} · נצברו</span>` : value != null ? scoreText(value, `${Util.fmt(value, 1)}${suffix}`, !!s.compApplied) : s.allPass ? 'עבר' : '—';
+      return `<tr data-act="profileSubjectToggle"><td><strong>${E(s.name)}</strong>${subjectUnits ? ` <span class="text-slate-500">· ${E(subjectUnits)} יח׳</span>` : ''}</td>
+        <td>${groupText(groups)}</td><td>${this.currentCell(cur.core.get(s.id))}</td><td>${this.profileComponents(external, s.variableUnits)} ${examProgress(external, s.name)}</td><td>${this.profileComponents(internal, false)}</td>
+        <td>${final}</td><td>${status}</td><td>${details(s.comps, s.reverse)}</td></tr>`;
     }).join('');
     const majors = ev.major.cands.filter(c => !c.coreId);
     const majorRows = majors.map(c => {
@@ -239,17 +283,21 @@
       const groups = def ? groupsFor(def.keywords) : [];
       const units = groups.find(g => g.units);
       const codes = def ? def.codes.filter(code => Store.bagrutBest(t.tz, [code])) : [];
-      const status = c.exempt ? '<span class="badge tier-3">פטור — נדרשת החלטת רכזת</span>' : c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && !c.missing.length && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
+      const status = breakdown.isTrack12 ? '<span class="badge fresh-slate">מסלול 12 שנות לימוד</span>' : c.exempt ? '<span class="badge tier-3">פטור — נדרשת החלטת רכזת</span>' : c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && c.complete && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${!c.complete && c.bagrut != null ? 'נצברו' : c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
       const value = c.adj != null ? c.adj : c.bagrut;
       const detail = c.adj != null ? (c.forecast ? 'תחזית' : c.source === 'current' ? 'שוטף' : '') : c.bagrut != null ? 'חלקי' : c.missing.length ? 'חלקי' : '';
-      return `<tr><td><strong>${E(c.name)}</strong>${units ? ` <span class="text-slate-500">· ${E(units.units)} יח׳</span>` : ''}</td><td>${groupText(groups)}</td><td>${this.currentCell(cur.majors.get(c.id))}</td>
-        <td title="${E(codes.length ? `שאלונים: ${codes.join(', ')}` : '')}">${c.bagrut != null ? scoreText(c.bagrut) : c.exempt ? 'פטור' : c.bagrutPass ? 'עבר' : '—'}</td><td class="text-slate-400">—</td><td>${c.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : value != null ? scoreText(value, detail) : c.bagrutPass ? `<span title="${E(detail)}">עבר</span>` : '—'}</td><td>${status}</td></tr>`;
+      const comps = (def ? def.codes : []).map(code => {
+        const best = Store.bagrutBest(t.tz, [code]);
+        return { code, state: best ? best.kind : 'missing', num: best && best.num, failed: best && best.kind === 'fail', blocked: best && best.block, weight: def.weights && def.weights[code], alternative: def.codeMode === 'any' };
+      });
+      return `<tr data-act="profileSubjectToggle"><td><strong>${E(c.name)}</strong>${units ? ` <span class="text-slate-500">· ${E(units.units)} יח׳</span>` : ''}</td><td>${groupText(groups)}</td><td>${this.currentCell(cur.majors.get(c.id))}</td>
+        <td title="${E(codes.length ? `שאלונים: ${codes.join(', ')}` : '')}">${c.bagrut != null ? scoreText(c.bagrut) : c.exempt ? 'פטור' : c.bagrutPass ? 'עבר' : '—'}</td><td class="text-slate-400">—</td><td>${c.exempt ? '<span class="text-amber-700 font-semibold">פטור</span>' : value != null ? `${scoreText(value, detail)}${!c.complete ? ' · ציון חלקי' : ''}` : c.bagrutPass ? `<span title="${E(detail)}">עבר</span>` : '—'}</td><td>${status}</td><td>${details(comps)}</td></tr>`;
     });
     /* מקצועות נוספים מהסדין / מקבוצות הלימוד: מוצגים כאן כדי שכל מקצוע שנספר ב-KPI נראה גם בטבלה */
     const extraRows = cur.extras.map(x => `<tr><td><strong>${E(x.name)}</strong> <span class="text-[11px] text-slate-500">מקצוע נוסף</span></td><td>${groupText(x.groups)}</td><td>${this.currentCell(x)}</td>
-        <td class="text-slate-400">—</td><td class="text-slate-400">—</td><td class="text-slate-400">—</td><td><span class="text-slate-500">${x.groups.length ? 'לומד' : 'ללא שיבוץ'}</span></td></tr>`);
-    const missingMajor = !bagrutUnknown && (signal.prereqs.hasGroups || ev.mode === 'full' && !ev.adaptive) && ev.blockers.some(b => b.k === 'major-none') ? '<tr><td colspan="7" class="score-alert">ללא מגמה — חסר מקצוע מורחב 5 יח"ל</td></tr>' : '';
-    const g2 = missingMajor + [...majorRows, ...extraRows].join('') || `<tr><td colspan="7" class="text-slate-500">${ev.major.chosen && ev.major.chosen.coreId ? 'מקצוע מורחב נכלל במקצועות הליבה' : 'לא נמצאה מגמת בחירה'}</td></tr>`;
+        <td class="text-slate-400">—</td><td class="text-slate-400">—</td><td class="text-slate-400">—</td><td><span class="text-slate-500">${x.groups.length ? 'לומד' : 'ללא שיבוץ'}</span></td><td>—</td></tr>`);
+    const missingMajor = !breakdown.isTrack12 && !bagrutUnknown && (signal.prereqs.hasGroups || ev.mode === 'full' && !ev.adaptive) && ev.blockers.some(b => b.k === 'major-none') ? '<tr><td colspan="8" class="score-alert">ללא מגמה — חסר מקצוע מורחב 5 יח"ל</td></tr>' : '';
+    const g2 = missingMajor + [...majorRows, ...extraRows].join('') || `<tr><td colspan="8" class="text-slate-500">${ev.major.chosen && ev.major.chosen.coreId ? 'מקצוע מורחב נכלל במקצועות הליבה' : 'לא נמצאה מגמת בחירה'}</td></tr>`;
     const g3 = ev.internals.map(i => {
       const label = i.id === 'pe' ? 'חינוך גופני' : i.name;
       const cls = i.explicitFail ? 'badge tier-4' : i.done || i.exempt ? 'text-emerald-700 font-semibold' : 'text-slate-500';
@@ -287,38 +335,59 @@
 
     /* כל פריט מיקוד שהיועץ מציג בטבלה (ev.focus) מופיע גם כאן; יעדי "מחשבון הפוך" כבר מוצגים בניסוח מפורט ב-profileFocus */
     const reviewReasons = ev.blockers.filter(b => b.k === 'exempt-review').map(b => b.text);
-    const focus = [...new Set([...this.profileFocus(ev), ...ev.focus.filter(f => !f.target && !/לא מספיק/.test(f.text) && !reviewReasons.some(reason => f.text.includes(reason))).map(f => f.text)])];
-    const focusList = rows => `<ul class="list-disc pr-4 space-y-1">${rows.map(text => `<li>${E(text)}</li>`).join('')}</ul>`;
+    const focus = breakdown.isTrack12 || breakdown.noData ? [] : [...new Set([...this.profileFocus(ev), ...ev.focus.filter(f => !f.target && !/לא מספיק/.test(f.text) && !reviewReasons.some(reason => f.text.includes(reason))).map(f => f.text)])];
+    const focusItems = focus.map(text => ({
+      text, category: text.startsWith('לבדיקה:') ? 'תקינות נתונים' :
+        ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|פיצוי/.test(text) ? 'משפר ציון' :
+        breakdown.subjects.some(s => text.includes(s.name)) || breakdown.internals.some(i => text.includes(i.name)) ? 'חוסם זכאות' : 'תקינות נתונים'
+    }));
+    const placementItems = breakdown.isTrack12 ? [] : anomalies.map(a => ({
+      text: `${a.kindLabel}: ${a.subject}`, category: 'תקינות נתונים', subject: a.subject
+    }));
+    const actionList = rows => `<ul class="profile-360-focus-list">${rows.map(item => `<li><span class="profile-360-focus-tag">${E(item.category)}</span><span>${E(item.text)}</span>${item.subject ? `<button type="button" class="profile-360-fix" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(item.subject)}">בדיקה לתיקון</button>` : ''}</li>`).join('')}</ul>`;
+    const visibleFocus = focusItems.slice(0, 4), visiblePlacement = placementItems.slice(0, Math.max(0, 4 - visibleFocus.length));
+    const remaining = [...focusItems.slice(4), ...placementItems.slice(visiblePlacement.length)];
     const hasGrades = ev.subjects.some(s => s.comps.some(c => c.state === 'num' || c.state === 'pass')) || majors.some(c => c.bagrut != null);
-    const focusHtml = bagrutUnknown ? '<p class="text-slate-600">לא ניתן לקבוע יעדי בגרות — חסרים נתוני בגרות לשכבה.</p>' : focus.length ? focusList(focus.slice(0, 5)) + (focus.length > 5 ? `<details class="mt-1"><summary class="cursor-pointer font-semibold text-indigo-700">עוד ${focus.length - 5} סעיפים</summary>${focusList(focus.slice(5))}</details>` : '') :
+    const focusHtml = breakdown.isTrack12 ? '<p class="text-slate-600">החניך נמצא במסלול 12 שנות לימוד.</p>' : bagrutUnknown ? '<p class="text-slate-600">לא ניתן לקבוע יעדי בגרות — חסרים נתוני בגרות לשכבה.</p>' : focus.length ? actionList(visibleFocus) :
       ev.tier === 0 && !ev.manual || !hasGrades ? '<p class="text-slate-600">אין מספיק נתוני בגרות להצגת יעדים.</p>' : ev.manualReview.required ? '<p class="text-slate-600">לא אותרו חסמים פדגוגיים נוספים; נדרשת בדיקת נתונים.</p>' : '<p class="text-emerald-700 font-semibold">✓ אין חסמים פתוחים — כל הבחינות שהתקיימו עברו בהצלחה</p>';
     const paceLine = bagrutUnknown || this.tierBased(ev) ? '' : `<p class="mb-1.5 flex flex-wrap items-center gap-1.5">${this.paceBadge(ev)}<span>${ev.paceInfo.passedDueCount} מתוך ${ev.paceInfo.dueCount} שאלונים שמועדם הגיע עברו${ev.paceInfo.futureCount ? ` · ${ev.paceInfo.futureCount} עתידיים` : ''}</span></p>`;
     const signalList = flags => flags.map(f => `<div class="flex flex-wrap items-center gap-1.5">${UI.signalBadge(f)}${f.detail ? `<span class="text-xs text-slate-600">${E(f.detail)}</span>` : ''}</div>`).join('');
     const pedagogical = signal.pedagogical.filter(f => f.id !== 'placement.duplicate' || this.state.showRoutineDuplicates || !isRoutineDuplicateSubject(f.detail));
     const detailsOpen = !!($('profile-more') && $('profile-more').open);
     setHtml('profBody', `
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3" aria-label="דגלי חניך">
-        <section class="card p-3" aria-label="דגלים פדגוגיים"><h3 class="font-bold mb-2">דגלים פדגוגיים</h3><div class="space-y-1">${signalList(pedagogical)}</div></section>
-        <section class="card p-3" aria-label="איכות נתונים והחלטת רכזת"><h3 class="font-bold mb-2">איכות נתונים והחלטת רכזת</h3><div class="space-y-1">${signalList(signal.dataQuality) || '<span class="text-sm text-slate-500">לא אותרו דגלי איכות נתונים.</span>'}</div></section>
-      </div>
-      <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-start">
-        <div id="profile-academic" class="lg:col-span-8 card overflow-hidden">
-          <div class="tbl-wrap"><table class="grid w-full" aria-label="מקצועות ליבה ומגמות — תמונת 360°"><thead><tr><th>מקצוע</th><th>קבוצה ומורה</th><th>ציון שוטף</th><th>בחינה חיצונית (70%/80%)</th><th>הערכה פנימית (30%/20%)</th><th>ציון סופי / נוכחי</th><th>סטטוס</th></tr></thead><tbody>
-            <tr class="room-divider"><td colspan="7">מקצועות ליבה (שער 1)</td></tr>${g1 || '<tr><td colspan="7" class="text-slate-500">אין מקצועות פעילים</td></tr>'}
-            <tr class="room-divider"><td colspan="7">מגמות ומקצועות בחירה (שער 2)</td></tr>${g2}
-          </tbody></table></div>
+      <div class="profile-360-layout">
+        <div class="profile-360-main">
+          <section class="card profile-360-card">
+            <div><h3>מה צריך כדי לזכות · מיקוד פדגוגי ויעדים לחניך</h3>${paceLine}${focusHtml}</div>
+            ${visiblePlacement.length ? actionList(visiblePlacement) : ''}
+            ${remaining.length ? `<details><summary class="profile-360-more">עוד ${remaining.length} פעולות</summary>${actionList(remaining)}</details>` : ''}
+            ${bagrutUnknown || breakdown.isTrack12 ? '' : this.advisoryHtml(ev)}
+          </section>
+          <section id="profile-academic" class="card profile-360-academic">
+            <h3>מקצועות</h3>
+            <div class="tbl-wrap"><table class="grid w-full" aria-label="מקצועות ליבה ומגמות — תמונת 360°"><thead><tr><th>מקצוע ויח״ל</th><th>קבוצה ומורה</th><th>שוטף</th><th>בחינה חיצונית</th><th>הערכה פנימית</th><th>סופי / מצטבר</th><th>סטטוס</th><th>פירוט</th></tr></thead><tbody>
+              <tr class="room-divider"><td colspan="8">מקצועות ליבה (שער 1)</td></tr>${g1 || '<tr><td colspan="8" class="text-slate-500">אין מקצועות פעילים</td></tr>'}
+              <tr class="room-divider"><td colspan="8">מגמות ומקצועות בחירה (שער 2)</td></tr>${g2}
+            </tbody></table></div>
+          </section>
+          <details id="profile-more" class="card profile-360-card" ${detailsOpen ? 'open' : ''}>
+            <summary class="profile-360-more">נתונים נוספים: שאלונים, אירועים וקבוצות</summary>
+            <div class="flex flex-wrap gap-2 my-3" role="tablist" aria-label="נתוני חניך">${PROFILE_TABS.map(([id, label]) => `
+              <button type="button" role="tab" class="chip" data-act="profTab" data-sub="${id}" aria-selected="${profTab === id}" aria-pressed="${profTab === id}">${label} (${counts[id]})</button>`).join('')}</div>
+            <div class="tbl-wrap">${tabTables[profTab]}</div>
+          </details>
         </div>
-        <div class="lg:col-span-4 space-y-3">
-          <div class="card p-3"><h3 class="font-bold mb-2">🎯 מיקוד פדגוגי ויעדים לחניך</h3><div class="text-xs leading-5">${paceLine}${focusHtml}${bagrutUnknown ? '' : this.advisoryHtml(ev)}</div></div>
-          <div class="card p-3"><h3 class="font-bold mb-2">מקצועות פנימיים</h3><ul class="space-y-1.5 text-xs">${g3}</ul></div>
-        </div>
-      </div>
-      <details id="profile-more" class="card p-3" ${detailsOpen ? 'open' : ''}>
-        <summary class="cursor-pointer font-semibold text-sm text-indigo-800">נתונים נוספים: שאלונים, אירועים וקבוצות</summary>
-        <div class="flex flex-wrap gap-2 my-3" role="tablist" aria-label="נתוני חניך">${PROFILE_TABS.map(([id, label]) => `
-          <button type="button" role="tab" class="chip" data-act="profTab" data-sub="${id}" aria-selected="${profTab === id}" aria-pressed="${profTab === id}">${label} (${counts[id]})</button>`).join('')}</div>
-        <div class="tbl-wrap">${tabTables[profTab]}</div>
-      </details>`);
+        <aside class="profile-360-side">
+          <section class="card profile-360-card"><h3>ממוצעים ומדדים</h3><div id="profile-kpi-slot"></div></section>
+          <section class="card profile-360-card"><h3>מקצועות פנימיים</h3><ul class="space-y-1.5 text-xs">${g3}</ul></section>
+          <section class="card profile-360-card"><h3>הערת רכזת</h3><div id="profile-note-slot"></div><small id="profile-note-status" role="status">נשמר בשינוי השדה</small></section>
+          <section class="card profile-360-card" aria-label="איכות נתונים והחלטת רכזת"><h3>איכות נתונים ובדיקת רכזת</h3>${signalList(signal.dataQuality)}${anomalies.length ? `<div>${anomalies.length} חריגות שיבוץ לבדיקה</div>` : !signal.prereqs.hasGroups ? '<div>לא ניתן לבדוק שיבוץ ללא קובץ קבוצות</div>' : ''}${!signal.dataQuality.length && !anomalies.length && signal.prereqs.hasGroups ? '<span>אין חריגות ידועות</span>' : ''}${ev.manualReview.required ? `<div>${this.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}</section>
+          <section class="card profile-360-card" aria-label="דגלים פדגוגיים"><h3>דגלים פדגוגיים</h3>${signalList(pedagogical)}</section>
+        </aside>
+      </div>`);
+    const kpiSlot = $('profile-kpi-slot'), noteSlot = $('profile-note-slot');
+    if (kpiSlot && $('profKpis')) kpiSlot.appendChild($('profKpis'));
+    if (noteSlot && $('excNote')) noteSlot.appendChild($('excNote'));
 
     setHtml('excTrack', `<option value="">לפי המצבת (${E(Config.defaultTrack(t.track, t.classKey))})</option>` +
       Config.TRACKS.map(x => `<option value="${E(x)}" ${ex.trackOverride === x ? 'selected' : ''}>${E(x)}</option>`).join(''));
@@ -338,12 +407,31 @@
    * הטבלה ותיבת ה-KPI "מקצועות נכשלים / חסרים" נבנות מאותן שורות בדיוק.
    */
   profileCurrentModel(t, ev, rules) {
-    const gradesOn = SignalEngine.prerequisitesFor(t.gradeKey).hasSadin;
+    const prereqs = SignalEngine.prerequisitesFor(t.gradeKey), gradesOn = prereqs.hasSadin;
+    const sheet = gradesOn ? GroupAnalyzer.sadinSheet([t], {})[0] : null;
+    const sheetSubjects = sheet ? [...sheet.subjects.values()] : [];
     const groupsFor = kw => Store.groupsOf(t.tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, kw));
+    const classifyCurrent = (avg, subjects, subject) => {
+      const events = subjects.flatMap(s => s.events);
+      const scored = events.filter(e => e.score != null);
+      const counted = scored.some(e => e.weight > 0) ? scored.filter(e => e.weight > 0) : scored;
+      const missed = subjects.flatMap(s => [...s.missed.values()]);
+      const confirmed = m => {
+        const group = Store.groups.get(m.groupId);
+        return prereqs.hasGroups && group && group.inFile && group.members.has(t.tz);
+      };
+      const onlyMissedZeros = avg === 0 && counted.length && counted.every(e =>
+        e.score === 0 && subjects.some(s => s.missed.has(e.key)));
+      if (onlyMissedZeros) return { state: counted.every(e => missed.some(m => m.key === e.key && confirmed(m))) ? 'missed' : 'unverified', value: avg };
+      if (avg != null) return { state: passingScore(avg, subject) ? 'ok' : 'fail', value: avg, missed: missed.some(confirmed) };
+      if (missed.length) return { state: missed.some(confirmed) ? 'missed' : 'unverified', value: null };
+      return null;
+    };
     const status = (keywords, groups, subject) => {
       const entries = Store.currentOf(t.tz).filter(e => Util.matchKeywords(e.subject, keywords));
       const avg = Store.weightedAverage(entries.flatMap(e => e.events)).avg;
-      if (avg != null) return { state: passingScore(avg, subject) ? 'ok' : 'fail', value: avg };
+      const result = classifyCurrent(avg, sheetSubjects.filter(s => Util.matchKeywords(s.name, keywords)), subject);
+      if (result) return result;
       return { state: gradesOn && (entries.length || groups.length) ? 'missing' : 'none', value: null };
     };
     const core = new Map(), majors = new Map(), claimed = [...rules.coreSubjects.map(d => d.keywords)];
@@ -368,8 +456,8 @@
     Store.currentOf(t.tz).forEach(e => { const x = extraOf(e.subject); if (x) { x.entries++; x.events.push(...e.events); } });
     const extras = [...extraMap.values()].map(x => {
       const avg = Store.weightedAverage(x.events).avg;
-      const state = avg != null ? (passingScore(avg, x.name) ? 'ok' : 'fail') : gradesOn && (x.entries || x.groups.length) ? 'missing' : 'none';
-      return { ...x, value: avg, state };
+      const result = classifyCurrent(avg, sheetSubjects.filter(s => Util.norm(s.name) === Util.norm(x.name)), x.name);
+      return { ...x, ...(result || { value: null, state: gradesOn && (x.entries || x.groups.length) ? 'missing' : 'none' }) };
     })
       /* מקצועות שגרתיים (חינוך / מגדר / מפגש בוקר) ללא ציון אינם חסר ציון: הם אינם מדורגים מעצם טבעם */
       .filter(x => x.state !== 'none' && !(x.state === 'missing' && isRoutineDuplicateSubject(x.name)))
@@ -382,8 +470,10 @@
   currentCell(c) {
     if (!c || c.state === 'none') return '<span class="text-slate-400">–</span>';
     if (c.state === 'missing') return '<span class="miss-grade" title="רשום בקבוצה / יש רשומה בסדין ציונים, אך אין ציון שוטף">חסר ציון</span>';
+    if (c.state === 'missed') return '<span class="miss-grade">הוחמץ</span>';
+    if (c.state === 'unverified') return '<span class="text-slate-500" title="לא ניתן לאמת החמצה ללא שיבוץ מאומת">לא ניתן לאמת</span>';
     const text = E(Util.fmt(c.value, 0));
-    return c.state === 'fail' ? `<span class="score-alert font-bold">${text} • נכשל</span>` : `<span class="text-slate-800 font-normal">${text}</span>`;
+    return `${c.state === 'fail' ? `<span class="score-alert font-bold">${text} • נכשל</span>` : `<span class="text-slate-800 font-normal">${text}</span>`}${c.missed ? ' <span class="miss-grade">הוחמץ</span>' : ''}`;
   },
 
   /** תיבות KPI בראש כרטיס החניך: ממוצע החניך מול ממוצע הכיתה, מקצועות נכשלים/חסרים וסטטוס שיבוץ */
@@ -530,6 +620,7 @@
     const tz = this.state.profileTz;
     if (!tz) return;
     const res = Config.setException(tz, patch);
+    if (Object.prototype.hasOwnProperty.call(patch, 'note')) setText('profile-note-status', res.ok === false ? 'השמירה נכשלה' : 'ההערה נשמרה');
     this.toast(res.ok === false ? res.error : 'נשמר', res.ok === false ? 'error' : 'ok');
   },
 
