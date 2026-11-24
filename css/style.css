@@ -262,6 +262,8 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-quality { font-size: .7rem; }
 .bagrut-legacy-scope { display: none; }
 .bagrut-tool, .bagrut-simulation-slot summary { border-style: dashed; }
+#bagrutSimulation > .ribbon-pop { box-sizing: border-box; width: min(24rem, calc(100vw - 16px)); max-width: calc(100vw - 16px); white-space: normal; overflow-wrap: anywhere; }
+#bagrut-whatif button:disabled, #bagrut-whatif label[aria-disabled="true"], #bagrut-whatif input:disabled { opacity: .5; cursor: not-allowed; }
 .bagrut-summary { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding: .4rem .65rem; }
 .bagrut-summary-values { display: flex; flex-wrap: wrap; gap: .75rem; margin-left: auto; }
 .bagrut-summary-metric { color: var(--muted); font-size: .7rem; line-height: 1.2; }
@@ -269,6 +271,7 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-summary-metric div:first-child strong { font-size: 1.2rem; }
 .bagrut-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
 .bagrut-tabs .gstat { height: 1.9rem; padding: .2rem .45rem; font-size: .75rem; }
+.bagrut-tabs .gstat[data-chip="all"] { justify-content: center; }
 .bagrut-tab-count { padding: .1rem .45rem; border-radius: .4rem; background: var(--track); font-weight: 700; }
 .bagrut-attention { width: 100%; color: var(--forest); font-size: .8rem; }
 .bagrut-sort { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; padding: .2rem .5rem; color: var(--muted); font-size: .75rem; }

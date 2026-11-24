@@ -33,7 +33,7 @@ const App = {
   state: {
     tab: 'overview',
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
-    sim: { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false },
+    sim: { ignoreInternals: false, plus5: false, useCurrent: true, fullMode: false },
     bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all' },
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
@@ -901,7 +901,7 @@ const App = {
   renderBagrutPanel(...args) {
     const result = BagrutView.renderBagrutPanel.apply(this, args);
     const reset = $('bagrutRiskReset');
-    if (reset) reset.hidden = this.state.bagrut.chip !== 'notok';
+    if (reset) reset.hidden = this.state.bagrut.targets || this.state.bagrut.chip !== 'notok';
     return result;
   },
   renderBagrutKpis(...args) { return BagrutView.renderBagrutKpis.apply(this, args); },
@@ -1428,7 +1428,10 @@ const App = {
         return 'applied';
       });
     },
-    sim(el) { this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab); },
+    sim(el) {
+      if (this.state.bagrut.targets) { el.checked = !!this.state.sim[el.dataset.key]; return; }
+      this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab);
+    },
     bagrutOnlyPending(el) { return BagrutView.bagrutOnlyPending.call(this, el); },
     anSubject(el) { this.state.anomalySubject = el.value; this.dirty.add('groups'); this.renderTab('groups'); },
     gradeCohort(...args) { return RulesView.gradeCohort.apply(this, args); },

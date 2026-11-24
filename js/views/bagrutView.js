@@ -119,6 +119,14 @@
     return new Map(rows.map(r => [r.t.tz, (r.t.gradeKey === 'יב' || !adaptive ? regular : adaptive).get(r.t.tz)]));
   }
 
+  function enforceTargetMode(app) {
+    const sim = app.state.sim;
+    if (sim.fullMode && !sim.ignoreInternals && !sim.plus5 && !sim.useCurrent) return;
+    Object.assign(sim, { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: false });
+    app.evals.clear();
+    ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => app.dirty.add(t));
+  }
+
   function signalSummary(rows, signals, sim) {
     const quality = rows.filter(({ t }) => signals.get(t.tz).ev.tier !== 5 && signals.get(t.tz).ev.manualReview.required &&
       signals.get(t.tz).dataQuality.some(f => f.id === 'data.manual_review')).length;
@@ -179,6 +187,7 @@
 
   window.BagrutView = {
   bagrutSubjectChange(value) {
+    if (this.state.bagrut.targets) return;
     Object.assign(this.state.bagrut, { drill: value, readinessClass: '', readinessFilter: 'all', targets: false });
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
@@ -189,8 +198,10 @@
   },
 
   bagrutMode(el) {
-    if (el.disabled) return;
-    this.state.sim.fullMode = el.dataset.mode === 'final';
+    if (el.disabled || this.state.bagrut.targets) return;
+    const fullMode = el.dataset.mode === 'final';
+    if (this.state.sim.fullMode !== fullMode) this.state.sim.useCurrent = !fullMode;
+    this.state.sim.fullMode = fullMode;
     this.evals.clear();
     ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t));
     this.renderTab(this.state.tab);
@@ -236,6 +247,7 @@
   },
 
   bagrutDrill(el) {
+    if (this.state.bagrut.targets) return;
     Object.assign(this.state.bagrut, { drill: el.dataset.sel, readinessClass: '', readinessFilter: 'all', targets: false });
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
@@ -265,6 +277,7 @@
 
   bagrutChip(el) {
     const st = this.state.bagrut, chip = el.dataset.chip;
+    if (st.targets) return;
     st.chip = st.chip === chip ? 'all' : chip;
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
@@ -272,7 +285,14 @@
   bagrutTargets() {
     const st = this.state.bagrut;
     st.targets = !st.targets;
-    if (st.targets) Object.assign(st, { drill: 'all', readinessClass: '', readinessFilter: 'all' });
+    if (st.targets) {
+      st.targetPreviousChip = st.chip;
+      Object.assign(st, { drill: 'all', readinessClass: '', readinessFilter: 'all' });
+      enforceTargetMode(this);
+    } else {
+      st.chip = st.targetPreviousChip;
+      delete st.targetPreviousChip;
+    }
     this.dirty.add('bagrut'); this.renderTab('bagrut');
   },
 
@@ -299,7 +319,7 @@
       this.toast('לא ניתן לייצא: חסר קובץ בגרות לשכבת י"ב', 'error');
       return;
     }
-    const rows = this.bagrutList(this.bagrutScopeInfo(this.dashRows()).rows);
+    const rows = this.bagrutList(this.bagrutScopeInfo(this.dashRows()).rows, undefined, this.state.bagrut.targets ? 'all' : this.state.bagrut.chip);
     const targets = BagrutView.target30Rows.call(this, rows);
     if (!targets.length) {
       this.toast('אין יעדי 30% לייצוא בסינון הנוכחי', 'warn');
@@ -323,7 +343,7 @@
   },
 
   bagrutScope(el) {
-    this.state.bagrut.chip = 'all';
+    if (!this.state.bagrut.targets) this.state.bagrut.chip = 'all';
     this.applyBagrutScope(el.dataset.scope);
     this.alertOut = [];
     this.renderTab(this.state.tab);
@@ -580,28 +600,33 @@
       link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
       document.head.appendChild(link);
     }
+    const st = this.state.bagrut, sim = this.state.sim;
+    if (st.targets) {
+      enforceTargetMode(this);
+      Object.assign(st, { drill: 'all', readinessClass: '', readinessFilter: 'all' });
+    }
     this.renderFreshnessBar('bagrut');
     this.syncBagrutScope();
     const scope = this.bagrutScopeInfo(this.dashRows());
     this.renderBagrutScope(scope);
-    const rows = scope.rows;
-    const st = this.state.bagrut, sim = this.state.sim;
+    const rows = st.targets ? scope.rows.filter(r => r.t.gradeKey === 'יב') : scope.rows;
     const signals = signalsFor(rows, sim);
     const knownRows = rows.filter(r => !isUnknown(signals.get(r.t.tz)));
     const evalRows = knownRows.filter(r => this.tierBased(r.ev)), paceRows = knownRows.filter(r => !this.tierBased(r.ev));
     const stats = BagrutAdvisor.summarize(evalRows.map(r => r.ev));
-    const list = this.bagrutList(rows, signals);
+    const list = this.bagrutList(rows, signals, st.targets ? 'all' : st.chip);
     const tierCount = [0, 0, 0, 0, 0, 0];
     evalRows.forEach(r => { tierCount[r.ev.tier]++; });
-    const hasGrade12 = rows.some(r => r.t.gradeKey === 'יב'), fullMode = hasGrade12 && !!sim.fullMode;
+    const hasGrade12 = rows.some(r => r.t.gradeKey === 'יב'), fullMode = !!(hasGrade12 || st.targets) && !!sim.fullMode;
     const TT = BagrutEngine.TIER_TEXT[fullMode ? 'full' : 'adaptive'];
 
-    const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}>${label}</label>`;
-    const modeBtn = (full, label, title, off = false) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${fullMode === full}" title="${E(title)}"${off ? ' disabled class="opacity-50 cursor-not-allowed"' : ''}>${label}</button>`;
-    const finalBtn = hasGrade12 ? modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'בדיקה מחמירה לשכבת י"ב בלבד: כל השאלונים והיחידות הפנימיות נדרשים; שכבות י\' ו-י"א ממשיכות להישפט לפי תקינות צבירה')
+    const targetDisabled = 'לא זמין במצב יעד 30% — לחצו על חזרה לזכאות';
+    const sw = (key, label) => `<label class="flex items-center gap-2 cursor-pointer"${st.targets ? ` aria-disabled="true" title="${E(targetDisabled)}"` : ''}><input type="checkbox" class="w-4 h-4" data-chg="sim" data-key="${key}" ${sim[key] ? 'checked' : ''}${st.targets ? ` disabled aria-disabled="true" title="${E(targetDisabled)}"` : ''}>${label}</label>`;
+    const modeBtn = (full, label, title, off = false) => `<button type="button" data-act="bagrutMode" data-mode="${full ? 'final' : 'adaptive'}" aria-pressed="${fullMode === full}" title="${E(title)}"${off ? ' disabled aria-disabled="true"' : ''}>${label}</button>`;
+    const finalBtn = hasGrade12 || st.targets ? modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'בדיקה מחמירה לשכבת י"ב בלבד: כל השאלונים והיחידות הפנימיות נדרשים; שכבות י\' ו-י"א ממשיכות להישפט לפי תקינות צבירה')
       : modeBtn(true, '🎓 מצב תעודה סופית (סוף י"ב)', 'זמין לשכבת י"ב בלבד — שכבות י\' ו-י"א נשפטות לפי תקינות צבירה', true);
     setHtml('bagrut-whatif',
-      `<span class="seg flex flex-col" role="group" aria-label="מצב הערכה">${modeBtn(false, '📅 צפי מותאם לשלב בשנה', 'נשפט לפי המבחנים שהשכבה כבר עברה; מה שטרם דווח לשכבה אינו חוסר')}${finalBtn}</span>` +
+      `<span class="seg flex flex-col" role="group" aria-label="מצב הערכה">${modeBtn(false, '📅 צפי מותאם לשלב בשנה', st.targets ? targetDisabled : 'נשפט לפי המבחנים שהשכבה כבר עברה; מה שטרם דווח לשכבה אינו חוסר', st.targets)}${finalBtn}</span>` +
       sw('ignoreInternals', 'התעלם מחוסר יחידות פנימיות (חנ"ג, מעורבות, השכלה כללית ומדעים)') + sw('plus5', 'תוספת +5 לגבוליים 50-54') + sw('useCurrent', 'שלב ציונים שוטפים כתחזית (תצוגה מקדימה)'));
 
     this.renderCohortInfo(rows, fullMode);
@@ -616,6 +641,11 @@
     setHtml('bagrutSubjectDrillSelect',
       `<option value="all" ${st.drill === 'all' ? 'selected' : ''}>📊 מבט על – כל המקצועות</option>` +
       drillOpts.map(o => `<option value="${E(o.value)}" ${st.drill === o.value ? 'selected' : ''}>${E(o.label)}</option>`).join(''));
+    const drillSelect = $('bagrutSubjectDrillSelect');
+    if (drillSelect) {
+      drillSelect.disabled = !!st.targets;
+      drillSelect.title = st.targets ? targetDisabled : '';
+    }
     if (!Store.hasData()) {
       BagrutView.bagrutDrawerClose.call(this);
       return this.noRoster([], 'bagrut-table');
@@ -689,17 +719,18 @@
         ${pct(ps.pctInclSpecialEd, 'תקינות צבירה · כולל חנ"מ', paceBasis, ps.counted)}</div>`;
     }
     box.classList.remove('hidden');
-    const attention = active === 'attention' ? this.attentionModel(rows.map(r => r.t), rows) : null;
+    const attention = active === 'attention' && !this.state.bagrut.targets ? this.attentionModel(rows.map(r => r.t), rows) : null;
     box.innerHTML = `<div class="card bagrut-summary"><div class="bagrut-summary-values">${eligible}${pace}</div>
-      <div class="bagrut-tabs" role="group" aria-label="סינון חניכים לפי מצב">
+      ${attention ? `<div class="bagrut-attention" role="status">במעקב: ${attention.tzSet.size} חניכים · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all"><span>✕ הצג הכל</span><span>${rows.length}</span></button></div>` : ''}
+      ${this.state.bagrut.targets ? '' : `<div class="bagrut-tabs" role="group" aria-label="סינון חניכים לפי מצב">
+        ${quick('all', 'gstat-ok', 'הכל')}
         ${quick('risk', 'gstat-bad', 'בסיכון')}
         ${quick('completion', 'gstat-amber', 'השלמה או החלטה')}
         ${quick('eligible', 'gstat-ok', 'זכאים')}
         ${quick('pinned', 'gstat-violet', 'במעקב צמוד')}
         ${paceRows.length ? quick('pace:on_track', 'gstat-ok', 'תקין לקצב') + quick('pace:not_started', 'gstat-violet', 'טרם החלו') : ''}
         ${rows.some(r => r.ev.tier === 5) ? quick('track12', 'gstat-violet', '12 שנ"ל') : ''}
-      </div>
-      ${attention ? `<div class="bagrut-attention" role="status">במעקב: ${attention.tzSet.size} חניכים · ${this.attentionBreakdownText(attention)} <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutChip" data-chip="all"><span>✕ הצג הכל</span><span>${rows.length}</span></button></div>` : ''}</div>`;
+      </div>`}</div>`;
   },
 
   /** מודל אחד למקצוע בודד, משותף לפס המוכנות שב-#bagrut-kpis ולמטריצת השאלונים */
@@ -833,8 +864,8 @@
     box.innerHTML = `<details><summary>🕒 מה כבר נבחן בשכבה? (צפי מותאם: מקצוע ליבה נחשב "נבחן" כש-${BagrutEngine.COHORT_MIN_PCT}% מהשכבה לפחות קיבלו בו ציון; מגמה – ${BagrutEngine.COHORT_MAJOR_PCT}% מלומדיה)</summary><div class="mt-2 space-y-1 leading-relaxed">${lines.join('')}</div></details>`;
   },
 
-  bagrutList(rows, signals) {
-    const { chip, sort, dir } = this.state.bagrut;
+  bagrutList(rows, signals, chip = this.state.bagrut.chip) {
+    const { sort, dir } = this.state.bagrut;
     const severity = ev => ev.tier === 5 ? -1 : this.tierBased(ev) ? ev.tier :
       ({ pace_lag: 4, pace_warning: 3, on_track: 1, not_started: 0, no_data: 0 })[ev.paceStatus] ?? 0;
     const val = r => ({ name: r.t.name, class: r.t.classKey, grade: Util.ord(r.t.gradeKey), track: this.trackOf(r.t), tier: severity(r.ev), tz: r.t.tz, diag: r.ev.diagnostic })[sort];
