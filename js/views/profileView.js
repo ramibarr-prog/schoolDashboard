@@ -341,24 +341,38 @@
         ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|פיצוי/.test(text) ? 'משפר ציון' :
         breakdown.subjects.some(s => text.includes(s.name)) || breakdown.internals.some(i => text.includes(i.name)) ? 'חוסם זכאות' : 'תקינות נתונים'
     }));
-    const placementItems = breakdown.isTrack12 ? [] : anomalies.map(a => ({
-      text: `${a.kindLabel}: ${a.subject}`, category: 'תקינות נתונים', subject: a.subject
+    const currentRows = [...cur.core.values(), ...cur.majors.values(), ...cur.extras];
+    const currentItems = currentRows.flatMap(row => [
+      ...(row.state === 'fail' && row.hasActualFail ? [{ text: `${row.name}: נכשל בציון שוטף (ממוצע ${Util.fmt(row.value, 1)})`, category: 'ציון שוטף' }] : []),
+      ...(!breakdown.isTrack12 && (row.state === 'missed' || row.missed) ? [{ text: `${row.name}: אירוע הערכה שהוחמץ`, category: 'הוחמץ' }] : [])
+    ]);
+    const placementByText = new Map();
+    if (!breakdown.isTrack12) anomalies.forEach(a => {
+      const text = `${a.kindLabel}: ${a.subject}`;
+      const item = placementByText.get(text);
+      if (item) item.count++;
+      else placementByText.set(text, { text, category: 'תקינות נתונים', subject: a.subject, count: 1 });
+    });
+    const placementItems = [...placementByText.values()].map(item => ({
+      ...item, text: item.count > 1 ? `${item.text} (×${item.count})` : item.text
     }));
     const actionList = rows => `<ul class="profile-360-focus-list">${rows.map(item => `<li><span class="profile-360-focus-tag">${E(item.category)}</span><span>${E(item.text)}</span>${item.subject ? `<button type="button" class="profile-360-fix" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(item.subject)}">בדיקה לתיקון</button>` : ''}</li>`).join('')}</ul>`;
-    const visibleFocus = focusItems.slice(0, 4), visiblePlacement = placementItems.slice(0, Math.max(0, 4 - visibleFocus.length));
-    const remaining = [...focusItems.slice(4), ...placementItems.slice(visiblePlacement.length)];
+    const visibleFocus = focusItems.slice(0, 4);
+    const visibleCurrent = currentItems.slice(0, Math.max(0, 4 - visibleFocus.length));
+    const visiblePlacement = placementItems.slice(0, Math.max(0, 4 - visibleFocus.length - visibleCurrent.length));
+    const remaining = [...focusItems.slice(4), ...currentItems.slice(visibleCurrent.length), ...placementItems.slice(visiblePlacement.length)];
     const hasGrades = ev.subjects.some(s => s.comps.some(c => c.state === 'num' || c.state === 'pass')) || majors.some(c => c.bagrut != null);
     const focusHtml = breakdown.isTrack12 ? '<p class="text-slate-600">החניך נמצא במסלול 12 שנות לימוד.</p>' : bagrutUnknown ? '<p class="text-slate-600">לא ניתן לקבוע יעדי בגרות — חסרים נתוני בגרות לשכבה.</p>' : focus.length ? actionList(visibleFocus) :
       ev.tier === 0 && !ev.manual || !hasGrades ? '<p class="text-slate-600">אין מספיק נתוני בגרות להצגת יעדים.</p>' : ev.manualReview.required ? '<p class="text-slate-600">לא אותרו חסמים פדגוגיים נוספים; נדרשת בדיקת נתונים.</p>' : '<p class="text-emerald-700 font-semibold">✓ אין חסמים פתוחים — כל הבחינות שהתקיימו עברו בהצלחה</p>';
     const paceLine = bagrutUnknown || this.tierBased(ev) ? '' : `<p class="mb-1.5 flex flex-wrap items-center gap-1.5">${this.paceBadge(ev)}<span>${ev.paceInfo.passedDueCount} מתוך ${ev.paceInfo.dueCount} שאלונים שמועדם הגיע עברו${ev.paceInfo.futureCount ? ` · ${ev.paceInfo.futureCount} עתידיים` : ''}</span></p>`;
     const signalList = flags => flags.map(f => `<div class="flex flex-wrap items-center gap-1.5">${UI.signalBadge(f)}${f.detail ? `<span class="text-xs text-slate-600">${E(f.detail)}</span>` : ''}</div>`).join('');
-    const pedagogical = signal.pedagogical.filter(f => f.id !== 'placement.duplicate' || this.state.showRoutineDuplicates || !isRoutineDuplicateSubject(f.detail));
     const detailsOpen = !!($('profile-more') && $('profile-more').open);
     setHtml('profBody', `
       <div class="profile-360-layout">
         <div class="profile-360-main">
           <section class="card profile-360-card">
             <div><h3>מה צריך כדי לזכות · מיקוד פדגוגי ויעדים לחניך</h3>${paceLine}${focusHtml}</div>
+            ${visibleCurrent.length ? actionList(visibleCurrent) : ''}
             ${visiblePlacement.length ? actionList(visiblePlacement) : ''}
             ${remaining.length ? `<details><summary class="profile-360-more">עוד ${remaining.length} פעולות</summary>${actionList(remaining)}</details>` : ''}
             ${bagrutUnknown || breakdown.isTrack12 ? '' : this.advisoryHtml(ev)}
@@ -382,7 +396,6 @@
           <section class="card profile-360-card"><h3>מקצועות פנימיים</h3><ul class="space-y-1.5 text-xs">${g3}</ul></section>
           <section class="card profile-360-card"><h3>הערת רכזת</h3><div id="profile-note-slot"></div><small id="profile-note-status" role="status">נשמר בשינוי השדה</small></section>
           <section class="card profile-360-card" aria-label="איכות נתונים והחלטת רכזת"><h3>איכות נתונים ובדיקת רכזת</h3>${signalList(signal.dataQuality)}${anomalies.length ? `<div>${anomalies.length} חריגות שיבוץ לבדיקה</div>` : !signal.prereqs.hasGroups ? '<div>לא ניתן לבדוק שיבוץ ללא קובץ קבוצות</div>' : ''}${!signal.dataQuality.length && !anomalies.length && signal.prereqs.hasGroups ? '<span>אין חריגות ידועות</span>' : ''}${ev.manualReview.required ? `<div>${this.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}</section>
-          <section class="card profile-360-card" aria-label="דגלים פדגוגיים"><h3>דגלים פדגוגיים</h3>${signalList(pedagogical)}</section>
         </aside>
       </div>`);
     const kpiSlot = $('profile-kpi-slot'), noteSlot = $('profile-note-slot');
@@ -422,8 +435,11 @@
       };
       const onlyMissedZeros = avg === 0 && counted.length && counted.every(e =>
         e.score === 0 && subjects.some(s => s.missed.has(e.key)));
-      if (onlyMissedZeros) return { state: counted.every(e => missed.some(m => m.key === e.key && confirmed(m))) ? 'missed' : 'unverified', value: avg };
-      if (avg != null) return { state: passingScore(avg, subject) ? 'ok' : 'fail', value: avg, missed: missed.some(confirmed) };
+      const confirmedMissed = missed.some(confirmed);
+      const hasActualFail = counted.some(e => !passingScore(e.score, subject) &&
+        !(e.score === 0 && missed.some(m => m.key === e.key)));
+      if (onlyMissedZeros) return { state: counted.every(e => missed.some(m => m.key === e.key && confirmed(m))) ? 'missed' : 'unverified', value: avg, missed: confirmedMissed };
+      if (avg != null) return { state: passingScore(avg, subject) ? 'ok' : 'fail', value: avg, missed: confirmedMissed, hasActualFail };
       if (missed.length) return { state: missed.some(confirmed) ? 'missed' : 'unverified', value: null };
       return null;
     };
