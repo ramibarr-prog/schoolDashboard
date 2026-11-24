@@ -47,9 +47,11 @@
       return !p.hasBagrut && !(sim.useCurrent && p.hasSadin);
     });
     if (!missing.length && !quality) return '';
-    return `<div class="card p-3 mb-3 text-sm text-slate-600" aria-label="איכות נתוני בגרות">
-      ${missing.length ? `<div>${UI.signalBadge('bagrut.unknown', `לא ניתן לקבוע — חסר קובץ בגרות לשכבות ${missing.map(Util.gl).join(', ')}`)}</div>` : ''}
-      ${quality ? `<div>איכות נתונים: ${quality} חניכים נדרשים לבדיקת רכזת. הבדיקה אינה דגל סיכון פדגוגי.</div>` : ''}</div>`;
+    const details = [
+      missing.length ? `לא ניתן לקבוע — חסר קובץ בגרות לשכבות ${missing.map(Util.gl).join(', ')}` : '',
+      quality ? `איכות נתונים: ${quality} חניכים נדרשים לבדיקת רכזת. הבדיקה אינה דגל סיכון פדגוגי.` : ''
+    ].filter(Boolean).join(' · ');
+    return `<span class="badge gate-warn bagrut-quality" tabindex="0" aria-label="${E(details)}" title="${E(details)}">${quality ? `${quality} לבדיקה` : 'חסר מידע'}</span>`;
   }
 
   function target30(s, ev, rules) {
@@ -384,19 +386,23 @@
     const box = $('bagrut-scope');
     if (!box) return;
     const select = $('bagrutSubjectDrillSelect'), simulation = $('bagrutSimulation');
+    const localControls = $('localControls');
+    const previousToolbar = localControls && localControls.querySelector(':scope > .bagrut-toolbar');
+    if (previousToolbar) previousToolbar.remove();
     const pill = (id, label) => `<button type="button" data-act="bagrutScope" data-scope="${id}" aria-pressed="${info.scope === id}">${label} · חניכים (${info.counts[id]})</button>`;
     box.classList.remove('hidden');
     const cohort = gk => ` • ${E(Config.getCohortNameForGrade(gk))}`;
     const grade = this.state.filters.grade;
-    box.innerHTML = `<div class="bagrut-toolbar">
-      <div class="bagrut-title"><h1>זכאות לבגרות</h1><p>ליווי פרטני של חניכים לקראת קו הסיום · ${grade === 'all' ? 'כל השכבות' : `שכבת ${E(Util.gl(grade))}`}</p></div>
+    box.innerHTML = `<div class="bagrut-toolbar${this.state.tab === 'bagrut' ? '' : ' hidden'}" data-bagrut-only>
+      <div class="bagrut-title"><h1>זכאות לבגרות</h1><span class="bagrut-grade">${grade === 'all' ? 'כל השכבות' : `שכבת ${E(Util.gl(grade))}`}</span></div>
       <div class="bagrut-controls"><span class="bagrut-subject-slot"></span>
         <button type="button" class="btn btn-ghost btn-sm bagrut-tool" data-act="bagrutTargets" aria-pressed="${!!this.state.bagrut.targets}">${this.state.bagrut.targets ? 'חזרה לזכאות' : 'יעד 30% וייצוא'}</button>
-        <span class="bagrut-simulation-slot"></span></div></div>
+        <span class="bagrut-simulation-slot"></span><span class="bagrut-quality-slot"></span></div></div>
       <div class="scope-bar bagrut-legacy-scope" role="group" aria-label="היקף שכבות בצפי הזכאות" hidden>
       ${pill('12', `🎓 שכבת י"ב${cohort('יב')}`)}${pill('11', `📈 שכבת י"א${cohort('יא')}`)}${pill('10', `🌱 שכבת י'${cohort('י')}`)}${pill('all', '📋 כל השכבות')}</div>`;
     if (select) box.querySelector('.bagrut-subject-slot').appendChild(select);
     if (simulation) box.querySelector('.bagrut-simulation-slot').appendChild(simulation);
+    if (localControls) localControls.appendChild(box.querySelector('.bagrut-toolbar'));
   },
 
   /** חניכים הדורשים תשומת לב: סיכון בבגרות או 2+ מקצועות בסיכון בסדין (אותה הגדרה כמו כרטיס חדר הבקרה) */
@@ -508,7 +514,8 @@
     const displayed = drill && drill.m ? drill.m.rows
       .filter(r => !drill.currentOn || ((!st.readinessClass || r.t.classKey === st.readinessClass) && this.readinessMatch(r, st.readinessFilter)))
       .map(r => ({ t: r.t })) : list;
-    const summary = signalSummary(displayed, signals, sim);
+    const qualitySlot = document.querySelector('.bagrut-toolbar .bagrut-quality-slot');
+    if (qualitySlot) qualitySlot.innerHTML = signalSummary(displayed, signals, sim);
     if (st.targets) {
       const hasBagrut = SignalEngine.prerequisitesFor('יב').hasBagrut;
       const targets = hasBagrut ? BagrutView.target30Rows.call(this, list) : [];
@@ -536,8 +543,8 @@
         `<table class="grid w-full text-right"><thead><tr>${th('name', 'חניך')}${th('class', 'כיתה')}${th('subject', 'מקצוע')}<th>מצב/ציון נוכחי</th>${th('target', 'יעד מינימלי ב-30%')}<th>הערה</th></tr></thead>
         <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">אין רכיבי 30% חסרים בסינון הנוכחי</td></tr>'}</tbody></table>`}`);
     }
-    if (drill) return setHtml('bagrut-table', summary + this.bagrutSubjectMatrix(drill, signals));
-    setHtml('bagrut-table', summary + this.bagrutTable(list, signals));
+    if (drill) return setHtml('bagrut-table', this.bagrutSubjectMatrix(drill, signals));
+    setHtml('bagrut-table', this.bagrutTable(list, signals));
   },
 
   /** פס KPI מנהלים מעל הטבלה: אחוזי זכאות בקבוצה המסוננת ומונים לחיצים לסינון מהיר */
