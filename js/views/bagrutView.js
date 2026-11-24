@@ -78,7 +78,20 @@
     const breakdown = UI.buildBagrutBreakdown(row.t, row.ev, {
       className: Config.classLabel(row.t.classKey), noData: noBagrutData(signals.get(tz), app.state.sim)
     });
-    drawer.innerHTML = `<button type="button" class="bg-drawer-close" data-act="bagrutDrawerClose" aria-label="סגירת פירוט זכאות">✕</button>${UI.renderBagrutBreakdown(breakdown, { showHeader: true, showPin: true, pinned: loadPins().has(tz), showOpen360: true })}`;
+    const cells = app._bagrutMatrixRows && app._bagrutMatrixRows.get(tz);
+    if (!cells) throw new Error('חסרים נתוני שורת הזכאות למגירת החניך');
+    const matrixSubjects = cells.map(cell => {
+      const subject = row.ev.subjects.find(s => s.id === cell.id);
+      const findings = breakdown.subjects.filter(s => cell.id === 'major'
+        ? s.name === 'מגמה' || s.name.startsWith('מגמה: ')
+        : subject && s.name === subject.name);
+      const tags = findings.flatMap(s => s.tags);
+      const count = new Set(tags.filter(tag => tag.code).map(tag => tag.code)).size;
+      const gaps = [...new Set(tags.filter(tag => !tag.code).map(tag => tag.label))];
+      if (count) gaps.push(`${count} ${count === 1 ? 'שאלון' : 'שאלונים'}`);
+      return { label: cell.label, text: cell.text, state: cell.state, more: cell.more, gap: gaps.join(' · ') };
+    });
+    drawer.innerHTML = `<button type="button" class="bg-drawer-close" data-act="bagrutDrawerClose" aria-label="סגירת פירוט זכאות">✕</button>${UI.renderBagrutBreakdown(breakdown, { showHeader: true, showPin: true, pinned: loadPins().has(tz), showOpen360: true, matrixSubjects })}`;
     table.querySelectorAll('tr[data-act="bagrutDrawerOpen"]').forEach(el => el.classList.toggle('bg-drawer-row-active', el.dataset.tz === tz));
   }
 
@@ -931,8 +944,10 @@
     const sim = this.state.sim;
     if (!signals) signals = signalsFor(list, sim);
     const showClass = this.state.filters.cls === 'all';
+    const majorLabel = 'מגמה 5 יח"ל';
     const tip = text => `data-act="mxPop" data-tip="${E(text)}" tabindex="0" role="button"`;
     const matrixCache = new Map();
+    const matrixRows = new Map();
     const majorPoints = (t, cand) => {
       const key = `${t.gradeKey}:${cand.id}`;
       if (!matrixCache.has(key)) {
@@ -945,7 +960,7 @@
     };
     const coreCell = (ev, id, label) => {
       const s = ev.subjects.find(x => x.id === id), c = this.subjectDisplayCell(ev, id);
-      if (!s || !c) return '<td>—</td>';
+      if (!s || !c) return { id, label, text: '—', state: 'neutral', plain: true };
       const blocked = ev.tier !== 5 && (this.tierBased(ev)
         ? ev.blockers.some(b => b.gate === 1 && !b.info && b.k !== 'units' && b.text.includes(s.name))
         : ev.paceInfo.blockedSubjects.includes(s.name));
@@ -960,7 +975,7 @@
         state = 'ok'; text = s.compApplied ? 'עבר בקיזוז' : 'עבר';
       } else if (s.exempt) { state = 'partial'; text = 'פטור'; }
       const detail = `${c.tip}${partial && points != null ? ` | נצברו ${points} נקודות מציונים מדווחים` : ''}`;
-      return `<td class="mx-cell" ${tip(detail)} aria-label="${E(`${label}: ${text}`)}"><span class="bagrut-cell bagrut-cell-${state}${state === 'bad' ? ' score-alert' : ''}">${E(text)}</span></td>`;
+      return { id, label, state, text, detail, ariaLabel: `${label}: ${text}` };
     };
     const majorCell = (t, ev) => {
       const c = this.majorDisplayCell(ev);
@@ -976,8 +991,11 @@
       else if (cand && cand.exempt) { state = 'partial'; text = 'פטור'; }
       const more = Math.max(0, electives.length - 1);
       const detail = `${c.tip}${points != null ? ` | נצברו ${points} נקודות מציונים מדווחים` : ''}`;
-      return `<td class="mx-cell" ${tip(detail)} aria-label="${E(`מגמה: ${text}`)}"><span class="bagrut-cell bagrut-cell-${state}${state === 'bad' ? ' score-alert' : ''}">${E(text)}</span>${more ? ` <span class="bagrut-more">+${more}</span>` : ''}</td>`;
+      return { id: 'major', label: majorLabel, state, text, detail, ariaLabel: `מגמה: ${text}`, more };
     };
+    const renderCell = cell => cell.noData ? '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>' :
+      cell.plain ? '<td>—</td>' :
+      `<td class="mx-cell" ${tip(cell.detail)} aria-label="${E(cell.ariaLabel)}"><span class="bagrut-cell bagrut-cell-${cell.state}${cell.state === 'bad' ? ' score-alert' : ''}">${E(cell.text)}</span>${cell.more ? ` <span class="bagrut-more">+${cell.more}</span>` : ''}</td>`;
     const status = (ev, signal) => {
       if (ev.tier === 5) return '<span class="bagrut-status bagrut-status-neutral">מסלול 12 שנות לימוד</span>';
       if (isUnknown(signal)) return UI.overallBadge('unknown');
@@ -990,23 +1008,26 @@
     const cols = 3 + (showClass ? 1 : 0) + BAGRUT_CORE.length + 1;
     const renderRow = ({ t, ev }) => {
       const signal = signals.get(t.tz), unknown = noBagrutData(signal, sim);
-      const noDataCell = '<td class="text-slate-400" title="לא ניתן לקבוע ללא נתוני בגרות לשכבה">—</td>';
+      const cells = unknown
+        ? [...BAGRUT_CORE.map(([id, label]) => ({ id, label, text: '—', state: 'neutral', noData: true })), { id: 'major', label: majorLabel, text: '—', state: 'neutral', noData: true }]
+        : [...BAGRUT_CORE.map(([id, label]) => coreCell(ev, id, label)), majorCell(t, ev)];
+      matrixRows.set(t.tz, cells);
       const breakdown = UI.buildBagrutBreakdown(t, ev, { noData: unknown });
       return `<tr class="${pins.has(t.tz) ? 'bagrut-pinned-row' : ''}${this.state.bagrut.drawerTz === t.tz ? ' bg-drawer-row-active' : ''}" data-act="bagrutDrawerOpen" data-tz="${E(t.tz)}" tabindex="0" aria-label="${E(`פירוט זכאות: ${t.name}`)}">
         <td><div class="bagrut-student"><button type="button" class="bagrut-pin" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" aria-label="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}: ${E(t.name)}" title="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}">${pins.has(t.tz) ? '★' : '☆'}</button>
         <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></div></td>
         ${showClass ? `<td>${E(Config.classLabel(t.classKey))}</td>` : ''}
         <td>${status(ev, signal)}</td><td class="bagrut-required bg-drawer-required" tabindex="0" data-breakdown-lines="${E(JSON.stringify(breakdown.tooltipLines))}"><span>${E(breakdown.cellSummary)}</span></td>
-        ${BAGRUT_CORE.map(([id, label]) => unknown ? noDataCell : coreCell(ev, id, label)).join('')}
-        ${unknown ? noDataCell : majorCell(t, ev)}</tr>`;
+        ${cells.map(renderCell).join('')}</tr>`;
     };
     const pinnedRows = list.filter(r => pins.has(r.t.tz));
     const body = (pinnedRows.length ? `<tr class="room-divider"><td colspan="${cols}">📌 נעוצים (${pinnedRows.length} חניכים)</td></tr>${pinnedRows.map(renderRow).join('')}` : '') +
       list.filter(r => !pins.has(r.t.tz)).map(renderRow).join('');
+    this._bagrutMatrixRows = matrixRows;
     const coreHead = ([id, l]) => `<th><button type="button" class="font-semibold hover:underline" data-act="bagrutDrill" data-sel="core:${id}" title="מטריצת שאלונים – ${E(l)}">${l}</button></th>`;
     const sortButton = (key, label) => `<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutSort" data-key="${key}" aria-pressed="${sort === key}">${label}${sort === key ? (dir > 0 ? ' ↑' : ' ↓') : ''}</button>`;
     return `<div class="bagrut-sort" role="group" aria-label="מיון חניכים"><span>מיון לפי:</span>${sortButton('tier', 'חומרת סיכון')}${sortButton('class', 'כיתה')}${sortButton('name', 'שם')}</div>
-      <table class="grid mx bagrut-grid w-full text-center"><thead><tr><th>חניך</th>${showClass ? '<th>כיתה</th>' : ''}<th>סטטוס זכאות / צבירה</th><th>מה נדרש</th>${BAGRUT_CORE.map(coreHead).join('')}<th>מגמה 5 יח"ל</th></tr></thead>
+      <table class="grid mx bagrut-grid w-full text-center"><thead><tr><th>חניך</th>${showClass ? '<th>כיתה</th>' : ''}<th>סטטוס זכאות / צבירה</th><th>מה נדרש</th>${BAGRUT_CORE.map(coreHead).join('')}<th>${E(majorLabel)}</th></tr></thead>
       <tbody>${body || `<tr><td colspan="${cols}" class="text-center text-slate-400 py-8">אין שורות להצגה</td></tr>`}</tbody></table>
       <div class="bagrut-legend"><span><i class="bagrut-cell-ok"></i> עבר</span><span><i class="bagrut-cell-bad"></i> חסם פעיל</span><span><i class="bagrut-cell-partial"></i> נקודות שנצברו</span><span><i class="bagrut-cell-neutral"></i> לומד / אין נתון</span></div>`;
   },

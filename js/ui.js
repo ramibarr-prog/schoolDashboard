@@ -119,14 +119,25 @@
       ${opts.showPin ? `<button type="button" class="bg-bd-pin" data-act="bagrutPin" data-tz="${esc(b.tz)}" aria-pressed="${!!opts.pinned}" aria-label="${opts.pinned ? 'הסרה ממעקב צמוד' : 'הוספה למעקב צמוד'}">${opts.pinned ? '★' : '☆'}</button>` : ''}</header>` : '';
     const subjectRows = b.subjects.map(s => `<li><strong>${esc(s.name)}</strong><span class="bg-bd-tags">${s.tags.map(x => `<span class="bg-bd-tag">${esc(x.label)}</span>`).join('')}</span></li>`).join('');
     const internalTags = b.internals.map(i => `<span class="bg-bd-tag" title="${esc(i.text)}">${esc(i.name)}</span>`).join('');
-    return `<div class="bg-bd">${header}<div class="bg-bd-metrics">
+    const metrics = `<div class="bg-bd-metrics">
       ${metric(unitLabel, units, b.enforceUnits && b.totalUnits < 21)}
       ${metric('מקצועות חסרים או חסומים', neutral ? '—' : b.subjectCount, b.subjectCount > 0)}
-      ${metric('חסמים פנימיים', neutral ? '—' : b.internalCount, b.internalCount > 0)}</div>
+      ${metric('חסמים פנימיים', neutral ? '—' : b.internalCount, b.internalCount > 0)}</div>`;
+    const open360 = opts.showOpen360 ? `<button type="button" class="bg-bd-open" data-act="openProfile" data-tz="${esc(b.tz)}">פתח כרטיס 360 מלא</button>` : '';
+    if (opts.matrixSubjects) {
+      const rows = opts.matrixSubjects.map(s => `<li class="bg-drawer-subject${s.state === 'bad' ? ' bg-drawer-subject-blocked' : ''}"><span class="bg-drawer-subject-name">${esc(s.label)}</span><span class="bagrut-cell bagrut-cell-${esc(s.state)}${s.state === 'bad' ? ' score-alert' : ''}">${esc(s.text)}</span>${s.more ? `<span class="bagrut-more">+${esc(s.more)}</span>` : ''}${s.gap ? `<span class="bg-drawer-subject-gap">${esc(s.gap)}</span>` : ''}</li>`).join('');
+      const internalContent = neutral ? (b.isTrack12 ? 'מסלול 12 שנות לימוד' : 'לא ניתן לקבוע ללא נתוני בגרות') : internalTags || '<span>לא אותרו חסמים פנימיים</span>';
+      return `<div class="bg-bd"><div class="bg-drawer-body">${header}${metrics}
+        <section class="bg-bd-section"><h3>מקצועות</h3><ul class="bg-drawer-subjects">${rows}</ul></section>
+        <section class="bg-bd-section"><h3>חסמים במקצועות פנימיים</h3><div class="bg-bd-tags">${internalContent}</div></section>
+        ${subjectRows ? `<details class="bg-drawer-exams"><summary>פירוט שאלונים לטיפול</summary><ul class="bg-bd-subjects">${subjectRows}</ul></details>` : ''}
+        ${b.other.length ? `<section class="bg-bd-section"><h3>נוסף לבדיקה</h3><ul>${b.other.map(text => `<li>${esc(text)}</li>`).join('')}</ul></section>` : ''}</div>${open360}</div>`;
+    }
+    return `<div class="bg-bd">${header}${metrics}
       ${neutral ? `<p class="bg-bd-note">${esc(b.cellSummary)}</p>` : `<section class="bg-bd-section"><h3>בחינות ומקצועות לטיפול</h3><ul class="bg-bd-subjects">${subjectRows || '<li>לא אותרו חסמים במקצועות</li>'}</ul></section>
       <section class="bg-bd-section"><h3>חסמים במקצועות פנימיים</h3><div class="bg-bd-tags">${internalTags || '<span>לא אותרו חסמים פנימיים</span>'}</div></section>
       ${b.other.length ? `<section class="bg-bd-section"><h3>נוסף לבדיקה</h3><ul>${b.other.map(text => `<li>${esc(text)}</li>`).join('')}</ul></section>` : ''}`}
-      ${opts.showOpen360 ? `<button type="button" class="bg-bd-open" data-act="openProfile" data-tz="${esc(b.tz)}">פתח כרטיס 360 מלא</button>` : ''}</div>`;
+      ${open360}</div>`;
   };
 
   window.UI = Object.freeze({ esc, badge, signalBadge, overallBadge, buildBagrutBreakdown, renderBagrutBreakdown });

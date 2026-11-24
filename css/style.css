@@ -115,7 +115,18 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bg-bd-note { margin: 0; color: var(--muted); font-size: .85rem; }
 .bg-bd-open { width: 100%; padding: .65rem .9rem; border: 0; border-radius: .6rem; background: var(--forest); color: var(--card-bg); font-size: .85rem; font-weight: 600; cursor: pointer; }
 .bg-bd-pin:focus-visible, .bg-bd-open:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
-.bg-drawer { position: fixed; z-index: 70; top: 0; bottom: 0; left: 0; width: min(27rem, 95vw); overflow-y: auto; padding: 1.25rem; border-right: 1px solid var(--card-border); background: var(--card-bg); box-shadow: 0 0 30px rgba(43, 59, 51, .2); }
+.bg-drawer { position: fixed; z-index: 70; top: 0; bottom: 0; left: 0; box-sizing: border-box; display: flex; flex-direction: column; width: min(27rem, 95vw); padding: 1.25rem; border-right: 1px solid var(--card-border); background: var(--card-bg); box-shadow: 0 0 30px rgba(43, 59, 51, .2); }
+.bg-drawer > .bg-bd { display: flex; flex: 1; flex-direction: column; min-height: 0; gap: .75rem; }
+.bg-drawer-body { display: grid; flex: 1 1 auto; align-content: start; gap: .75rem; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bg-drawer-subjects { display: grid; gap: .2rem; }
+.bg-drawer-subject { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; padding: .35rem .45rem; border-radius: .45rem; font-size: .8rem; }
+.bg-drawer-subject-blocked { background: rgba(200, 100, 50, .08); }
+.bg-drawer-subject-name { min-width: 6rem; font-weight: 600; }
+.bg-drawer-subject-gap { color: var(--muted); font-size: .72rem; }
+.bg-drawer-exams summary { color: var(--forest); font-size: .8rem; font-weight: 600; cursor: pointer; }
+.bg-drawer-exams summary:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.bg-drawer-exams .bg-bd-subjects { margin: .35rem 0 0; padding: 0; list-style: none; }
+.bg-drawer .bg-bd-open { flex: none; }
 .bg-drawer-close { display: block; margin: 0 auto .75rem 0; padding: .25rem .55rem; border: 1px solid var(--sage-soft); border-radius: .5rem; background: var(--card-bg); color: var(--forest); cursor: pointer; }
 .bg-drawer-close:focus-visible, #bagrut-table .bg-drawer-required:focus-visible, #bagrut-table tr[data-act="bagrutDrawerOpen"]:focus-visible { outline: 2px solid var(--sage); outline-offset: -2px; }
 #bagrut-table tr[data-act="bagrutDrawerOpen"] { cursor: pointer; }
