@@ -25,7 +25,11 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-table th:first-child { position: sticky; right: 0; z-index: 1; background: var(--card-bg); text-align: right; }
 .weak-table thead th:first-child { z-index: 2; }
 .weak-table td { min-width: 78px; text-align: center; }
+.weak-table .weak-block-divider { border-inline-start: 1px solid var(--sage-soft); padding-inline-start: .65rem; }
 .weak-heat { width: 100%; padding: .65rem .5rem; border: 2px solid transparent; border-radius: .5rem; font-weight: 700; cursor: pointer; }
+.weak-heat.weak-small-sample { background: var(--track); color: var(--muted); }
+.weak-risk-rules { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; color: var(--forest); font-size: .8rem; }
+.weak-risk-rules label { display: inline-flex; align-items: center; gap: .35rem; }
 .weak-heat.is-selected { border-color: var(--forest); box-shadow: inset 0 0 0 1px var(--card-bg); }
 .weak-heat:focus-visible, .weak-ranking button:focus-visible, .weak-name:focus-visible { outline: 2px solid var(--forest); outline-offset: 2px; }
 .weak-level-0 { background: var(--sage-tint); color: var(--forest); }

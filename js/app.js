@@ -1377,6 +1377,7 @@ const App = {
   },
 
   chgs: {
+    weaknessRiskRules(el) { return SadinView.weaknessRiskChange.call(this, el); },
     async backupImport(el) {
       const f = el.files[0];
       el.value = '';

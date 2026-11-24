@@ -35,6 +35,44 @@
   };
   const riskSubject = s => (s.avg != null && !SignalEngine.isPassingScore(s.avg, { social: isSocial(s.name) })) || s.missed.size > 0;
   const hasEventData = ev => ev && (ev.score != null || String(ev.scoreRaw || '').trim() !== '');
+  const RISK_RULES_KEY = 'schoolDashboard.hotspots.riskRules.v1';
+  const CORE_ORDER = ['math', 'english', 'hebrew', 'history', 'civics', 'literature', 'tanach'];
+  const CORE_ALIASES = [
+    ['מתמטיקה', 'חשבון'], ['אנגלית'], ['עברית', 'הבעה', 'לשון'],
+    ['היסטוריה'], ['אזרחות'], ['ספרות'], ['תנך', 'מקרא']
+  ];
+  const excludedWeaknessSubject = s => [s.name, ...s.entries.map(e => e.displaySubject || e.subject)]
+    .some(name => {
+      const text = Util.norm(name);
+      return text === 'חינוך' || /^(?:מגדר|חנג|חינוך גופני)(?:$|[\s(/-])/.test(text);
+    });
+  const coreRank = name => {
+    const core = Config.rules().coreSubjects.find(s => Util.norm(s.name) === Util.norm(name) || Util.matchKeywords(name, s.keywords));
+    const rank = core ? CORE_ORDER.indexOf(core.id) : -1;
+    return rank >= 0 ? rank : CORE_ALIASES.findIndex(aliases => Util.matchKeywords(name, aliases));
+  };
+  const validRiskRules = rules => rules && [1, 2, 3].includes(rules.minFails) && [0, 1, 2, 3].includes(rules.minMissed);
+  function weaknessRiskRules(app) {
+    const st = app.state.sadin;
+    if (st.weakRiskRules) return st.weakRiskRules;
+    let raw;
+    try { raw = window.localStorage.getItem(RISK_RULES_KEY); }
+    catch (error) {
+      console.warn('weakness risk rules storage', error);
+      app.toast('לא ניתן לקרוא את הגדרת הסיכון מהאחסון; ההגדרה תקפה לסשן הנוכחי בלבד.', 'warn');
+    }
+    let saved = null;
+    if (raw) {
+      try { saved = JSON.parse(raw); }
+      catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        console.warn('invalid weakness risk rules', error);
+      }
+      if (!validRiskRules(saved)) app.toast('הגדרת הסיכון השמורה אינה תקינה; נעשה שימוש בברירת המחדל.', 'warn');
+    }
+    st.weakRiskRules = validRiskRules(saved) ? { minFails: saved.minFails, minMissed: saved.minMissed } : { minFails: 1, minMissed: 1 };
+    return st.weakRiskRules;
+  }
 
   function relevantSubject(s) {
     const rules = Config.rules();
@@ -99,24 +137,33 @@
       </div></div>`;
   }
 
-  function weaknessModel(roster, st) {
-    const prereqs = prerequisitesByGrade(roster), cells = new Map(), classes = new Set(roster.map(t => t.classKey));
-    const failed = new Set(), riskyClasses = new Set(), averages = [], teachers = new Map();
+  function weaknessModel(roster, st, rules) {
+    const prereqs = prerequisitesByGrade(roster), cells = new Map(), classes = new Map(), coreRanks = new Map();
+    const failed = new Set(), averages = [], teachers = new Map();
+    roster.forEach(t => {
+      if (!classes.has(t.classKey)) classes.set(t.classKey, { key: t.classKey, grade: t.gradeKey, total: 0, risk: 0, scores: [] });
+      classes.get(t.classKey).total++;
+    });
     let missedTotal = 0, uncertain = false;
     GroupAnalyzer.sadinSheet(roster, st).forEach(row => Config.withRulesForGrade(row.t.gradeKey, () => {
-      const hasGroups = prereqs.get(row.t.gradeKey).hasGroups, scores = [];
+      const hasGroups = prereqs.get(row.t.gradeKey).hasGroups, scores = [], classScores = [];
+      let fails = 0, missedForStudent = 0;
       row.subjects.forEach(s => {
+        if (s.avg != null) scores.push(s.avg);
+        if (excludedWeaknessSubject(s)) return;
+        const rank = coreRank(s.name);
+        if (rank >= 0 && (!coreRanks.has(s.name) || rank < coreRanks.get(s.name))) coreRanks.set(s.name, rank);
         const missed = confirmedMissed(s, hasGroups, row.t.tz), fail = failingSubject(s);
         uncertain = uncertain || s.missed.size > missed;
-        if (s.avg != null) scores.push(s.avg);
-        if (fail) failed.add(row.t.tz);
+        if (fail) { failed.add(row.t.tz); fails++; }
+        missedForStudent += missed;
         missedTotal += missed;
-        if (s.avg == null && !missed) return;
+        if (!missed && (s.avg == null || (s.avg === 0 && !fail && s.missed.size))) return;
+        if (s.avg != null) classScores.push(s.avg);
         const key = JSON.stringify([row.t.classKey, s.name]);
         if (!cells.has(key)) cells.set(key, { cls: row.t.classKey, subject: s.name, students: [], scores: [], teachers: new Set(), missed: 0, uncertain: false });
-        const cell = cells.get(key), risk = fail || missed > 0;
+        const cell = cells.get(key), risk = fail || (rules.minMissed > 0 && missed >= rules.minMissed);
         cell.uncertain = cell.uncertain || !hasGroups || s.missed.size > missed;
-        if (risk) riskyClasses.add(row.t.classKey);
         cell.students.push({ t: row.t, avg: s.avg, fail, missed, risk });
         if (s.avg != null) cell.scores.push(s.avg);
         cell.missed += missed;
@@ -138,19 +185,43 @@
         });
       });
       if (scores.length) averages.push(scores.reduce((a, b) => a + b, 0) / scores.length);
+      const cls = classes.get(row.t.classKey);
+      if (classScores.length) cls.scores.push(classScores.reduce((a, b) => a + b, 0) / classScores.length);
+      if (fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) cls.risk++;
     }));
     const list = [...cells.values()];
     list.forEach(c => { c.risk = c.students.filter(s => s.risk).length; c.rate = c.risk / c.students.length * 100; });
-    const ranked = [...list].sort((a, b) => b.rate - a.rate || b.risk - a.risk || natural(a.subject, b.subject) || natural(a.cls, b.cls));
-    const subjects = [...new Set(list.map(c => c.subject))].sort((a, b) => {
-      const rate = name => {
-        const group = list.filter(c => c.subject === name);
-        return group.reduce((n, c) => n + c.risk, 0) / group.reduce((n, c) => n + c.students.length, 0);
-      };
-      return rate(b) - rate(a) || natural(a, b);
+    const fullCells = list.filter(c => c.students.length >= 3);
+    const ranked = (fullCells.length ? fullCells : list).sort((a, b) => b.rate - a.rate || b.risk - a.risk || natural(a.subject, b.subject) || natural(a.cls, b.cls));
+    const subjectStats = new Map();
+    list.forEach(c => {
+      if (!subjectStats.has(c.subject)) subjectStats.set(c.subject, { full: [], small: [] });
+      subjectStats.get(c.subject)[c.students.length >= 3 ? 'full' : 'small'].push(c);
     });
-    return { cells, ranked, subjects, classes: [...classes].sort(natural), failed: failed.size, missed: missedTotal,
-      riskyClasses: riskyClasses.size, averages, teachers: [...teachers.values()], uncertain };
+    const subjectRate = name => {
+      const stats = subjectStats.get(name), group = stats.full.length ? stats.full : stats.small;
+      return group.reduce((n, c) => n + c.risk, 0) / group.reduce((n, c) => n + c.students.length, 0);
+    };
+    const subjects = [...new Set(list.map(c => c.subject))].sort((a, b) => {
+      const aCore = coreRanks.has(a), bCore = coreRanks.has(b);
+      if (aCore !== bCore) return aCore ? -1 : 1;
+      if (aCore) return coreRanks.get(a) - coreRanks.get(b) || natural(a, b);
+      const aFull = subjectStats.get(a).full.length > 0, bFull = subjectStats.get(b).full.length > 0;
+      return Number(bFull) - Number(aFull) || subjectRate(b) - subjectRate(a) || natural(a, b);
+    });
+    const grades = new Map();
+    classes.forEach(c => {
+      if (!grades.has(c.grade)) grades.set(c.grade, []);
+      grades.get(c.grade).push(c);
+    });
+    const classMean = c => c.scores.length ? c.scores.reduce((a, b) => a + b, 0) / c.scores.length : Infinity;
+    let riskyClasses = 0;
+    grades.forEach(group => {
+      group.sort((a, b) => b.risk / b.total - a.risk / a.total || b.risk - a.risk || classMean(a) - classMean(b) || natural(a.key, b.key));
+      riskyClasses += group.slice(0, Math.ceil(group.length / 3)).filter(c => c.risk > 0).length;
+    });
+    return { cells, ranked, subjects, coreRanks, classes: [...classes.keys()].sort(natural), failed: failed.size, missed: missedTotal,
+      riskyClasses, averages, teachers: [...teachers.values()], uncertain };
   }
 
   const mean = values => values.length ? Util.fmt(values.reduce((a, b) => a + b, 0) / values.length, 1) : '—';
@@ -170,6 +241,24 @@
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
     this.state.sadin.strip = 'all';
     this.dirty.add('sadin'); this.renderTab('sadin');
+  },
+
+  weaknessRiskChange(el) {
+    const key = el.dataset.key, value = Number(el.value), current = weaknessRiskRules(this);
+    if (!['minFails', 'minMissed'].includes(key) || !validRiskRules({ ...current, [key]: value })) {
+      this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');
+      this.dirty.add('sadin'); this.renderTab('sadin');
+      return;
+    }
+    this.state.sadin.weakRiskRules = { ...current, [key]: value };
+    try { window.localStorage.setItem(RISK_RULES_KEY, JSON.stringify(this.state.sadin.weakRiskRules)); }
+    catch (error) {
+      console.warn('weakness risk rules storage', error);
+      this.toast('לא ניתן לשמור את הגדרת הסיכון באחסון; היא תקפה לסשן הנוכחי בלבד.', 'warn');
+    }
+    this.dirty.add('sadin'); this.renderTab('sadin');
+    const next = document.querySelector(`[data-chg="weaknessRiskRules"][data-key="${key}"]`);
+    if (next) next.focus();
   },
 
   selectWeakness(el) {
@@ -368,16 +457,19 @@
   },
 
   renderWeakness(roster, st) {
-    const model = weaknessModel(roster, st);
+    const rules = weaknessRiskRules(this), model = weaknessModel(roster, st, rules);
     const selected = st.cell && model.cells.get(JSON.stringify([st.cell.cls, st.cell.subject])) || model.ranked[0];
     st.cell = selected ? { cls: selected.cls, subject: selected.subject } : null;
     const attrs = c => `data-class="${E(c.cls)}" data-subject="${E(c.subject)}"`;
     const cellButton = c => {
       if (!c) return '<span class="weak-empty">—</span>';
       const active = selected === c;
-      return `<button type="button" class="weak-heat weak-level-${severity(Math.round(c.rate))}${active ? ' is-selected' : ''}" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${active}" aria-label="${E(`${c.subject} · ${Config.classLabel(c.cls)}: ${Math.round(c.rate)}% בסיכון, ${c.risk} מתוך ${c.students.length}`)}">${Math.round(c.rate)}%</button>`;
+      const small = c.students.length < 3, label = small ? `${c.risk}/${c.students.length}` : `${Math.round(c.rate)}%`;
+      return `<button type="button" class="weak-heat ${small ? 'weak-small-sample' : `weak-level-${severity(Math.round(c.rate))}`}${active ? ' is-selected' : ''}" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${active}" aria-label="${E(`${c.subject} · ${Config.classLabel(c.cls)}: ${c.risk} מתוך ${c.students.length} בסיכון${small ? ' · מדגם קטן' : ` · ${Math.round(c.rate)}%`}`)}">${label}</button>`;
     };
-    const rows = model.classes.map(cls => `<tr><th scope="row">${E(Config.classLabel(cls))}</th>${model.subjects.map(subject => `<td>${cellButton(model.cells.get(JSON.stringify([cls, subject])))}</td>`).join('')}</tr>`).join('');
+    const divider = model.subjects.findIndex(subject => !model.coreRanks.has(subject));
+    const separator = index => divider > 0 && index === divider ? ' class="weak-block-divider"' : '';
+    const rows = model.classes.map(cls => `<tr><th scope="row">${E(Config.classLabel(cls))}</th>${model.subjects.map((subject, index) => `<td${separator(index)}>${cellButton(model.cells.get(JSON.stringify([cls, subject])))}</td>`).join('')}</tr>`).join('');
     const ranked = model.ranked.filter(c => c.risk).slice(0, 5);
     const subject = selected ? selected.subject : st.subject;
     const teacherRows = model.teachers.filter(t => t.subject === subject).sort((a, b) => natural(a.name, b.name)).map(t =>
@@ -402,15 +494,20 @@
       ${kpi('ממוצע שכבתי', mean(model.averages), 'ממוצע חניכים עם ציונים בסינון הנוכחי')}
       ${kpi('נכשלים בשוטף', model.failed, 'חניכים עם ממוצע נכשל, ללא החמצה בלבד')}
       ${kpi('אירוע הערכה שהוחמץ', !model.missed && (model.uncertain || incompleteGroups) ? '—' : model.missed, 'אירועים עם שיבוץ מאומת בלבד')}
-      ${kpi('כיתות בסיכון', `${model.riskyClasses} מתוך ${model.classes.length}`, 'כיתות עם חניך אחד לפחות בסיכון')}</div>
+      ${kpi('כיתות בסיכון', `${model.riskyClasses} מתוך ${model.classes.length}`, `שליש עליון מתוך ${model.classes.length} כיתות לפי שיעור סיכון בכל שכבה`)}</div>
       ${model.uncertain || incompleteGroups ? '<p class="weak-notice">לא ניתן לקבוע החמצות ללא שיבוץ מאומת; הנתונים עשויים להיות חלקיים.</p>' : ''}
       ${incompleteSadin ? '<p class="weak-notice">חסרים נתוני ציונים לחלק מהשכבות; הנתונים עשויים להיות חלקיים.</p>' : ''}
       ${quality ? '<button type="button" class="badge gate-warn weak-quality" data-act="openDataQuality">איכות נתונים · לבדיקה</button>' : ''}
-      <div class="weak-layout"><div class="weak-main"><section class="card weak-card"><h2>מפת חום: כיתה × מקצוע</h2><p class="weak-muted">אחוז החניכים בסיכון מתוך החניכים עם נתונים במקצוע</p>
-        <div class="weak-scroll"><table class="weak-table"><thead><tr><th scope="col">כיתה</th>${model.subjects.map(s => `<th scope="col">${E(s)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="weak-layout"><div class="weak-main"><section class="card weak-card"><h2>מפת חום: כיתה × מקצוע</h2>
+        <p class="weak-muted">הגדרת סיכון: חניך/כיתה = לפחות ${rules.minFails} מקצועות נכשלים${rules.minMissed ? ` או ${rules.minMissed} החמצות מאומתות` : ''} • בתא מקצוע = נכשל במקצוע${rules.minMissed ? ` או לפחות ${rules.minMissed} החמצות מאומתות במקצוע` : ''}</p>
+        <div class="weak-risk-rules" role="group" aria-label="הגדרת חניך בסיכון"><label>נכשלים:
+          <select class="inp" data-chg="weaknessRiskRules" data-key="minFails" aria-label="מספר מקצועות נכשלים">${[1, 2, 3].map(n => `<option value="${n}" ${rules.minFails === n ? 'selected' : ''}>${n}+</option>`).join('')}</select></label>
+          <label>החמצות מאומתות: <select class="inp" data-chg="weaknessRiskRules" data-key="minMissed" aria-label="מספר החמצות מאומתות">${[1, 2, 3, 0].map(n => `<option value="${n}" ${rules.minMissed === n ? 'selected' : ''}>${n ? `${n}+` : 'ללא'}</option>`).join('')}</select></label></div>
+        <p class="weak-muted">אחוז החניכים בסיכון מתוך החניכים עם נתונים במקצוע; מדגם קטן משלושה מוצג כמספר חניכים.</p>
+        <div class="weak-scroll"><table class="weak-table"><thead><tr><th scope="col">כיתה</th>${model.subjects.map((s, index) => `<th scope="col"${separator(index)}>${E(s)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
         ${model.subjects.length ? '' : '<p class="weak-muted">אין נתונים זמינים בסינון הנוכחי.</p>'}
         <div class="weak-legend"><span><i class="weak-level-0"></i>נמוך עד 19%</span><span><i class="weak-level-1"></i>20%–39%</span><span><i class="weak-level-2"></i>40%–59%</span><span><i class="weak-level-3"></i>גבוה 60% ומעלה</span></div></section>
-        <div class="weak-lower"><section class="card weak-card"><h2>חמשת המוקדים הבוערים</h2><div class="weak-ranking">${ranked.map((c, i) => `<button type="button" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${selected === c}"><span>${i + 1}. ${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${Math.round(c.rate)}%</strong></button>`).join('') || '<p class="weak-muted">לא נמצאו מוקדים בסיכון.</p>'}</div></section>
+        <div class="weak-lower"><section class="card weak-card"><h2>חמשת המוקדים הבוערים</h2><div class="weak-ranking">${ranked.map((c, i) => `<button type="button" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${selected === c}"><span>${i + 1}. ${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}%`}</strong></button>`).join('') || '<p class="weak-muted">לא נמצאו מוקדים בסיכון.</p>'}</div></section>
         <section class="card weak-card"><h2>מורים במקצוע הנבחר${subject && subject !== 'all' ? ` · ${E(subject)}` : ''}</h2><div class="weak-scroll"><table class="weak-teachers"><thead><tr><th>מורה</th><th>ממוצע</th><th>נכשלים</th><th>הוחמצו</th></tr></thead><tbody>${teacherRows || '<tr><td colspan="4">אין נתוני מורים זמינים</td></tr>'}</tbody></table></div><p class="weak-muted">התראה מוצעת רק בעבירת סף חומרה ובשיבוץ מאומת.</p></section></div></div>
         <aside class="card weak-card weak-detail"><h2>פירוט תא</h2>${detail}</aside></div>`);
   },
