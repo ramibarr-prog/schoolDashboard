@@ -333,13 +333,10 @@
       groups: `<table class="grid w-full"><thead><tr><th class="text-right">קבוצה</th><th class="text-right">מקצוע</th><th class="text-right">מורה</th><th class="text-right">ממוצע</th></tr></thead><tbody>${groupsRows || emptyRow(4, 'אין שיבוצים')}</tbody></table>`
     };
 
-    /* כל פריט מיקוד שהיועץ מציג בטבלה (ev.focus) מופיע גם כאן; יעדי "מחשבון הפוך" כבר מוצגים בניסוח מפורט ב-profileFocus */
     const reviewReasons = ev.blockers.filter(b => b.k === 'exempt-review').map(b => b.text);
-    const focus = breakdown.isTrack12 || breakdown.noData ? [] : [...new Set([...this.profileFocus(ev), ...ev.focus.filter(f => !f.target && !/לא מספיק/.test(f.text) && !reviewReasons.some(reason => f.text.includes(reason))).map(f => f.text)])];
+    const focus = breakdown.isTrack12 || breakdown.noData ? [] : [...new Set([...this.profileFocus(ev).filter(text => !text.startsWith('לבדיקה:')), ...ev.focus.filter(f => !f.target && !f.text.startsWith('לבדיקה:') && !/לא מספיק/.test(f.text) && !reviewReasons.some(reason => f.text.includes(reason))).map(f => f.text)])];
     const focusItems = focus.map(text => ({
-      text, category: text.startsWith('לבדיקה:') ? 'תקינות נתונים' :
-        ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|פיצוי/.test(text) ? 'משפר ציון' :
-        breakdown.subjects.some(s => text.includes(s.name)) || breakdown.internals.some(i => text.includes(i.name)) ? 'חוסם זכאות' : 'תקינות נתונים'
+      text, category: ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|פיצוי/.test(text) ? 'משפר ציון' : 'חוסם זכאות'
     }));
     const currentRows = [...cur.core.values(), ...cur.majors.values(), ...cur.extras];
     const currentItems = currentRows.flatMap(row => [
@@ -347,25 +344,40 @@
       ...(!breakdown.isTrack12 && (row.state === 'missed' || row.missed) ? [{ text: `${row.name}: אירוע הערכה שהוחמץ`, category: 'הוחמץ' }] : [])
     ]);
     const placementByText = new Map();
-    if (!breakdown.isTrack12) anomalies.forEach(a => {
+    anomalies.forEach(a => {
       const text = `${a.kindLabel}: ${a.subject}`;
       const item = placementByText.get(text);
-      if (item) item.count++;
-      else placementByText.set(text, { text, category: 'תקינות נתונים', subject: a.subject, count: 1 });
+      if (item) {
+        item.count++;
+        a.groups.forEach(g => item.groups.set(g.groupId, g));
+        a.sadinGroups.forEach(g => item.sadinGroups.set(g.groupId, g));
+      } else {
+        placementByText.set(text, { text, subject: a.kind === 'nomajor' ? GroupAnalyzer.MAJOR_KEY : a.subject, count: 1,
+          groups: new Map(a.groups.map(g => [g.groupId, g])), sadinGroups: new Map(a.sadinGroups.map(g => [g.groupId, g])) });
+      }
     });
-    const placementItems = [...placementByText.values()].map(item => ({
-      ...item, text: item.count > 1 ? `${item.text} (×${item.count})` : item.text
-    }));
-    const actionList = rows => `<ul class="profile-360-focus-list">${rows.map(item => `<li><span class="profile-360-focus-tag">${E(item.category)}</span><span>${E(item.text)}</span>${item.subject ? `<button type="button" class="profile-360-fix" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(item.subject)}">בדיקה לתיקון</button>` : ''}</li>`).join('')}</ul>`;
+    const groupDetails = groups => [...groups.values()].map(g => `[${g.groupId}] ${g.teacher || 'ללא מורה'}`).join(' · ');
+    const placementItems = [...placementByText.values()].map(item => {
+      const current = groupDetails(item.groups), sadin = groupDetails(item.sadinGroups);
+      return `<li><div><span>${E(item.text)}${item.count > 1 ? ` (×${item.count})` : ''}</span>${current ? `<small>שיבוץ: ${E(current)}</small>` : ''}${sadin ? `<small>בסדין: ${E(sadin)}</small>` : ''}</div>
+        <button type="button" class="profile-360-fix" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(item.subject)}">בדיקה לתיקון</button></li>`;
+    }).join('');
+    const actionList = rows => `<ul class="profile-360-focus-list">${rows.map(item => `<li><span class="profile-360-focus-tag">${E(item.category)}</span><span>${E(item.text)}</span></li>`).join('')}</ul>`;
     const visibleFocus = focusItems.slice(0, 4);
     const visibleCurrent = currentItems.slice(0, Math.max(0, 4 - visibleFocus.length));
-    const visiblePlacement = placementItems.slice(0, Math.max(0, 4 - visibleFocus.length - visibleCurrent.length));
-    const remaining = [...focusItems.slice(4), ...currentItems.slice(visibleCurrent.length), ...placementItems.slice(visiblePlacement.length)];
+    const remaining = [...focusItems.slice(4), ...currentItems.slice(visibleCurrent.length)];
     const hasGrades = ev.subjects.some(s => s.comps.some(c => c.state === 'num' || c.state === 'pass')) || majors.some(c => c.bagrut != null);
     const focusHtml = breakdown.isTrack12 ? '<p class="text-slate-600">החניך נמצא במסלול 12 שנות לימוד.</p>' : bagrutUnknown ? '<p class="text-slate-600">לא ניתן לקבוע יעדי בגרות — חסרים נתוני בגרות לשכבה.</p>' : focus.length ? actionList(visibleFocus) :
-      ev.tier === 0 && !ev.manual || !hasGrades ? '<p class="text-slate-600">אין מספיק נתוני בגרות להצגת יעדים.</p>' : ev.manualReview.required ? '<p class="text-slate-600">לא אותרו חסמים פדגוגיים נוספים; נדרשת בדיקת נתונים.</p>' : '<p class="text-emerald-700 font-semibold">✓ אין חסמים פתוחים — כל הבחינות שהתקיימו עברו בהצלחה</p>';
+      ev.tier === 0 && !ev.manual || !hasGrades ? '<p class="text-slate-600">אין מספיק נתוני בגרות להצגת יעדים.</p>' : ev.manualReview.required ? '<p class="text-slate-600">לא אותרו חסמים פדגוגיים נוספים.</p>' : '<p class="text-emerald-700 font-semibold">✓ אין חסמים פתוחים — כל הבחינות שהתקיימו עברו בהצלחה</p>';
     const paceLine = bagrutUnknown || this.tierBased(ev) ? '' : `<p class="mb-1.5 flex flex-wrap items-center gap-1.5">${this.paceBadge(ev)}<span>${ev.paceInfo.passedDueCount} מתוך ${ev.paceInfo.dueCount} שאלונים שמועדם הגיע עברו${ev.paceInfo.futureCount ? ` · ${ev.paceInfo.futureCount} עתידיים` : ''}</span></p>`;
     const signalList = flags => flags.map(f => `<div class="flex flex-wrap items-center gap-1.5">${UI.signalBadge(f)}${f.detail ? `<span class="text-xs text-slate-600">${E(f.detail)}</span>` : ''}</div>`).join('');
+    const reviewLines = [...new Set([...reviewReasons, ...(ev.manualReview.required ? this.manualReviewLines(ev) : []), ...(ev.manualReview.required ? ev.suspectExtra : ev.suspect)])];
+    const otherIssues = signal.dataQuality.length || reviewLines.length;
+    const qualitySummary = anomalies.length ? `${anomalies.length} חריגות שיבוץ לבדיקה${otherIssues ? ' · ממצאים נוספים' : ''}` :
+      !signal.prereqs.hasGroups ? `לא ניתן לבדוק שיבוץ ללא קובץ קבוצות${otherIssues ? ' · ממצאים נוספים' : ''}` :
+      otherIssues ? 'נמצאו ממצאים לבדיקה' : 'אין חריגות ידועות';
+    const qualityDetails = $('profile-quality');
+    const qualityOpen = qualityDetails && qualityDetails.dataset.tz === t.tz && qualityDetails.open;
     const detailsOpen = !!($('profile-more') && $('profile-more').open);
     setHtml('profBody', `
       <div class="profile-360-layout">
@@ -373,7 +385,6 @@
           <section class="card profile-360-card">
             <div><h3>מה צריך כדי לזכות · מיקוד פדגוגי ויעדים לחניך</h3>${paceLine}${focusHtml}</div>
             ${visibleCurrent.length ? actionList(visibleCurrent) : ''}
-            ${visiblePlacement.length ? actionList(visiblePlacement) : ''}
             ${remaining.length ? `<details><summary class="profile-360-more">עוד ${remaining.length} פעולות</summary>${actionList(remaining)}</details>` : ''}
             ${bagrutUnknown || breakdown.isTrack12 ? '' : this.advisoryHtml(ev)}
           </section>
@@ -395,7 +406,10 @@
           <section class="card profile-360-card"><h3>ממוצעים ומדדים</h3><div id="profile-kpi-slot"></div></section>
           <section class="card profile-360-card"><h3>מקצועות פנימיים</h3><ul class="space-y-1.5 text-xs">${g3}</ul></section>
           <section class="card profile-360-card"><h3>הערת רכזת</h3><div id="profile-note-slot"></div><small id="profile-note-status" role="status">נשמר בשינוי השדה</small></section>
-          <section class="card profile-360-card" aria-label="איכות נתונים והחלטת רכזת"><h3>איכות נתונים ובדיקת רכזת</h3>${signalList(signal.dataQuality)}${anomalies.length ? `<div>${anomalies.length} חריגות שיבוץ לבדיקה</div>` : !signal.prereqs.hasGroups ? '<div>לא ניתן לבדוק שיבוץ ללא קובץ קבוצות</div>' : ''}${!signal.dataQuality.length && !anomalies.length && signal.prereqs.hasGroups ? '<span>אין חריגות ידועות</span>' : ''}${ev.manualReview.required ? `<div>${this.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}</section>
+          <details id="profile-quality" class="card profile-360-card profile-360-quality" data-tz="${E(t.tz)}" aria-label="איכות נתונים והחלטת רכזת" ${qualityOpen ? 'open' : ''}>
+            <summary><span><strong>איכות נתונים ובדיקת רכזת</strong><small>${E(qualitySummary)}</small></span><span class="profile-360-quality-arrow" aria-hidden="true">⌄</span></summary>
+            <div class="profile-360-quality-body">${placementItems ? `<ul class="profile-360-quality-list">${placementItems}</ul>` : ''}${signalList(signal.dataQuality)}${reviewLines.map(line => `<div>${E(line)}</div>`).join('')}</div>
+          </details>
         </aside>
       </div>`);
     const kpiSlot = $('profile-kpi-slot'), noteSlot = $('profile-note-slot');
@@ -511,14 +525,14 @@
     ].filter(Boolean).join(' • '));
     const riskTitle = [...cur.failing.map(r => `נכשל: ${r.name}`), ...cur.missing.map(r => `חסר ציון: ${r.name}`)].join(' | ');
     const placement = !prereqs.hasGroups ? ['—', 'לא ניתן לקבוע — חסר קובץ קבוצות לשכבה', ''] :
-      !anomalies.total ? ['✓ תקין', 'משובץ בכל המקצועות הנדרשים', 'txt-ok'] :
+      !anomalies.total ? ['✓ תקין', 'ללא חריגות', 'txt-ok'] :
       [anomalies.total === 1 ? 'חריגה אחת' : `${anomalies.total} חריגות`, E(anomalies.byTrainee.get(t.tz).text), anomalies.rows.some(r => r.kind !== 'sadin' && r.kind !== 'nomajor') ? 'txt-bad' : anomalies.rows.some(r => r.kind === 'nomajor') ? 'txt-warn' : 'text-slate-600'];
     setHtml('profKpis', [
       box('ממוצע חניך', own == null ? '—' : Util.fmt(own, 1),
         delta == null ? 'אין ציונים שוטפים' : `${delta >= 0 ? '+' : ''}${Util.fmt(delta, 1)} ביחס לכיתה`, own != null && delta != null && delta < 0 ? 'txt-warn' : ''),
       box('ממוצע כיתתי', classAvg == null ? '—' : Util.fmt(classAvg, 1), `${E(Config.classLabel(t.classKey))} · ${scores.length} חניכים עם ציונים`),
       box('מקצועות נכשלים / חסרים (ציון שוטף)', cur.any ? total : '—', riskSub, total ? (nf ? 'txt-bad' : 'txt-warn') : cur.any ? 'txt-ok' : '', riskTitle),
-      box('סטטוס שיבוץ בקבוצות', placement[0], placement[1], placement[2])
+      box('סטטוס שיבוץ בקבוצות', placement[0], placement[1], placement[2], anomalies.total && prereqs.hasGroups ? anomalies.byTrainee.get(t.tz).text : '')
     ].join(''));
   },
 
