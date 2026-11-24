@@ -120,7 +120,8 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bg-drawer-close:focus-visible, #bagrut-table .bg-drawer-required:focus-visible, #bagrut-table tr[data-act="bagrutDrawerOpen"]:focus-visible { outline: 2px solid var(--sage); outline-offset: -2px; }
 #bagrut-table tr[data-act="bagrutDrawerOpen"] { cursor: pointer; }
 #bagrut-table .bagrut-grid tr.bg-drawer-row-active td { background: var(--sage-soft); }
-.bg-drawer-tooltip { position: fixed; z-index: 80; width: max-content; max-width: min(24rem, calc(100vw - 1rem)); padding: .55rem .75rem; border-radius: .6rem; background: var(--forest); color: var(--cream-bg); font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); pointer-events: none; text-align: right; }
+#mxPop { box-sizing: border-box; max-width: min(22rem, calc(100vw - 1rem)); max-height: calc(100vh - 1rem); overflow-y: auto; overflow-wrap: anywhere; }
+.bg-drawer-tooltip { position: fixed; z-index: 80; box-sizing: border-box; width: max-content; max-width: min(24rem, calc(100vw - 1rem)); padding: .55rem .75rem; border-radius: .6rem; background: var(--forest); color: var(--cream-bg); font-size: .78rem; line-height: 1.5; box-shadow: 0 8px 24px rgba(53, 87, 71, .3); pointer-events: none; text-align: right; }
 .bg-drawer-tooltip div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bg-drawer-tooltip small { display: block; margin-top: .2rem; color: var(--sage-soft); }
 #overview-body .ov-dashboard { display: grid; gap: .75rem; }

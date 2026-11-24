@@ -1129,11 +1129,28 @@ const App = {
     window.addEventListener('popstate', () => { if (this.state.tab === 'profile' && this.state.navOrigin) this.returnToOrigin(); });
     /* חלון הפירוט של גיליון השליטה: ריחוף / מיקוד מקלדת זמניים, לחיצה מקבעת */
     const mxEl = e => e.target.closest && e.target.closest('[data-act="mxPop"]');
-    document.addEventListener('mouseover', e => { const el = mxEl(e); if (el && !this._mxPinned) this.showMxPop(el, false); });
-    document.addEventListener('mouseout', e => { if (mxEl(e) && !this._mxPinned) this.hideMxPop(); });
+    document.addEventListener('mouseover', e => { const el = mxEl(e); if (el && !el.contains(e.relatedTarget) && !this._mxPinned) this.showMxPop(el, false); });
+    document.addEventListener('mouseout', e => {
+      const el = mxEl(e);
+      if (el && !el.contains(e.relatedTarget) && !this._mxPinned && this._mxTrigger === el && !el.contains(document.activeElement)) {
+        const focused = document.activeElement && document.activeElement.closest('[data-act="mxPop"]');
+        if (focused) this.showMxPop(focused, false); else this.hideMxPop();
+      }
+    });
     document.addEventListener('focusin', e => { const el = mxEl(e); if (el && !this._mxPinned) this.showMxPop(el, false); });
-    document.addEventListener('focusout', e => { if (mxEl(e) && !this._mxPinned) this.hideMxPop(); });
-    document.addEventListener('click', e => { if (!mxEl(e)) this.hideMxPop(); });
+    document.addEventListener('focusout', e => {
+      const el = mxEl(e);
+      if (el && !el.contains(e.relatedTarget) && !this._mxPinned && this._mxTrigger === el && !el.matches(':hover')) this.hideMxPop();
+    });
+    document.addEventListener('keydown', e => {
+      const el = mxEl(e);
+      if (el && e.target === el && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault(); this.acts.mxPop.call(this, el);
+      }
+    });
+    document.addEventListener('click', e => { const pop = $('mxPop'); if (!mxEl(e) && (!pop || !pop.contains(e.target))) this.hideMxPop(); });
+    document.addEventListener('scroll', e => { const pop = $('mxPop'); if (!pop || !pop.contains(e.target)) this.hideMxPop(); }, true);
+    window.addEventListener('resize', () => this.hideMxPop());
     const sadinEl = e => e.target.closest && e.target.closest('[data-act="sadinPop"]');
     document.addEventListener('mouseover', e => { const el = sadinEl(e); if (el && !this._sadinPinned) this.showSadinPop(el, false); });
     document.addEventListener('mouseout', e => { const el = sadinEl(e); if (el && !el.contains(e.relatedTarget) && !this._sadinPinned) this.hideSadinPop(); });

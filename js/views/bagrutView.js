@@ -38,6 +38,14 @@
     document.querySelectorAll('#bagrut-table .bg-drawer-required[aria-describedby]').forEach(el => el.removeAttribute('aria-describedby'));
   }
 
+  function describeMxCell(el, add) {
+    if (!el) return;
+    const ids = (el.getAttribute('aria-describedby') || '').split(/\s+/).filter(id => id && id !== 'mxPop');
+    if (add) ids.push('mxPop');
+    if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
+    else el.removeAttribute('aria-describedby');
+  }
+
   function showBreakdownTooltip(cell) {
     hideBreakdownTooltip();
     const lines = JSON.parse(cell.dataset.breakdownLines);
@@ -923,7 +931,7 @@
     const sim = this.state.sim;
     if (!signals) signals = signalsFor(list, sim);
     const showClass = this.state.filters.cls === 'all';
-    const tip = text => `data-act="mxPop" data-tip="${E(text)}" title="${E(text)}" tabindex="0" role="button"`;
+    const tip = text => `data-act="mxPop" data-tip="${E(text)}" tabindex="0" role="button"`;
     const matrixCache = new Map();
     const majorPoints = (t, cand) => {
       const key = `${t.gradeKey}:${cand.id}`;
@@ -1007,20 +1015,28 @@
   showMxPop(el, pin) {
     const pop = $('mxPop');
     if (!pop || !el || !el.dataset.tip) return;
+    describeMxCell(this._mxTrigger, false);
     const [head, ...lines] = el.dataset.tip.split(' | ');
     pop.innerHTML = `<div class="h">${E(head)}</div>${lines.map(l => `<div>${E(l)}</div>`).join('')}`;
+    pop.style.pointerEvents = pin ? 'auto' : 'none';
+    pop.tabIndex = pin ? 0 : -1;
     pop.classList.remove('hidden');
     const r = el.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
-    let left = Math.min(Math.max(8, r.left + r.width / 2 - pw / 2), window.innerWidth - pw - 8);
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - pw / 2, window.innerWidth - pw - 8));
     let top = r.bottom + 6;
-    if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);
+    if (top + ph > window.innerHeight - 8) top = r.top - ph - 6;
+    top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
     pop.style.left = `${left}px`; pop.style.top = `${top}px`;
+    this._mxTrigger = el;
+    describeMxCell(el, true);
     this._mxPinned = pin ? el : null;
   },
 
   hideMxPop() {
     const pop = $('mxPop');
     if (pop) pop.classList.add('hidden');
+    describeMxCell(this._mxTrigger, false);
+    this._mxTrigger = null;
     this._mxPinned = null;
   },
   };
