@@ -37,6 +37,18 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-detail h3 { margin-top: .75rem; font-weight: 700; }
 .bagrut-work-detail ul { margin: .4rem 1.2rem; list-style: disc; }
 .bagrut-work-actions { margin-top: 1rem; }
+@media (min-width: 801px) {
+  #panel-bagrut #bagrut-table:has(> .bagrut-work-layout) {
+    display: flex;
+    height: calc(100vh - 220px);
+    min-height: 460px;
+    overflow: hidden;
+  }
+  .bagrut-work-layout { flex: 1 1 auto; min-width: 0; min-height: 0; align-items: stretch; }
+  .bagrut-work-list, .bagrut-work-detail { min-height: 0; overflow: auto; }
+  .bagrut-work-subject-scroll { overflow: visible; }
+  .bagrut-work-subjects thead th { position: sticky; top: 0; z-index: 20; background: var(--card-bg); }
+}
 @media (max-width: 800px) { .bagrut-work-layout { grid-template-columns: minmax(0, 1fr); } }
 #panel-groups .ga-toolbar { gap: .5rem 1rem; }
 #panel-groups .ga-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem .65rem; }
@@ -324,6 +336,7 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
   #panel-bagrut:not([hidden]) { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
   #panel-bagrut:not([hidden]) > :not(#bagrut-table) { flex-shrink: 0; }
   #panel-bagrut #bagrut-table { flex: 1 1 auto; min-height: 12rem; max-height: none !important; }
+  #panel-bagrut #bagrut-table:has(> .bagrut-work-layout) { height: auto; flex-basis: 0; }
 }
 .bagrut-quality { font-size: .7rem; }
 .bagrut-legacy-scope { display: none; }
