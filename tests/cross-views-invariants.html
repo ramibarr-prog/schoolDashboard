@@ -109,11 +109,12 @@ window.fetch = (input, options) => {
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
-    const cloud = { configured: () => false, hasUnpublished: () => false, status: { kind: 'none' }, meta: () => ({ syncedAt: 0, dirty: false, rev: 0 }), url: () => '', passcode: () => '' };
+    const cloud = { configured: () => true, identity: () => ({ email: 'test@example.test' }), hasUnpublished: () => false, status: { kind: 'ok' }, meta: () => ({ syncedAt: 1, dirty: false, rev: 0 }), url: () => 'https://cloud.test', passcode: () => 'test' };
     const instance = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', appSource + '\nreturn App;')(
       Util, Config, cloud, doc, async (file, type) => parsed[type], () => true, Store
     );
     instance.toasts = [];
+    instance._cloudWriteReady = true;
     instance.toast = (message, kind) => { instance.toasts.push({ message, kind }); };
     instance.state.sim = { ...FULL };
     instance.state.bagrutScope = 'all';

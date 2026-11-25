@@ -322,6 +322,8 @@ window.fetch = (url, options) => {
     CloudSync._conflict({ rev: 99 });
     app.renderSync();
     assert(!document.getElementById('cloudConflict').hidden, 'Conflict prompt hidden');
+    app._cloudWriteReady = true;
+    app._cloudAccessSettingsRevision = CloudSync._settingsRevision;
     let uiPushes = 0, uiToasts = [];
     app.cloudRefresh = async () => 'kept-local';
     app.toast = message => uiToasts.push(message);
@@ -329,6 +331,9 @@ window.fetch = (url, options) => {
     CloudSync.pushCloudState = async () => { uiPushes++; return {}; };
     try { await app.acts.cloudSync.call(app); } finally { CloudSync.pushCloudState = realPush; }
     assert(uiPushes === 0 && uiToasts.length === 0, 'UI pushed or reported success after kept-local');
+    CloudSync.status = { kind: 'ok', text: '', updatedAt: 0 };
+    CloudSync._setMeta({ dirty: false });
+    assert(app.completeCloudAccess('current'), 'Fixture could not resume after simulated conflict resolution');
     passed.push('Google account settings/join button/conflict prompt; UI stops after kept-local without false success');
 
     const hostileId = '"><b data-id-probe>marker</b><i title="';
@@ -629,6 +634,110 @@ window.fetch = (url, options) => {
     assert(first.getBlob().getDataAsString() === stored && second.getBlob().getDataAsString() === stored, 'Ambiguous snapshots were modified');
     assert(waited === released, 'Lock not released after FILE_ID migration paths');
     passed.push('Apps Script FILE_ID migration: 0 files rejected, 1 file adopted, >1 files rejected without guessing');
+
+    const accessUi = document.createElement('div');
+    accessUi.innerHTML = `<span id="headerCloudStatus"></span><span id="cloudReadOnly"></span>
+      <button id="headerCloudSync"></button><div id="cloudAccessDialog" hidden>
+      <span id="cloudAccessMessage"></span><div id="cloudAccessGoogle"></div>
+      <button id="cloudAccessContinue"></button><button id="cloudAccessRetry"></button>
+      <button id="cloudAccessSettings"></button></div>
+      <select id="excTrack"><option value="">default</option><option value="רגילה">regular</option></select><div id="sadinPop"></div>`;
+    document.body.appendChild(accessUi);
+    let accessIdentity = null, accessDirty = false, accessPulls = 0, accessFailure = false, wipedFromAccess = false;
+    const accessCloud = {
+      status: { kind: 'none', text: '' }, _settingsRevision: 0,
+      identity: () => accessIdentity, configured: () => !!accessIdentity,
+      url: () => 'https://cloud-sync.test/exec', passcode: () => 'test-school-pass',
+      hasUnpublished: () => accessDirty, meta: () => ({ syncedAt: 1 }),
+      renderGoogleButton() {}, signOutGoogle() { accessIdentity = null; },
+      wipeLocalSession: async () => { wipedFromAccess = true; },
+      _conflict() { this.status = { kind: 'conflict' }; },
+      async pullCloudState() {
+        accessPulls++;
+        if (accessFailure) { this.status = { kind: 'error', error: 'test offline' }; throw new Error('test offline'); }
+        this.status = { kind: 'ok' };
+        return 'current';
+      }
+    };
+    const liveDoc = new Proxy(document, { get(target, key) {
+      if (key === 'readyState') return 'loading';
+      if (key === 'addEventListener') return (type, ...args) => {
+        if (type !== 'DOMContentLoaded') target.addEventListener(type, ...args);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const accessApp = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', appSource + '\nreturn App;')(
+      Util, Config, accessCloud, liveDoc, async () => null, () => true, testStore
+    );
+    accessApp.toast = () => {};
+    accessApp.hideMxPop = () => {};
+    accessApp.bindEvents();
+    accessApp.state.profileTz = tz;
+    await accessApp.syncCloudAccess();
+    assert(!document.getElementById('cloudAccessDialog').hidden && !accessApp._cloudWriteReady, 'Signed-out entry must prompt');
+    accessCloud.status = { kind: 'error', error: 'ההתחברות נדחתה' };
+    accessApp.renderCloudAccess();
+    assert(document.getElementById('cloudAccessMessage').textContent.includes('ההתחברות נדחתה'), 'Rejected sign-in was not displayed');
+    accessCloud.status = { kind: 'none' };
+    document.getElementById('cloudAccessContinue').click();
+    assert(document.getElementById('cloudAccessDialog').hidden && !document.getElementById('cloudReadOnly').hidden, 'Read-only choice not visible');
+    const beforeAccess = JSON.stringify(Config.data), beforeRoster = Config.getRosterEntry();
+    assert(!Config.setException(tz, { note: 'blocked' }).ok, 'Exception edit was not blocked');
+    assert(!Config.updateRules(r => { r.passGrade = 99; }).ok, 'Rule edit was not blocked');
+    assert(!Config.setRoster([row('123', 'י', 'י1')], 'blocked.csv').ok, 'Roster edit was not blocked');
+    assert(JSON.stringify(Config.data) === beforeAccess && Config.getRosterEntry() === beforeRoster, 'Blocked edits mutated data');
+    assert(!document.getElementById('cloudAccessDialog').hidden, 'Blocked edit did not reopen prompt');
+    document.getElementById('cloudAccessContinue').click();
+    const trackControl = document.getElementById('excTrack');
+    trackControl.focus(); trackControl.value = 'רגילה';
+    trackControl.dispatchEvent(new Event('change', { bubbles: true }));
+    assert(trackControl.value === '' && JSON.stringify(Config.data) === beforeAccess, 'Blocked control did not restore its previous value');
+    accessIdentity = { email: 'teacher@example.test' };
+    accessFailure = true;
+    await accessApp.syncCloudAccess();
+    assert(accessIdentity && !accessApp._cloudWriteReady && !document.getElementById('cloudAccessDialog').hidden, 'Failed pull cleared identity or enabled edits');
+    accessFailure = false; accessDirty = true;
+    const pullsBeforeDirty = accessPulls;
+    await accessApp.syncCloudAccess();
+    assert(accessCloud.status.kind === 'conflict' && accessPulls === pullsBeforeDirty && JSON.stringify(Config.data) === beforeAccess,
+      'Unpublished changes were not preserved for conflict resolution');
+    await accessApp.syncCloudAccess();
+    assert(accessPulls === pullsBeforeDirty, 'Sync while conflicted must not pull');
+    accessDirty = false; accessCloud.status = { kind: 'none' };
+    await accessApp.syncCloudAccess();
+    assert(accessApp._cloudWriteReady && document.getElementById('cloudReadOnly').hidden, 'Successful pull did not enable editing');
+    assert(Config.setException(tz, { note: 'allowed' }).ok, 'Authenticated edit rejected');
+    accessCloud._settingsRevision++;
+    assert(!accessApp.canEdit(), 'Changed cloud settings retained edit access');
+    await accessApp.syncCloudAccess();
+    assert(accessApp.canEdit(), 'Fresh check did not authorize changed settings');
+    const savedIdb = Config._idb, beforeDataset = Config.getDataset('sadinData');
+    let abortedTransaction = false;
+    Config._idb = { transaction() {
+      return {
+        objectStore: () => ({ put: () => ({}) }),
+        abort() { abortedTransaction = true; this.onabort(); }
+      };
+    } };
+    const pendingWrite = Config.setDataset('sadinData', [{ tz, score: 11 }], 'pending.csv');
+    accessIdentity = null;
+    window.dispatchEvent(new Event('sd:cloud-signedout'));
+    const pendingResult = await pendingWrite;
+    Config._idb = savedIdb;
+    assert(abortedTransaction && !pendingResult.ok && Config.getDataset('sadinData') === beforeDataset,
+      'Sign-out during an IndexedDB write did not abort the pending transaction');
+    accessIdentity = { email: 'teacher@example.test' };
+    await accessApp.syncCloudAccess();
+    const afterAllowed = JSON.stringify(Config.data);
+    accessIdentity = null;
+    assert(!Config.setException(tz, { note: 'expired' }).ok && JSON.stringify(Config.data) === afterAllowed,
+      'Expired identity did not stop edit before mutation');
+    accessApp.confirmAction = () => true;
+    await accessApp.acts.cloudWipeLocal.call(accessApp);
+    assert(wipedFromAccess, 'Local wipe blocked while read-only');
+    accessUi.remove();
+    passed.push('Read-only sign-in gate, real Config mutation guards, control restoration, failed pull, conflict and local wipe');
 
     results.textContent = passed.map(name => 'PASS ' + name).join('\n') + '\nAll tests passed.';
     document.title = 'PASS - Cloud sync regression tests';

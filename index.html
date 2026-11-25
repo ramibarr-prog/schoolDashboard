@@ -610,6 +610,26 @@
     </div>
   </header>
 
+  <div class="px-4 py-2 flex flex-wrap items-center gap-2 bg-white border-b border-[#E6ECE6]">
+    <span id="headerCloudStatus" role="status" aria-live="polite"></span>
+    <button id="headerCloudSync" type="button" class="btn btn-ghost btn-sm">סנכרון ורענון</button>
+    <span id="cloudReadOnly" class="text-sm font-semibold text-amber-800">מצב קריאה בלבד — שינויים לא יישמרו או יסונכרנו עד להתחברות ולבדיקת עדכניות</span>
+  </div>
+  <div id="cloudAccessDialog" hidden>
+    <div class="fixed inset-0 z-[100] bg-black/40 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="cloudAccessTitle">
+      <div class="card p-5 space-y-3 max-w-lg w-full">
+        <h2 id="cloudAccessTitle" class="text-lg font-semibold">התחברות וסנכרון</h2>
+        <p id="cloudAccessMessage" role="status"></p>
+        <div id="cloudAccessGoogle"></div>
+        <div class="flex flex-wrap gap-2">
+          <button id="cloudAccessRetry" type="button" class="btn btn-primary btn-sm">נסה שוב</button>
+          <button id="cloudAccessSettings" type="button" class="btn btn-ghost btn-sm">הגדרות ענן ופתרון התנגשות</button>
+          <button id="cloudAccessContinue" type="button" class="btn btn-ghost btn-sm">המשך במצב קריאה בלבד</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- סרגל סינון גלובלי -->
   <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-40 shrink-0">
     <div class="px-6 py-2 flex flex-wrap items-center gap-2 text-xs">
@@ -1083,8 +1103,8 @@
     })();
   </script>
 
-  <script src="js/config.js?v=20261124_1"></script>
-  <script src="js/storage.js?v=20261124_1"></script>
+  <script src="js/config.js?v=20261125_6"></script>
+  <script src="js/storage.js?v=20261125_6"></script>
   <script src="js/parser.js?v=20261119_6"></script>
   <script src="js/bagrutFacts.js?v=20261125_5"></script>
   <script src="js/bagrutPolicies.js?v=20261120_1"></script>
@@ -1096,10 +1116,10 @@
   <script src="js/views/overviewView.js"></script>
   <script src="js/views/profileView.js"></script>
   <script src="js/views/groupsView.js"></script>
-  <script src="js/views/sadinView.js"></script>
-  <script src="js/views/bagrutView.js"></script>
-  <script src="js/views/rulesView.js?v=20261125_4"></script>
+  <script src="js/views/sadinView.js?v=20261125_6"></script>
+  <script src="js/views/bagrutView.js?v=20261125_6"></script>
+  <script src="js/views/rulesView.js?v=20261125_6"></script>
   <script src="js/importQuarantine.js"></script>
-  <script src="js/app.js?v=20261125_2"></script>
+  <script src="js/app.js?v=20261125_6"></script>
 </body>
 </html>

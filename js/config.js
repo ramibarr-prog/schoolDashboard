@@ -319,6 +319,10 @@ const Config = {
     }
   },
   emit(name, detail) { window.dispatchEvent(new CustomEvent(`sd:${name}`, { detail })); },
+  requireEdit() {
+    if (!window.App || window.App.requireEdit()) return null;
+    return { ok: false, error: 'העריכה בוטלה. יש להתחבר ולסנכרן לפני ביצוע שינויים.' };
+  },
 
   /* ---------- טעינה ושמירה ---------- */
   defaults() {
@@ -379,12 +383,14 @@ const Config = {
   },
 
   save() {
+    const denied = this.requireEdit(); if (denied) return denied;
     const result = this._write(this.KEYS.config, this.data);
     if (result.ok) this.emit('config-changed');
     return result;
   },
 
   reset(opts = {}) {
+    const denied = this.requireEdit(); if (denied) return denied;
     this.data = this.defaults();
     this._activeCohort = this.data.gradeCohortMap['12'];
     this._invalidateRoster();
@@ -404,6 +410,7 @@ const Config = {
   /** המשתמש מחק את המצבת במכוון: לא טוענים נתוני דמו אוטומטית עד לטעינת מצבת חדשה או איפוס */
   isRosterCleared() { return localStorage.getItem(this.KEYS.rosterCleared) === '1'; },
   setRosterCleared(v) {
+    const denied = this.requireEdit(); if (denied) return denied;
     try { if (v) localStorage.setItem(this.KEYS.rosterCleared, '1'); else localStorage.removeItem(this.KEYS.rosterCleared); } catch (e) { /* noop */ }
   },
 
@@ -462,6 +469,7 @@ const Config = {
   },
 
   setRoster(rows, fileName, extraIgnoredIds = []) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const norm = this.normalizeRosterRows(rows);
     if (!norm.rows.length) return { ok: false, error: 'לא נמצאו חניכים תקינים במצבת (נדרשים ת.ז, שכבה וכיתת אם בשכבות י-יב).' };
     const ignoredIds = this._mergeIgnored([...norm.ignoredIds, ...extraIgnoredIds], norm.rows);
@@ -563,6 +571,7 @@ const Config = {
    * דריסה שזהה למקור (או ריקה לגמרי) נמחקת. חניך שאינו בקובץ המצבת דורש שכבה וכיתה (ושם).
    */
   setRosterOverride(tz, patch) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const c = this._composeOverride(tz, patch);
     if (!c.ok) return c;
     const { id, entry, empty } = c;
@@ -586,6 +595,7 @@ const Config = {
    * וכישלון שמירה מחזיר את כל הדריסות למצבן הקודם.
    */
   setRosterOverridesBatch(items) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const prevOv = this.data.rosterOverrides, prevDismissed = this.data.rosterMismatchDismissed;
     this.data.rosterOverrides = { ...prevOv };
     this.data.rosterMismatchDismissed = { ...prevDismissed };
@@ -640,6 +650,7 @@ const Config = {
     return { ok: true, id, entry, empty };
   },
   removeRosterOverride(tz) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const id = Util.normId(tz);
     const previous = this.data.rosterOverrides[id];
     delete this.data.rosterOverrides[id];
@@ -654,6 +665,7 @@ const Config = {
     return res;
   },
   clearRosterOverrides() {
+    const denied = this.requireEdit(); if (denied) return denied;
     const previous = this.data.rosterOverrides;
     this.data.rosterOverrides = {};
     this._invalidateRoster();
@@ -663,6 +675,7 @@ const Config = {
   },
   /** "השאר לפי מצבת": הסתירה לא תוצג שוב, אלא אם השיוך במשוב ישתנה (החתימה שונה) */
   dismissRosterMismatch(tz, signature) {
+    const denied = this.requireEdit(); if (denied) return denied;
     this.data.rosterMismatchDismissed[Util.normId(tz)] = signature;
     return this.save();
   },
@@ -747,7 +760,7 @@ const Config = {
   },
 
   /** מנקה את קובצי הקבוצות / הציונים / הבגרות השמורים משורות של חניכי ז-ט */
-  async scrubDatasets() {
+  async scrubDatasets(userEdit = false) {
     const types = { groupsData: 'groups', sadinData: 'grades', bagrutData: 'bagrut' };
     for (const key of this.DATASET_KEYS) {
       const e = this._cache[key];
@@ -755,10 +768,13 @@ const Config = {
       const { rows, ignored } = this.filterJuniorRows(types[key], e.data);
       if (!ignored) continue;
       const entry = { ...e, data: rows };
-      if ((await this._storePut(key, entry)).ok) this._cache[key] = entry;
+      const result = await this._storePut(key, entry, userEdit);
+      if (result.ok) this._cache[key] = entry;
+      else if (userEdit) throw new Error(result.error);
     }
   },
   clearRoster() {
+    const denied = this.requireEdit(); if (denied) return denied;
     localStorage.removeItem(this.KEYS.masterRoster);
     delete this._cache.masterRoster;
     this.emit('roster-changed');
@@ -786,13 +802,22 @@ const Config = {
     });
   },
 
-  _idbRun(mode, fn) {
+  _idbRun(mode, fn, userEdit = false) {
     return new Promise((resolve, reject) => {
       const tx = this._idb.transaction('datasets', mode);
       const req = fn(tx.objectStore('datasets'));
-      tx.oncomplete = () => resolve(req ? req.result : undefined);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
+      const cancel = () => {
+        if (window.App && !window.App.canEdit()) {
+          try { tx.abort(); } catch (e) { if (e.name !== 'InvalidStateError') throw e; }
+        }
+      };
+      const cleanup = () => {
+        if (userEdit) ['sd:cloud-status', 'sd:cloud-signedout', 'sd:cloud-conflict'].forEach(name => window.removeEventListener(name, cancel));
+      };
+      if (userEdit) ['sd:cloud-status', 'sd:cloud-signedout', 'sd:cloud-conflict'].forEach(name => window.addEventListener(name, cancel));
+      tx.oncomplete = () => { cleanup(); resolve(req ? req.result : undefined); };
+      tx.onerror = () => { cleanup(); reject(tx.error); };
+      tx.onabort = () => { cleanup(); reject(tx.error || new Error('העריכה בוטלה עקב שינוי במצב ההתחברות.')); };
     });
   },
 
@@ -800,16 +825,18 @@ const Config = {
     if (this._idb) { try { return await this._idbRun('readonly', s => s.get(key)); } catch (e) { return null; } }
     return this._read(this.KEYS[key]);
   },
-  async _storePut(key, entry) {
+  async _storePut(key, entry, userEdit = false) {
     if (this._sessionClosing) return { ok: false, error: 'ההפעלה המקומית נסגרת; לא ניתן לשמור נתונים.' };
+    if (userEdit) { const denied = this.requireEdit(); if (denied) return denied; }
     if (this._idb) {
-      try { await this._idbRun('readwrite', s => s.put(entry, key)); this._purgeLegacyCopy(key); return { ok: true }; }
+      try { await this._idbRun('readwrite', s => s.put(entry, key), userEdit); this._purgeLegacyCopy(key); return { ok: true }; }
       catch (e) { return { ok: false, error: `שמירה נכשלה: ${e && e.message ? e.message : 'שגיאת אחסון'}` }; }
     }
     return this._write(this.KEYS[key], entry);
   },
-  async _storeDelete(key) {
-    if (this._idb) await this._idbRun('readwrite', s => s.delete(key));
+  async _storeDelete(key, userEdit = false) {
+    if (userEdit) { const denied = this.requireEdit(); if (denied) throw new Error(denied.error); }
+    if (this._idb) await this._idbRun('readwrite', s => s.delete(key), userEdit);
     localStorage.removeItem(this.KEYS[key]);
   },
 
@@ -841,10 +868,11 @@ const Config = {
   },
 
   async setDataset(key, data, fileName) {
+    const denied = this.requireEdit(); if (denied) return denied;
     if (!this.DATASET_KEYS.includes(key)) return { ok: false, error: `מפתח נתונים לא מוכר: ${key}` };
     if (!Array.isArray(data)) return { ok: false, error: 'פורמט נתונים לא תקין.' };
     const entry = { data, fileName: fileName || '', uploadedAt: Date.now() };
-    const res = await this._storePut(key, entry);
+    const res = await this._storePut(key, entry, true);
     if (!res.ok) return res;
     this._cache[key] = entry;
     delete this._staleDismissed[key];
@@ -862,6 +890,7 @@ const Config = {
    * meta: { fileName }. מחזיר { ok, count, total, grades }.
    */
   async upsertDataset(key, newRows, meta = {}) {
+    const denied = this.requireEdit(); if (denied) return denied;
     if (!this.DATASET_KEYS.includes(key)) return { ok: false, error: `מפתח נתונים לא מוכר: ${key}` };
     if (!Array.isArray(newRows)) return { ok: false, error: 'פורמט נתונים לא תקין.' };
     const roster = this.rosterMap();
@@ -890,7 +919,7 @@ const Config = {
       data: [...kept, ...newRows], uploadedAt: Date.now(), files,
       fileName: files.length > 1 ? `${files.length} קבצים` : (files[0] ? files[0].name : name)
     };
-    const res = await this._storePut(key, entry);
+    const res = await this._storePut(key, entry, true);
     if (!res.ok) return res;
     this._cache[key] = entry;
     delete this._staleDismissed[key];
@@ -900,13 +929,15 @@ const Config = {
   getRows(key) { const e = this.getDataset(key); return e ? e.data : []; },
 
   async clearDataset(key) {
+    const denied = this.requireEdit(); if (denied) throw new Error(denied.error);
     if (!this.DATASET_KEYS.includes(key)) throw new Error('מפתח נתונים לא מוכר');
-    await this._storeDelete(key);
+    await this._storeDelete(key, true);
     this._cache[key] = null;
     this.emit('dataset-changed', { key });
   },
 
   async clearSadinGrade(grade) {
+    const denied = this.requireEdit(); if (denied) return denied;
     if (!Util.GRADE_KEYS.includes(grade)) return { ok: false, error: 'שכבה לא תקינה' };
     const entry = this.getDataset('sadinData');
     if (!entry) return { ok: false, error: 'לא נטען קובץ ציונים שוטפים' };
@@ -921,7 +952,7 @@ const Config = {
         ...f, ...(Array.isArray(f.grades) ? { grades: f.grades.filter(g => g !== grade) } : {})
       })).filter(f => !Array.isArray(f.grades) || f.grades.length);
       const next = { ...entry, data, files, fileName: files.length > 1 ? `${files.length} קבצים` : (files[0] ? files[0].name : entry.fileName) };
-      const res = await this._storePut('sadinData', next);
+      const res = await this._storePut('sadinData', next, true);
       if (!res.ok) return res;
       this._cache.sadinData = next;
       this.emit('dataset-changed', { key: 'sadinData' });
@@ -930,9 +961,13 @@ const Config = {
   },
 
   async clearAllData() {
-    for (const k of this.DATASET_KEYS) { await this._storeDelete(k); this._cache[k] = null; }
-    this._staleDismissed = {};
-    this.emit('dataset-changed', { key: 'all' });
+    const denied = this.requireEdit(); if (denied) throw new Error(denied.error);
+    let changed = false;
+    try {
+      for (const k of this.DATASET_KEYS) { await this._storeDelete(k, true); this._cache[k] = null; changed = true; }
+    } finally {
+      if (changed) { this._staleDismissed = {}; this.emit('dataset-changed', { key: 'all' }); }
+    }
   },
 
   /** 'fresh' (<3 ימים) | 'aging' (3–10) | 'stale' (>10) | 'empty' */
@@ -989,11 +1024,15 @@ const Config = {
 
   /* ---------- פרופילי מיפוי עמודות ---------- */
   getMapping(type) { return this.data.mappingProfiles[type] || null; },
-  setMapping(type, mapping) { this.data.mappingProfiles[type] = mapping; return this.save(); },
+  setMapping(type, mapping) {
+    const denied = this.requireEdit(); if (denied) return denied;
+    this.data.mappingProfiles[type] = mapping; return this.save();
+  },
 
   /* ---------- כינויי כיתות ---------- */
   nickname(classKey) { return this.data.classNicknames[classKey] || ''; },
   setNickname(classKey, value) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const v = String(value ?? '').trim();
     if (v) this.data.classNicknames[classKey] = v; else delete this.data.classNicknames[classKey];
     return this.save();
@@ -1025,6 +1064,7 @@ const Config = {
     return typeof explicit === 'boolean' ? explicit : this.autoSpecialEdClass(classKey);
   },
   setSpecialEdClass(classKey, value) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const previous = this.data.specialEdClasses[classKey];
     if (!!value === this.autoSpecialEdClass(classKey)) delete this.data.specialEdClasses[classKey];
     else this.data.specialEdClasses[classKey] = !!value;
@@ -1054,6 +1094,7 @@ const Config = {
   isException(tz) { return !!this.getException(tz).isException; },
 
   setException(tz, patch) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const id = Util.normId(tz);
     if (!id) return { ok: false, error: 'ת.ז לא תקינה' };
     const next = { ...this.getException(id), ...patch };
@@ -1081,6 +1122,7 @@ const Config = {
 
   /** מקבל אובייקט (id ← מחזור) או מערך; מחזורים פגומים נזרקים ושיוך שכבות מתוקן בהתאם */
   saveCohortProfiles(profiles) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const n = this.normalizeCohorts(profiles, this.data.gradeCohortMap, null);
     const provided = Array.isArray(profiles) ? profiles : Object.values(profiles || {});
     if (!provided.length) return { ok: false, error: 'נדרש לפחות מחזור אחד' };
@@ -1099,6 +1141,7 @@ const Config = {
   },
 
   setGradeCohort(gradeKey, cohortId) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const g = this.gradeNum(gradeKey);
     if (!g) return { ok: false, error: 'שכבה לא תקינה' };
     if (!this.data.cohortProfiles[cohortId]) return { ok: false, error: 'מחזור לא קיים' };
@@ -1151,6 +1194,7 @@ const Config = {
 
   /** מעתיק את כללי מחזור המקור אל מחזור היעד (דורס אותם) */
   copyCohortRules(fromId, toId) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const from = this.data.cohortProfiles[fromId], to = this.data.cohortProfiles[toId];
     if (!from || !to || fromId === toId) return { ok: false, error: 'מחזור מקור או יעד לא תקין' };
     to.rules = Util.clone(from.rules);
@@ -1159,6 +1203,7 @@ const Config = {
 
   /** מוסיף מחזור חדש כעותק של כללי מחזור קיים (ברירת מחדל: הנערך כעת). מחזיר { ok, id } */
   addCohort(name, fromId) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const label = String(name || '').trim();
     if (!label) return { ok: false, error: 'נדרש שם למחזור' };
     if (Object.values(this.data.cohortProfiles).some(c => c.name === label)) return { ok: false, error: 'כבר קיים מחזור בשם זה' };
@@ -1365,6 +1410,7 @@ const Config = {
 
   /** מחיל שינוי על כללי המחזור הנערך, שומר מיידית ומשדר 'sd:rules-changed' לחישוב מחדש */
   updateRules(mutator) {
+    const denied = this.requireEdit(); if (denied) return denied;
     const profile = this._editProfile();
     const backup = Util.clone(profile.rules);
     try {
@@ -1584,6 +1630,7 @@ const Config = {
   },
 
   async importJSON(text, opts = {}) {
+    const denied = this.requireEdit(); if (denied) throw new Error(denied.error);
     let obj;
     try { obj = JSON.parse(text); } catch (e) { throw new Error('קובץ JSON לא תקין'); }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error('מבנה הגיבוי לא תקין');
@@ -1649,7 +1696,7 @@ const Config = {
     }
     /* ניקוי מיידי של חניכי ז-ט מהמצבת וקובצי המשנה, בלי לחכות לרענון */
     this.scrubRoster();
-    await this.scrubDatasets();
+    await this.scrubDatasets(true);
     if (opts.silent) return;
     this.emit('roster-changed');
     this.emit('rules-changed');

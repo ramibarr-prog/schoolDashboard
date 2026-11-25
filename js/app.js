@@ -63,6 +63,86 @@ const App = {
   rosterReport: null,
   busy: false,
   _timer: null,
+  _cloudWriteReady: false,
+
+  canEdit() {
+    const cloud = this.cloudService();
+    return !!(this._cloudWriteReady && cloud.configured() && cloud.passcode() && cloud.status.kind !== 'conflict' &&
+      this._cloudAccessSettingsRevision === cloud._settingsRevision);
+  },
+
+  requireEdit() {
+    if (this.canEdit()) return true;
+    this._cloudWriteReady = false;
+    this.renderCloudAccess();
+    this.openCloudAccess();
+    return false;
+  },
+
+  renderCloudAccess() {
+    const cloud = this.cloudService(), identity = cloud.identity();
+    const status = $('headerCloudStatus');
+    if (status) {
+      status.textContent = !identity ? 'לא מחובר' : cloud.status.kind === 'conflict' ? 'נדרשת החלטה על התנגשות' :
+        !cloud.url() ? 'חסרה כתובת ענן' : !cloud.passcode() ? 'חסר קוד בית ספר' :
+        cloud.status.kind === 'error' ? (cloud.status.error || cloud.status.text) :
+        cloud.hasUnpublished() ? 'שינויים מקומיים טרם סונכרנו' :
+        cloud.status.kind === 'busy' ? 'מסנכרן...' : this.canEdit() ? 'מסונכרן' : 'טרם נבדקה עדכניות';
+    }
+    const banner = $('cloudReadOnly');
+    if (banner) banner.hidden = this.canEdit();
+    const message = $('cloudAccessMessage');
+    if (message) message.textContent = !identity ? (cloud.status.error || 'יש להתחבר עם Google כדי לערוך ולסנכרן.') :
+      cloud.status.kind === 'conflict' ? 'יש לפתור את ההתנגשות בהגדרות הענן לפני עריכה.' :
+      !cloud.url() ? 'יש להגדיר כתובת ענן בהגדרות.' : !cloud.passcode() ? 'יש להגדיר קוד בית ספר בהגדרות.' :
+      cloud.status.kind === 'error' ? (cloud.status.error || cloud.status.text) : 'יש לבדוק עדכניות לפני עריכה.';
+    const button = $('cloudAccessGoogle'), dialog = $('cloudAccessDialog');
+    if (button && dialog && !dialog.hidden) {
+      button.innerHTML = '';
+      if (!identity) cloud.renderGoogleButton(button);
+    }
+  },
+
+  openCloudAccess() {
+    const dialog = $('cloudAccessDialog');
+    if (dialog) { dialog.hidden = false; this.renderCloudAccess(); $('cloudAccessContinue').focus(); }
+  },
+
+  completeCloudAccess(result) {
+    const cloud = this.cloudService();
+    if (!result || result === 'kept-local' || !cloud.configured() || !cloud.passcode() ||
+      cloud.status.kind === 'conflict' || cloud.hasUnpublished()) return false;
+    this._cloudWriteReady = true;
+    this._cloudAccessSettingsRevision = cloud._settingsRevision;
+    const dialog = $('cloudAccessDialog');
+    if (dialog) dialog.hidden = true;
+    this.renderCloudAccess();
+    return true;
+  },
+
+  async syncCloudAccess() {
+    const cloud = this.cloudService();
+    this._cloudWriteReady = false;
+    this.renderCloudAccess();
+    if (!cloud.identity() || !cloud.url() || !cloud.passcode()) { this.openCloudAccess(); return; }
+    if (cloud.status.kind === 'conflict' || cloud.hasUnpublished()) {
+      if (cloud.status.kind !== 'conflict') cloud._conflict({});
+      this.openCloudAccess();
+      return;
+    }
+    const identity = cloud.identity(), settingsRevision = cloud._settingsRevision;
+    try {
+      const result = await cloud.pullCloudState();
+      if (result === 'applied') this.afterDataChange();
+      if (identity === cloud.identity() && settingsRevision === cloud._settingsRevision) this.completeCloudAccess(result);
+      if (result === 'kept-local') this.openCloudAccess();
+    } catch (e) {
+      console.warn('cloud pull', e);
+      this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error');
+      this.openCloudAccess();
+    }
+    this.renderCloudAccess();
+  },
 
   /* ------------------------------------------------------------------
      אתחול
@@ -104,19 +184,17 @@ const App = {
   async initCore() {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
-    window.addEventListener('sd:cloud-status', () => this.renderSync());
+    window.addEventListener('sd:cloud-status', () => { this.renderSync(); this.renderCloudAccess(); });
     window.addEventListener('sd:cloud-auth', async () => {
       this.renderSync();
       this.renderCloudAuth();
-      if (!CloudSync.configured() || CloudSync.status.kind === 'conflict') return;
-      try {
-        const result = await CloudSync.pullCloudState();
-        if (result === 'applied') this.afterDataChange();
-        else if (result === 'kept-local') this.toast('השינויים המקומיים נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
-      } catch (e) { this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
+      await this.syncCloudAccess();
     });
-    window.addEventListener('sd:cloud-signedout', () => this.renderCloudAuth());
-    window.addEventListener('sd:google-ready', () => this.renderCloudAuth());
+    window.addEventListener('sd:cloud-signedout', () => {
+      this._cloudWriteReady = false;
+      this.renderCloudAuth(); this.openCloudAccess();
+    });
+    window.addEventListener('sd:google-ready', () => { this.renderCloudAuth(); this.renderCloudAccess(); });
     window.addEventListener('sd:cloud-auto-error', e => {
       const message = `נשמר מקומית בלבד — ${(e.detail && e.detail.error) || 'הסנכרון לענן נכשל'}`, now = Date.now();
       if (this._autoErrorToast && this._autoErrorToast.message === message && now - this._autoErrorToast.at < 60000) return;
@@ -124,19 +202,16 @@ const App = {
       this.toast(message, 'warn');
     });
     window.addEventListener('sd:cloud-conflict', () => {
+      this._cloudWriteReady = false;
+      this.renderCloudAccess();
       this.toast('נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:', 'warn');
     });
-    if (CloudSync.configured()) {
-      try {
-        const r = await CloudSync.pullCloudState();
-        if (r === 'kept-local') this.toast('השינויים המקומיים נשמרו. יש לפתור את ההתנגשות בהגדרות הענן לפני סנכרון.', 'warn');
-      } catch (e) { console.warn('cloud pull', e); this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error'); }
-    }
     Store.refresh();
     SignalEngine.invalidate();
     this.bindEvents();
     this.syncFilters();
     this.showTab(this.state.tab);
+    await this.syncCloudAccess();
     if ((Config.rules().version || 0) < RULES_VERSION) {
       this.toast('קטלוג השאלונים והמגמות עודכן לקודי משוב של בית הספר. כדי לקבל אותו: ⚙️ הגדרות ומצבת ← חוקי בגרות ושאלונים ← שחזור ברירות מחדל.', 'info');
     }
@@ -668,6 +743,7 @@ const App = {
   async handleFiles(key, files, opts = {}) {
     const list = [...(files || [])].filter(Boolean);
     if (!list.length || this.busy) return;
+    if (!this.requireEdit()) return;
     this.busy = true;
     try {
       if (key === 'masterRoster') {
@@ -743,6 +819,7 @@ const App = {
   },
 
   async importRoster(file, opts = {}) {
+    if (!this.requireEdit()) return false;
     let res;
     try { res = await parseExcelFile(file, 'roster', opts); }
     catch (error) {
@@ -770,10 +847,11 @@ const App = {
     }
     const saved = Config.setRoster(rows, file.name, res.ignoredIds);
     if (!saved.ok) { this.toast(saved.error, 'error'); return false; }
-    await Config.scrubDatasets();
+    await Config.scrubDatasets(true);
     /* מעבר מנתוני דמו למצבת אמיתית: מנקים את נתוני הדמו כדי שלא יוצגו כ"לא במצבת" */
     if (previous && previous.fileName === 'נתוני דמו') {
       await Config.clearAllData();
+      if (!this.requireEdit()) return false;
       Config.data.traineeExceptions = {};
       Config.save();
       this.toast('נתוני הדמו הוסרו. טענו את קובצי הקבוצות, הסדין והבגרות מהפאנלים.', 'info');
@@ -791,6 +869,7 @@ const App = {
   },
 
   async importDataset(key, file, opts = {}) {
+    if (!this.requireEdit()) return false;
     const ds = DATASETS[key];
     if (!Store.hasData()) this.toast('טרם נטענה מצבת – ת.ז שאינן במצבת יוחרגו מכל המדדים.', 'warn');
     let res;
@@ -1022,6 +1101,57 @@ const App = {
   bindRulesEvents(...args) { return RulesView.bindRulesEvents.apply(this, args); },
 
   bindEvents() {
+    on('headerCloudSync', 'click', () => this.syncCloudAccess());
+    on('cloudAccessRetry', 'click', () => this.syncCloudAccess());
+    on('cloudAccessContinue', 'click', () => { $('cloudAccessDialog').hidden = true; this.renderCloudAccess(); });
+    on('cloudAccessSettings', 'click', () => {
+      $('cloudAccessDialog').hidden = true;
+      this.state.settingsView = 'system';
+      this.dirty.add('settings');
+      this.showTab('settings');
+    });
+    const editActions = new Set(['ovSave', 'ovRemove', 'ovClearAll', 'excModalSave', 'excModalClear',
+      'ruleRemove', 'compRemove', 'qRemove', 'calibDelete', 'formSubmit', 'deleteRoster',
+      'clearPanel', 'clearSadinGrade', 'quarantineClear', 'bagrutPin', 'weaknessRiskApply']);
+    const editChanges = new Set(['backupImport', 'gradeCohort', 'compEnabled', 'compCodes', 'compWeight',
+      'compGrade', 'compMagen', 'ruleToggle', 'clauseCodes', 'clauseKeywords', 'internalGrade',
+      'clauseGrade', 'gateToggle', 'gateUnits', 'qName', 'qGrade', 'specialEd', 'classMove', 'classTrack', 'weaknessRiskRules']);
+    const editIds = new Set(['excTrack', 'excNote', 'ruleCompEnabled', 'ruleCompPoints', 'ruleCompMin',
+      'ruleCompMax', 'ruleCompCount', 'ruleCompExcluded', 'ruleParamPass', 'ruleParamBorderline',
+      'ruleParamBonus', 'ruleParamMagen']);
+    const originalControls = new WeakMap();
+    const isEditControl = el => el && (editIds.has(el.id) || editChanges.has(el.dataset.chg));
+    const rememberControl = e => {
+      const el = e.target;
+      if (isEditControl(el)) originalControls.set(el, { value: el.value, checked: el.checked });
+    };
+    document.addEventListener('focusin', rememberControl, true);
+    document.addEventListener('pointerdown', rememberControl, true);
+    document.addEventListener('change', e => {
+      const el = e.target;
+      if (!isEditControl(el)) return;
+      if (this.requireEdit()) {
+        originalControls.set(el, { value: el.value, checked: el.checked });
+        return;
+      }
+      const original = originalControls.get(el);
+      if (original) { el.value = original.value; el.checked = original.checked; }
+      else if (el.id === 'excTrack' || el.id === 'excNote') {
+        const ex = Config.getException(this.state.profileTz);
+        el.value = el.id === 'excTrack' ? ex.trackOverride : ex.note;
+      } else if (el.closest('#rulesDrawer')) this.renderRulesDrawer();
+      e.preventDefault(); e.stopImmediatePropagation();
+    }, true);
+    document.addEventListener('submit', e => {
+      if (e.target.id === 'ovForm' && !this.requireEdit()) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+    document.addEventListener('click', e => {
+      const el = e.target.closest && e.target.closest('[data-act], [data-upload], [data-rule-add], #rulesReset, #btnClearData, #btnResetConfig');
+      if (!el) return;
+      if (!(el.dataset.upload || el.dataset.ruleAdd || editActions.has(el.dataset.act) ||
+        ['rulesReset', 'btnClearData', 'btnResetConfig'].includes(el.id))) return;
+      if (!this.requireEdit()) { e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
     /* תפיסה בשלב ה-capture: האפליקציה שולטת בטאבים, בהעלאה ובמגירה ואינה תלויה בסקריפט מעטפת */
     document.addEventListener('click', e => {
       if (this.state.sadin.weakRiskDraft && !(e.target.closest && e.target.closest('.weak-risk-control'))) {

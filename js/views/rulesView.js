@@ -713,7 +713,7 @@
     container.innerHTML = `<div class="flex flex-wrap items-center gap-2">
       <span>${identity ? `מחובר עם Google: ${E(identity.email)}` : 'נדרשת התחברות עם Google כדי לסנכרן'}</span>
       ${identity ? '<button type="button" class="btn btn-ghost btn-sm" data-act="cloudGoogleSignOut">התנתקות מחשבון Google</button>' : '<div id="googleSignIn"></div>'}</div>
-      ${!identity && !(window.google && window.google.accounts && window.google.accounts.id) ? '<p class="text-xs text-slate-500">כפתור Google יופיע כשהשירות יהיה זמין; ניתן להמשיך לעבוד מקומית.</p>' : ''}`;
+      ${!identity && !(window.google && window.google.accounts && window.google.accounts.id) ? '<p class="text-xs text-slate-500">כפתור Google יופיע כשהשירות יהיה זמין; ניתן להמשיך במצב קריאה בלבד.</p>' : ''}`;
     const details = container.closest('.card')?.querySelector('details');
     if (details && (!cloud.configured() || cloud._onboarding)) details.open = true;
     if (!identity) cloud.renderGoogleButton($('googleSignIn'));
@@ -927,13 +927,14 @@
       this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       this.renderSync();
       this.toast('הגדרות הענן נשמרו', 'ok');
-      if (this.cloudService().configured()) await this.cloudRefresh(() => this.cloudService().pullCloudState());
+      await this.syncCloudAccess();
     } catch (e) { this.toast(`שמירת הגדרות הענן נכשלה: ${e.message}`, 'error'); }
   },
   async cloudPull() {
     if (!this.cloudService().url()) return this.toast('לא הוגדרה כתובת סנכרון ענן', 'warn');
     if (this.cloudService().hasUnpublished() && !this.confirmAction('יש שינויים שלא סונכרנו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
     const r = await this.cloudRefresh(() => this.cloudService().pullCloudState({ force: true }));
+    this.completeCloudAccess(r);
     recordCloudLog(this.cloudService(), 'pull', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
     if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
     else if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
@@ -943,6 +944,10 @@
     try {
       this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       if (!this.cloudService().url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
+      if (!this.canEdit() || this.cloudService().hasUnpublished()) {
+        await this.syncCloudAccess();
+        if (!this._cloudWriteReady) return;
+      }
       attempted = true;
       const r = await this.cloudRefresh(() => this.cloudService().pullCloudState());
       if (!r) return;
@@ -960,6 +965,7 @@
   async cloudForcePush() {
     if (!this.confirmAction('דחיפה כפויה תחליף את נתוני הענן בנתונים המקומיים ותשפיע על כל הצוות. מומלץ לייצא גיבוי מקומי קודם. להמשיך?')) return;
     const r = await this.cloudRefresh(() => this.cloudService().pushCloudState({ force: true }));
+    this.completeCloudAccess(r);
     recordCloudLog(this.cloudService(), 'force', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
     if (r && r !== 'kept-local') this.toast('הנתונים המקומיים נשלחו לענן', 'ok');
   },
@@ -1080,7 +1086,8 @@
   qRemove(el) { this.applyRule(Config.removeQuestionnaire(el.dataset.code)); },
   deleteRoster() {
     if (!this.confirmAction('למחוק את מצבת החניכים? כל הפאנלים יתרוקנו עד לטעינת מצבת חדשה.')) return;
-    Config.clearRoster();
+    const res = Config.clearRoster();
+    if (res && res.ok === false) return this.toast(res.error, 'error');
     Config.setRosterCleared(true);
     this.rosterReport = null;
     this.afterDataChange();
@@ -1336,7 +1343,8 @@
     });
     on('btnResetConfig', 'click', () => {
       if (!this.confirmAction('האיפוס ימחק את כל כללי הזכאות, החריגים, הכינויים, פרופילי המיפוי ודריסות שיוך (rosterOverrides). המצבת תישאר. המחיקות יסונכרנו גם לענן אם הוגדר וישפיעו על כל הצוות. להמשיך?')) return;
-      Config.reset({ silent: true });
+      const res = Config.reset({ silent: true });
+      if (res && res.ok === false) return this.toast(res.error, 'error');
       this.afterDataChange();
       this.toast('ההגדרות אופסו', 'ok');
     });

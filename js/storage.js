@@ -241,8 +241,9 @@ const CloudSync = {
     };
   },
 
-  async applyState(s) {
+  async applyState(s, { userEdit = false } = {}) {
     if (this._wiping) throw new Error('לא ניתן לטעון נתונים בזמן מחיקת ההפעלה המקומית');
+    if (userEdit) { const denied = Config.requireEdit(); if (denied) throw new Error(denied.error); }
     s = sanitizeState(s);
     if (s.customQuestionnaires) {
       const err = Config.validateRules(s.customQuestionnaires);
@@ -260,14 +261,15 @@ const CloudSync = {
       for (const key of Config.DATASET_KEYS) {
         if (!(key in s)) continue;
         written.push(key);
-        if (s[key] === null) await Config._storeDelete(key);
+        if (s[key] === null) await Config._storeDelete(key, userEdit);
         else {
-          const r = await Config._storePut(key, s[key]);
+          const r = await Config._storePut(key, s[key], userEdit);
           if (!r.ok) throw new Error(r.error);
         }
         if (revision !== this._revision) return 'kept-local';
       }
       // Suppress only our synchronous commit, never user edits during IndexedDB awaits.
+      if (userEdit) { const denied = Config.requireEdit(); if (denied) throw new Error(denied.error); }
       const previous = Config.data, activeCohort = Config._activeCohort;
       const savedKeys = [Config.KEYS.config, Config.KEYS.masterRoster, Config.KEYS.rosterCleared];
       const previousStorage = savedKeys.map(key => localStorage.getItem(key));
@@ -283,8 +285,9 @@ const CloudSync = {
         d.rosterMismatchDismissed = s.rosterMismatchDismissed;
         Config.applyCohortState(s.cohortProfiles, s.gradeCohortMap, s.customQuestionnaires);
         Config._syncQuestionnaires();
-        const saved = Config.save();
+        const saved = Config._write(Config.KEYS.config, Config.data);
         if (!saved.ok) throw new Error(saved.error);
+        Config.emit('config-changed');
         if (s.rosterData !== undefined) {
           if (s.rosterData === null) {
             localStorage.removeItem(Config.KEYS.masterRoster);
@@ -370,7 +373,7 @@ const CloudSync = {
     const text = String((e && e.message) || '');
     if (e && e.name === 'AbortError') return new Error('החיבור לענן פג (זמן תגובה ארוך מדי). הנתונים נשמרו מקומית.');
     if (navigator.onLine === false || (e && e.name === 'TypeError') || /Failed to fetch|Load failed|NetworkError|Network request failed/i.test(text)) {
-      return new Error('אין חיבור לרשת או ששרת הענן אינו זמין. הנתונים נשמרו מקומית ויסונכרנו עם החזרה לרשת.');
+      return new Error('אין חיבור לרשת או ששרת הענן אינו זמין. הנתונים נשמרו מקומית; אפשר לנסות לסנכרן שוב.');
     }
     return e;
   },
@@ -521,6 +524,7 @@ const CloudSync = {
       if (!this.passcode()) throw new Error("קובץ הגיבוי מוצפן — יש להזין את קוד בית-הספר למעלה וללחוץ על 'שמירת הגדרות' לפני השחזור.");
       s = await this.open(s);
     }
+    const denied = Config.requireEdit(); if (denied) throw new Error(denied.error);
     if (this._wiping) throw new Error('השחזור בוטל בזמן מחיקת ההפעלה המקומית');
     const LEGACY_KEYS = ['masterRoster', 'bagrutRules', 'cohortProfiles', 'classNicknames', 'specialEdClasses', 'rosterOverrides', 'traineeExceptions', 'mappingProfiles'];
     const isFull = s && typeof s === 'object' && !Array.isArray(s) && ('fileTimestamps' in s || 'studentMeta' in s || 'rosterData' in s);
@@ -529,13 +533,14 @@ const CloudSync = {
       this.markDirty();
       return 'legacy';
     }
-    if (await this.applyState(s) === 'kept-local') throw new Error('בוצעו שינויים בזמן השחזור. הנתונים המקומיים נשמרו; יש לנסות שוב.');
+    if (await this.applyState(s, { userEdit: true }) === 'kept-local') throw new Error('בוצעו שינויים בזמן השחזור. הנתונים המקומיים נשמרו; יש לנסות שוב.');
+    this.markDirty();
     if (s.mappingProfiles && typeof s.mappingProfiles === 'object' && !Array.isArray(s.mappingProfiles)) {
+      const denied = Config.requireEdit(); if (denied) throw new Error(denied.error);
       Config.data.mappingProfiles = s.mappingProfiles;
       const saved = Config.save();
       if (!saved.ok) throw new Error(saved.error);
     }
-    this.markDirty();
     return 'full';
   },
 

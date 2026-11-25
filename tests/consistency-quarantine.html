@@ -60,11 +60,12 @@
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
-    const cloud = { configured: () => false, hasUnpublished: () => false, status: { kind: 'none' },
-      meta: () => ({}), url: () => '', apiToken: () => '', passcode: () => '' };
+    const cloud = { configured: () => true, hasUnpublished: () => false, status: { kind: 'ok' },
+      meta: () => ({}), url: () => 'https://cloud.test', identity: () => ({ email: 'test@example.test' }), passcode: () => 'test' };
     const app = new Function('Util', 'Config', 'CloudSync', 'document', 'parseExcelFile', 'confirm', 'Store', source + '\nreturn App;')(
       Util, Config, cloud, doc, Parser.parseExcelFile, () => true, Store);
     app.toasts = [];
+    app._cloudWriteReady = true;
     app.toast = (text, kind) => app.toasts.push({ text, kind });
     app.state.sim = { ignoreInternals: false, plus5: false, useCurrent: false, fullMode: false };
 

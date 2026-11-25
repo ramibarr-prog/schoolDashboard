@@ -348,6 +348,7 @@
   },
 
   weaknessRiskApply() {
+    if (!this.requireEdit()) return;
     const draft = this.state.sadin.weakRiskDraft;
     if (!validRiskRules(draft)) {
       this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');
@@ -361,6 +362,7 @@
   },
 
   weaknessRiskChange(el) {
+    if (!this.requireEdit()) return;
     const key = el.dataset.key, value = Number(el.value), current = weaknessRiskRules(this);
     if (!['minFails', 'minMissed'].includes(key) || !validRiskRules({ ...current, [key]: value })) {
       this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');

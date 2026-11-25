@@ -237,6 +237,7 @@
   },
 
   bagrutPin(el) {
+    if (!this.requireEdit()) return;
     const pins = loadPins(), tz = el.dataset.tz;
     if (pins.has(tz)) pins.delete(tz); else pins.add(tz);
     savePins();
