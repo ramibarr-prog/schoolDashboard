@@ -2073,8 +2073,11 @@ window.fetch = (input, options) => {
       check(history().children[1].textContent.includes('חסום') && !history().children[1].textContent.includes('סימולציה'),
         'Simulation does not replace a reported blocker');
       choose(T(103));
-      check(history().children[3].querySelector('.tier-4') && history().children[2].textContent.includes('נכשל'),
-        'A subject that cannot pass with 100 remains failed and retains its real target');
+      check(history().children[3].querySelector('.tier-4') && history().children[2].textContent.includes('עובר (קומפנסציה)') &&
+        history().children[2].textContent.includes('סימולציה') &&
+        history().children[2].querySelector('[title]').title.includes('פיצוי נקודות') &&
+        detail().textContent.includes('היסטוריה עובר באמצעות פיצוי נקודות'),
+        'An impossible direct target is retained when the simulated score qualifies for points compensation');
       same(JSON.stringify([...Store._bagrut].map(([tz, entries]) => [tz, [...entries]])), storeBefore, 'Simulation does not modify stored results');
       same(JSON.stringify(BagrutEngine.evaluate(T(110), FULL)), realBefore, 'Normal engine evaluations are unchanged by local simulation');
       toggle('sim100', false);
@@ -2102,8 +2105,10 @@ window.fetch = (input, options) => {
 
       choose(T(104));
       check(BagrutEngine.evaluate(T(104), FULL).subjects.find(s => s.id === 'history').compApplied === 'range' &&
-        history().children[3].textContent.trim() === '-' && history().children[2].textContent.includes('נכשל') &&
-        historyDetails().textContent.includes('קיזוז'), 'Existing range compensation is shown in subject details');
+        history().children[3].textContent.trim() === '-' && history().children[2].textContent.includes('עובר (קיזוז)') &&
+        history().children[2].querySelector('[title]').title.includes('טווח הציונים') &&
+        historyDetails().textContent.includes('קיזוז') && detail().textContent.includes('היסטוריה עובר בקיזוז'),
+        'Existing range compensation is shown in the subject and details');
       const detailsButton = history().querySelector('[data-bagrut-subject-details]');
       check(detailsButton && historyDetails().hidden && detailsButton.getAttribute('aria-expanded') === 'false',
         'Additional calculation notes start collapsed');

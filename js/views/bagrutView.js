@@ -32,7 +32,7 @@
         if (typeof group !== 'object' || Array.isArray(group)) throw new Error(`רוחבי עמודות ${kind} אינם תקינים`);
         WORK_COLUMNS[kind].forEach(([key]) => {
           if (group[key] == null) return;
-          if (!Number.isFinite(group[key]) || group[key] < 56 || group[key] > 360) throw new Error(`רוחב עמודה ${key} אינו תקין`);
+          if (!Number.isFinite(group[key]) || group[key] <= 0) throw new Error(`רוחב עמודה ${key} אינו תקין`);
           widthsCache[kind][key] = group[key];
         });
       });
@@ -48,11 +48,13 @@
   }
   function workColumns(kind) {
     const saved = loadWorkWidths()[kind];
+    const customized = Object.keys(saved).length > 0;
     const columns = WORK_COLUMNS[kind].map(([key, label, defaultWidth]) => ({ key, label, width: saved[key] || defaultWidth }));
+    const width = columns.reduce((sum, c) => sum + c.width, 0);
     return {
-      width: columns.reduce((sum, c) => sum + c.width, 0),
-      cols: columns.map(c => `<col style="width:${c.width}px">`).join(''),
-      headers: columns.map(c => `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה להתאמה אוטומטית)"></span></th>`).join('')
+      width: customized ? `${width}px` : '100%',
+      cols: columns.map(c => `<col style="width:${customized ? `${c.width}px` : `${c.width / width * 100}%`}">`).join(''),
+      headers: columns.map(c => `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה לאיפוס רוחבי הטבלה)"></span></th>`).join('')
     };
   }
   function lockWorkColWidths(table) {
@@ -69,8 +71,12 @@
   function setWorkColWidth(table, index, key, width) {
     const kind = table.dataset.widthGroup, widths = loadWorkWidths();
     if (!WORK_COLUMNS[kind] || !WORK_COLUMNS[kind].some(c => c[0] === key)) throw new Error('עמודת זכאות לא מוכרת');
-    const w = Math.max(56, Math.min(360, Math.round(width)));
     const cols = table.querySelectorAll('colgroup col');
+    const otherWidth = [...cols].reduce((sum, col, i) => sum + (i === index ? 0 : parseFloat(col.style.width)), 0);
+    const container = table.parentElement, style = getComputedStyle(container);
+    const containerWidth = container.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    // Shrinking below the container width would redistribute space to the other columns.
+    const w = Math.max(56, containerWidth - otherWidth, width);
     if (cols[index]) cols[index].style.width = `${w}px`;
     table.style.width = `${[...cols].reduce((sum, c) => sum + parseFloat(c.style.width), 0)}px`;
     widths[kind][key] = w;
@@ -82,13 +88,17 @@
     e.stopPropagation(); e.preventDefault();
     const th = h.closest('th'), table = th.closest('table'), key = th.dataset.ck, index = th.cellIndex;
     const startX = e.clientX, startW = th.getBoundingClientRect().width;
-    lockWorkColWidths(table);
-    h.classList.add('is-resizing');
+    let dragged = false;
     document.body.classList.add('col-resizing');
-    const move = ev => setWorkColWidth(table, index, key, startW + (startX - ev.clientX));
+    const move = ev => {
+      if (!dragged && ev.clientX === startX) return;
+      if (!dragged) { lockWorkColWidths(table); dragged = true; }
+      setWorkColWidth(table, index, key, startW + (startX - ev.clientX));
+    };
     const up = () => {
       document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
-      h.classList.remove('is-resizing'); document.body.classList.remove('col-resizing'); saveWorkWidths();
+      document.body.classList.remove('col-resizing');
+      if (dragged) saveWorkWidths();
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
@@ -98,10 +108,11 @@
     const h = resizeHandle(e);
     if (!h) return;
     e.stopPropagation(); e.preventDefault();
-    const th = h.closest('th'), label = th.querySelector('.bagrut-col-label');
-    const table = th.closest('table');
-    lockWorkColWidths(table);
-    setWorkColWidth(table, th.cellIndex, th.dataset.ck, (label ? label.scrollWidth : th.scrollWidth) + 24);
+    const table = h.closest('table'), kind = table.dataset.widthGroup;
+    loadWorkWidths()[kind] = {};
+    const columns = workColumns(kind);
+    table.style.width = columns.width;
+    table.querySelector('colgroup').innerHTML = columns.cols;
     saveWorkWidths();
   }, true);
   function loadPins() {
@@ -632,23 +643,51 @@
     const actualSignals = signalsFor(roster.map(t => ({ t })), options);
     const signalMap = st.sim100 ? signalsFor(roster.map(t => ({ t })), { ...options, sim100: true }) : actualSignals;
     const rows = roster.map(t => ({ t, ev: signalMap.get(t.tz).ev }));
+    const rules = Config.rulesForGrade('יב');
+    const offsetCache = new WeakMap();
+    const offsetInfo = ev => {
+      if (offsetCache.has(ev)) return offsetCache.get(ev);
+      const failures = ev.gates[1] === 'off' ? [] : ev.subjects.filter(s => {
+        if (s.exempt || s.comps.some(c => !c.internal && (c.state === 'missing' || c.failed || c.blocked))) return false;
+        const missing = s.unresolved.concat(s.pending);
+        return (!missing.length && s.adj != null && Math.round(s.adj) < rules.passGrade) ||
+          (missing.length > 0 && missing.every(c => c.internal && !c.failed && !c.blocked) &&
+            s.reverse && s.reverse.required30 > 100) ||
+          (st.sim100 && missing.some(c => c.internal && (c.failed || c.blocked)));
+      });
+      const majorBlock = ev.blockers.find(b => b.gate === 2 && b.k === 'major-fail');
+      const failedMajor = majorBlock && ev.major.cands.find(c => majorBlock.text.includes(c.name));
+      if (failedMajor && !failures.some(s => s.id === failedMajor.coreId)) failures.push(failedMajor);
+      const single = failures.length === 1 ? failures[0] : null;
+      const applied = single && single.compApplied && !single.critical ? single : null;
+      const pending = applied && (ev.subjects.some(s => s !== applied && !s.exempt &&
+        s.unresolved.concat(s.pending).some(c => !c.failed && !c.blocked)) ||
+        ev.blockers.some(b => b.gate === 2 && ['major-missing', 'major-none'].includes(b.k)));
+      const complete = single && single.comps && !single.unresolved.length && !single.pending.length;
+      const rejected = failures.length > 1 || !!(single && (single.critical || !single.comps || (complete && !applied)));
+      const result = { failures, applied, pending, rejected };
+      offsetCache.set(ev, result);
+      return result;
+    };
     const known = rows.filter(r => !noBagrutData(signalMap.get(r.t.tz), options) && r.ev.tier !== 0 && r.ev.tier !== 5);
     const forecastOptions = { ...options, fullMode: false, useCurrent: true };
     const forecast = signalsFor(known, forecastOptions);
-    const eligible = ev => ev.tier === 1 || ev.tier === 2;
+    const eligible = ev => (ev.tier === 1 || ev.tier === 2) &&
+      (ev.manual || (!offsetInfo(ev).rejected && !offsetInfo(ev).pending));
     const todayCount = known.filter(r => eligible(r.ev)).length;
-    const forecastCount = known.filter(r => eligible(forecast.get(r.t.tz).ev)).length;
+    const forecastCount = known.filter(r => [1, 2].includes(forecast.get(r.t.tz).ev.tier)).length;
     const metric = (count, label) => `<span><strong>${known.length ? `${Math.round(count / known.length * 100)}%` : '—'}</strong> ${label}: ${count} מתוך ${known.length}</span>`;
     const globalRows = roster.map(t => ({ t, ev: this.getEval(t.tz) }));
     const overviewIds = st.overviewEntry && !st.sim100 ? new Set(this.filterByChip(globalRows, st.chip).map(r => r.t.tz)) : null;
     const attention = st.overviewEntry && st.chip === 'attention' ? this.attentionModel(roster, globalRows) : null;
-    const selected = rows.filter(r => overviewIds ? overviewIds.has(r.t.tz) : this.chipMatch(r, st.chip, signalMap.get(r.t.tz)));
-    const order = r => r.ev.tier === 5 ? 0 : r.ev.tier === 0 || r.ev.manualReview.required || r.ev.tier >= 3 ? 2 : 1;
+    const matches = (r, chip) => chip === 'eligible' ? eligible(r.ev) : this.chipMatch(r, chip, signalMap.get(r.t.tz));
+    const selected = rows.filter(r => overviewIds ? overviewIds.has(r.t.tz) : matches(r, st.chip));
+    const order = r => r.ev.tier === 5 ? 0 : r.ev.tier === 0 || r.ev.manualReview.required || r.ev.tier >= 3 || !eligible(r.ev) ? 2 : 1;
     selected.sort((a, b) => order(b) - order(a) || b.ev.tier - a.ev.tier || natural(a.t.name, b.t.name) || natural(a.t.tz, b.t.tz));
     const deferred = loadDeferred(), active = selected.filter(r => !deferred.has(r.t.tz)), lowered = selected.filter(r => deferred.has(r.t.tz));
     this._bagrutWorkIds = active.map(r => r.t.tz);
     if (!selected.some(r => r.t.tz === st.workTz)) st.workTz = active.length ? active[0].t.tz : '';
-    const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => this.chipMatch(r, id, signalMap.get(r.t.tz))).length}</span></button>`;
+    const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => matches(r, id)).length}</span></button>`;
     setHtml('bagrut-kpis', `<div class="card bagrut-work-summary">
       <div class="bagrut-work-metrics">${metric(todayCount, st.sim100 ? 'עומדים בתנאי סוף י״ב בסימולציה' : 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
       <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל חנ״מ והכרעות ידניות; ללא מסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי מותאם לשלב בשנה ומשלב ציונים שוטפים; רכיבי י״ב שטרם דווחו בהיקף הנדרש בשכבה אינם נחשבים חסרים. הצפי אינו הבטחה לזכאות.</p>
@@ -661,8 +700,11 @@
     const workRows = list => list.map(({ t, ev }) => {
       const noData = noBagrutData(signalMap.get(t.tz), options);
       const b = UI.buildBagrutBreakdown(t, ev, { noData });
+      const offset = offsetInfo(ev);
+      const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
+        !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
       return `<tr><td><button type="button" class="bagrut-name" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}" aria-pressed="${t.tz === st.workTz}">${E(t.name)}</button></td>
-        <td>${E(Config.classLabel(t.classKey))}</td><td>${E(b.cellSummary)}</td><td>${pinButton(t)}</td></tr>`;
+        <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
     let detail = '<p>אין חניכים להצגה בסינון הנוכחי.</p>';
@@ -671,7 +713,10 @@
       const b = UI.buildBagrutBreakdown(t, ev, { noData });
       const index = this._bagrutWorkIds.indexOf(t.tz);
       const issues = ev.blockers.filter(x => !x.info);
-      const rules = Config.rulesForGrade('יב');
+      const offset = offsetInfo(ev);
+      const simulatedForOffset = offset.applied && st.sim100 && ev.subjects.some(s =>
+        s.comps.some(c => c.simulated) && (s === offset.applied ||
+          (s.status === 'pass' && actualEv.subjects.find(a => a.id === s.id)?.status !== 'pass')));
       const pointsRules = Config.withRules(rules, () => Config.pointsCompensation());
       const examTag = comp => {
         const value = comp.simulated ? '100 (סימולציה)' : comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
@@ -682,13 +727,13 @@
       const alternatives = comps => comps.filter(c => c.state === 'missing' && !c.failed && !c.blocked && c.codes.length > 1)
         .map(c => `חלופות לשאלון ${c.code}: ${c.codes.join(' / ')}`);
       let detailIndex = 0;
-      const subjectRow = (id, name, exams, target, status, notes) => {
+      const subjectRow = (id, name, exams, target, status, notes, statusTip = '') => {
         const unique = [...new Set(notes.filter(Boolean))], detailsId = `bagrut-subject-details-${detailIndex++}`;
         const statusClass = status.startsWith('עובר') ? 'pass' : status === 'נכשל' ? 'bad' : 'neutral';
         const button = unique.length ? `<button type="button" class="bagrut-subject-toggle" data-bagrut-subject-details aria-expanded="false" aria-controls="${detailsId}" aria-label="${E(`פרטים: ${name}`)}">פרטים</button>` : '-';
         return `<tr data-subject="${E(id)}"><th scope="row"><strong>${E(name)}</strong></th>
           <td><div class="bagrut-exams">${exams.map(examTag).join('') || '-'}</div></td>
-          <td><span class="bagrut-subject-status is-${statusClass}">${E(status)}</span></td><td>${target}</td><td>${button}</td></tr>
+          <td><span class="bagrut-subject-status is-${statusClass}"${statusTip ? ` title="${E(statusTip)}"` : ''}>${E(status)}</span></td><td>${target}</td><td>${button}</td></tr>
           ${unique.length ? `<tr id="${detailsId}" class="bagrut-subject-detail-row" hidden><td colspan="5">${unique.map(note => `<div>${E(note)}</div>`).join('')}</td></tr>` : ''}`;
       };
       const subjects = ev.subjects.map(s => {
@@ -703,12 +748,16 @@
         const tooltip = 'גם 100 ב-30% אינו מספיק למעבר ישיר. במקצוע שאינו עברית ואינו מוחרג ניתן לבחון קיזוז או קומפנסציה (פיצוי נקודות), בכפוף לכללי הזכאות.';
         const targetCell = impossible ? `<span class="badge tier-4" title="${E(tooltip)}">נכשל</span>` :
           target && target.directTarget != null ? E(target.directTarget) : '-';
-        const status = b.noData ? '-' : s.exempt ? 'פטור' : s.status === 'pass'
+        const mechanism = offset.applied === s ? (s.compApplied === 'points' ? 'קומפנסציה' : 'קיזוז') : '';
+        const statusTip = mechanism === 'קיזוז' ? 'קיזוז לפי טווח הציונים וכללי הזכאות.' :
+          mechanism ? 'קומפנסציה באמצעות פיצוי נקודות ממקצועות עוברים, לפי כללי הזכאות.' : '';
+        const status = b.noData ? '-' : s.exempt ? 'פטור' : mechanism
+          ? `עובר (${mechanism})${simulatedForOffset ? ' (סימולציה)' : ''}` : s.status === 'pass'
           ? s.comps.some(c => c.simulated) && actual.status !== 'pass' ? 'עובר (סימולציה)' : 'עובר' : 'נכשל';
         const notes = alternatives(s.comps);
         blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
           .forEach(x => notes.push(x.text));
-        if (s.compApplied) {
+        if (s.compApplied && mechanism) {
           const compensation = ev.notes.filter(note => note.includes(s.name) && /קיזוז|פיצוי/.test(note));
           notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז']));
         }
@@ -726,7 +775,7 @@
               : 'פיצוי נקודות מושבת בכללי המחזור.');
           }
         }
-        return subjectRow(s.id, s.name, s.comps, targetCell, status, notes);
+        return subjectRow(s.id, s.name, s.comps, targetCell, status, notes, statusTip);
       }).join('');
       const majors = ev.major.cands.filter(c => !c.coreId).map(c => {
         const def = rules.majors.find(m => m.id === c.id);
@@ -762,6 +811,21 @@
       const compensationHint = !b.noData && !b.isTrack12 && singleImpossible && !singleImpossible.critical && !additionalFailure && alternativesForHint.length
         ? `במקצוע ${singleImpossible.name} לא ניתן להגיע לעובר ${rules.passGrade} גם עם 100 ב-30%. אפשר לבדוק ${alternativesForHint.join(' או ')}, בכפוף לכללי הזכאות.`
         : '';
+      let offsetExplanation = '';
+      if (!b.noData && !b.isTrack12 && offset.rejected) {
+        offsetExplanation = offset.failures.length > 1
+          ? 'יש יותר ממקצוע אחד שנכשל בוודאות, ולכן לא ניתן להציג מעבר בקיזוז או בפיצוי.'
+          : offset.failures[0].critical
+            ? `המקצוע ${offset.failures[0].name} אינו מאפשר קיזוז או פיצוי לפי הכללים.`
+            : `הציון ב${offset.failures[0].name} או שאר הציונים אינם עומדים בתנאים לקיזוז או לפיצוי נקודות.`;
+      } else if (!b.noData && !b.isTrack12 && offset.applied) {
+        const s = offset.applied;
+        offsetExplanation = s.compApplied === 'points'
+          ? `${s.name} עובר באמצעות פיצוי נקודות ממקצועות עוברים, לפי כללי הזכאות.`
+          : `${s.name} עובר בקיזוז כי הציון שלו נמצא בטווח המותר לפי כללי הזכאות.`;
+        if (simulatedForOffset) offsetExplanation += ' הבדיקה כוללת ציוני 100 מדומים.';
+        if (offset.pending) offsetExplanation += ' הדבר מותנה בכך שלא ייווצרו נכשלים נוספים במקצועות שטרם דווחו.';
+      }
       const review = ev.manualReview.required ? this.manualReviewLines(ev) : [];
       let simulation = '';
       if (st.whatifEntry) {
@@ -774,17 +838,17 @@
       const eligibility = eligible(ev);
       detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}</h2>
         <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
-        <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${st.sim100 ? ' (סימולציה)' : ''}</span>
+        <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${!eligibility && !b.noData && !b.isTrack12 && offset.rejected ? ' - לא זכאי לקיזוז או קומפנסציה' : ''}${st.sim100 ? ' (סימולציה)' : ''}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
-        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width}px"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
-        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}</ul>` : ''}
+        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width};min-width:100%"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
+        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint || offsetExplanation ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}${offsetExplanation ? `<li>${E(offsetExplanation)}</li>` : ''}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
     }
-    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width}px"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
+    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width};min-width:100%"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
       <tbody>${workRows(active) || '<tr><td colspan="4">אין חניכים פעילים להצגה</td></tr>'}${lowered.length ? `<tr class="room-divider"><td colspan="4">חניכים שהורדו למטה (${lowered.length})</td></tr>${workRows(lowered)}` : ''}</tbody></table></div><section class="card bagrut-work-detail" aria-label="בדיקת חניך">${detail}</section></div>`);
   },
 
