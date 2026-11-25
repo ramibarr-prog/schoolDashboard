@@ -12,8 +12,86 @@
 
   const PINS_KEY = 'schoolDashboard.bagrut.pins.v1';
   const DEFERRED_KEY = 'sd.bagrut.deferred.v1';
+  const WIDTHS_KEY = 'schoolDashboard.bagrut.colWidths.v1';
+  const WORK_COLUMNS = {
+    list: [['name', 'חניך', 150], ['class', 'כיתה', 85], ['issues', 'מה חוסם או דורש בדיקה', 240], ['order', 'סדר ברשימה', 135]],
+    subjects: [['subject', 'מקצוע', 140], ['exams', 'תוצאות שאלונים', 180], ['status', 'סטטוס נוכחי', 135], ['target', 'ציון נדרש ב-30%', 165], ['details', 'פרטי חישוב', 110]]
+  };
   let pinsCache = null;
   let deferredCache = null;
+  let widthsCache = null;
+  function loadWorkWidths() {
+    if (widthsCache) return widthsCache;
+    widthsCache = { list: {}, subjects: {} };
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(WIDTHS_KEY) || '{}');
+      if (!saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('רוחבי העמודות אינם תקינים');
+      Object.keys(WORK_COLUMNS).forEach(kind => {
+        const group = saved[kind];
+        if (group == null) return;
+        if (typeof group !== 'object' || Array.isArray(group)) throw new Error(`רוחבי עמודות ${kind} אינם תקינים`);
+        WORK_COLUMNS[kind].forEach(([key]) => {
+          if (group[key] == null) return;
+          if (!Number.isFinite(group[key]) || group[key] < 56 || group[key] > 360) throw new Error(`רוחב עמודה ${key} אינו תקין`);
+          widthsCache[kind][key] = group[key];
+        });
+      });
+    } catch (e) {
+      console.error('טעינת רוחבי עמודות הזכאות נכשלה', e);
+      widthsCache = { list: {}, subjects: {} };
+    }
+    return widthsCache;
+  }
+  function saveWorkWidths() {
+    try { window.localStorage.setItem(WIDTHS_KEY, JSON.stringify(loadWorkWidths())); }
+    catch (e) { console.error('שמירת רוחבי עמודות הזכאות נכשלה', e); }
+  }
+  function workColumns(kind) {
+    const saved = loadWorkWidths()[kind];
+    const columns = WORK_COLUMNS[kind].map(([key, label, defaultWidth]) => ({ key, label, width: saved[key] || defaultWidth }));
+    return {
+      width: columns.reduce((sum, c) => sum + c.width, 0),
+      cols: columns.map(c => `<col style="width:${c.width}px">`).join(''),
+      headers: columns.map(c => `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה להתאמה אוטומטית)"></span></th>`).join('')
+    };
+  }
+  function setWorkColWidth(table, index, key, width) {
+    const kind = table.dataset.widthGroup, widths = loadWorkWidths();
+    if (!WORK_COLUMNS[kind] || !WORK_COLUMNS[kind].some(c => c[0] === key)) throw new Error('עמודת זכאות לא מוכרת');
+    const w = Math.max(56, Math.min(360, Math.round(width)));
+    const cols = table.querySelectorAll('colgroup col');
+    if (cols[index]) cols[index].style.width = `${w}px`;
+    table.querySelectorAll(`tr > :nth-child(${index + 1})`).forEach(c => {
+      if (c.colSpan <= 1) c.style.width = c.style.minWidth = c.style.maxWidth = `${w}px`;
+    });
+    table.style.width = `${[...cols].reduce((sum, c) => sum + parseFloat(c.style.width), 0)}px`;
+    widths[kind][key] = w;
+  }
+  const resizeHandle = e => e.target.closest && e.target.closest('#bagrut-table table[data-width-group] .col-resizer');
+  document.addEventListener('mousedown', e => {
+    const h = resizeHandle(e);
+    if (!h || e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    const th = h.closest('th'), table = th.closest('table'), key = th.dataset.ck, index = th.cellIndex;
+    const startX = e.clientX, startW = th.getBoundingClientRect().width;
+    document.body.classList.add('col-resizing');
+    const move = ev => setWorkColWidth(table, index, key, startW + (startX - ev.clientX));
+    const up = () => {
+      document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+      document.body.classList.remove('col-resizing'); saveWorkWidths();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }, true);
+  document.addEventListener('click', e => { if (resizeHandle(e)) { e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('dblclick', e => {
+    const h = resizeHandle(e);
+    if (!h) return;
+    e.stopPropagation(); e.preventDefault();
+    const th = h.closest('th'), label = th.querySelector('.bagrut-col-label');
+    setWorkColWidth(th.closest('table'), th.cellIndex, th.dataset.ck, (label ? label.scrollWidth : th.scrollWidth) + 24);
+    saveWorkWidths();
+  }, true);
   function loadPins() {
     if (pinsCache) return pinsCache;
     pinsCache = new Set();
@@ -537,6 +615,7 @@
 
   renderBagrutWorklist() {
     const st = this.state.bagrut, roster = this.filtered().filter(t => t.gradeKey === 'יב');
+    const listColumns = workColumns('list'), subjectColumns = workColumns('subjects');
     const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals };
     const actualSignals = signalsFor(roster.map(t => ({ t })), options);
     const signalMap = st.sim100 ? signalsFor(roster.map(t => ({ t })), { ...options, sim100: true }) : actualSignals;
@@ -688,12 +767,12 @@
         <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
-        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>תוצאות שאלונים</th><th>סטטוס נוכחי</th><th>ציון נדרש ב-30%</th><th>פרטי חישוב</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
+        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width}px;min-width:100%"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
         ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
     }
-    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid w-full text-right"><thead><tr><th>חניך</th><th>כיתה</th><th>מה חוסם או דורש בדיקה</th><th>סדר ברשימה</th></tr></thead>
+    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width}px;min-width:100%"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
       <tbody>${workRows(active) || '<tr><td colspan="4">אין חניכים פעילים להצגה</td></tr>'}${lowered.length ? `<tr class="room-divider"><td colspan="4">חניכים שהורדו למטה (${lowered.length})</td></tr>${workRows(lowered)}` : ''}</tbody></table></div><section class="card bagrut-work-detail" aria-label="בדיקת חניך">${detail}</section></div>`);
   },
 

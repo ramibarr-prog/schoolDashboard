@@ -16,11 +16,16 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-list { overflow: auto; }
 .bagrut-work-subject-scroll { overflow-x: auto; margin-top: .75rem; }
 .bagrut-work-subjects { width: 100%; border-collapse: collapse; text-align: right; font-size: .8rem; }
-.bagrut-work-subjects th, .bagrut-work-subjects td { padding: .35rem .5rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; vertical-align: middle; }
+.bagrut-work-subjects, .bagrut-work-students { table-layout: fixed; }
+.bagrut-work-subjects thead th { position: relative; }
+.bagrut-col-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#bagrut-table .col-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 15; }
+#bagrut-table .col-resizer:hover { background: rgba(232, 185, 95, .7); }
+.bagrut-work-subjects th, .bagrut-work-subjects td { padding: .35rem .5rem; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; vertical-align: middle; }
 .bagrut-work-subjects thead { color: var(--muted); }
 .bagrut-work-subjects td:nth-child(2) { white-space: normal; }
 .bagrut-exams { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; }
-.bagrut-exam { display: block; white-space: nowrap; }
+.bagrut-exam { display: block; }
 .bagrut-subject-status { display: inline-block; padding: .15rem .45rem; border-radius: .4rem; font-weight: 700; }
 .bagrut-subject-status.is-pass { color: #166534; background: #dcfce7; }
 .bagrut-subject-status.is-bad { color: #991b1b; background: #fee2e2; }
