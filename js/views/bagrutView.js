@@ -174,7 +174,7 @@
     return `<span class="badge gate-warn bagrut-quality" tabindex="0" aria-label="${E(details)}" title="${E(details)}">${quality ? `${quality} לבדיקה` : 'חסר מידע'}</span>`;
   }
 
-  function target30(s, ev, rules) {
+  function target30(s, ev, rules, includeDirectTargets = false) {
     const missing = s.unresolved.concat(s.pending);
     const internal = missing.filter(c => c.internal);
     const allInternal = s.comps.filter(c => c.internal);
@@ -186,12 +186,14 @@
     const notes = [];
     if (ev.manual) notes.push('קיימת הכרעה ידנית; היעד אינו משנה אותה');
     if (ev.manualReview.required) notes.push('נדרשת החלטת רכזת');
-    let target = 'לא ניתן לקבוע';
+    let target = 'לא ניתן לקבוע', directTarget = null, compensationTarget = null;
     if (!r || missing.some(c => !c.internal)) {
       notes.push('נדרשים נתונים נוספים או בדיקה של הרכיבים החסרים');
     } else {
       const recordedInternal = allInternal.filter(c => c.state === 'num').reduce((n, c) => n + c.num * c.weight, 0);
       const fullTarget = n => Math.ceil(+((recordedInternal + Math.max(1, n) * internalWeight) / totalInternalWeight).toFixed(6));
+      if (r.required30 <= 100) directTarget = fullTarget(r.required30);
+      if (r.requiredFor45 <= 100) compensationTarget = fullTarget(r.requiredFor45);
       const compUsed = ev.subjects.filter(subject => subject.status === 'comp' && !subject.critical).length;
       const canCompensate = !s.critical && rules.allowCompensationRule && compUsed < rules.maxCompensations &&
         r.requiredFor45 <= 100 && r.requiredFor45 < Math.max(1, r.required30);
@@ -214,7 +216,7 @@
     }
     const current = s.reportedScore == null ? 'אין ציון מספרי מדווח' :
       `ממוצע הציונים המדווחים ${Util.fmt(s.reportedScore, 1)}; דווחו ${s.reportedPct}% ממשקל המקצוע`;
-    return { current, target, note: notes.join(' · ') };
+    return { current, target, note: notes.join(' · '), ...(includeDirectTargets ? { directTarget, compensationTarget } : {}) };
   }
 
   window.BagrutView = {
@@ -577,6 +579,7 @@
       const issues = ev.blockers.filter(x => !x.info);
       const show30 = st.show30 !== false;
       const rules = Config.rulesForGrade('יב');
+      const pointsRules = Config.withRules(rules, () => Config.pointsCompensation());
       const examTag = comp => {
         const value = comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
           comp.state === 'pass' ? 'עבר' : comp.state === 'exempt' ? 'פטור' :
@@ -599,11 +602,12 @@
         const blockers = issues.filter(x => x.gate === 1 && x.k !== 'units' && (x.subject === s.id || x.text.includes(s.name)));
         const external = s.comps.filter(c => !c.internal && c.state === 'missing' && !c.failed && !c.blocked);
         const target = show30 && !b.noData && !external.length && s.status !== 'pass' && !s.compApplied
-          ? target30(s, ev, rules) : null;
-        const numericTarget = target && target.target !== 'לא ניתן לקבוע' && target.target !== 'לא אפשרי';
-        const impossible = target && target.target === 'לא אפשרי';
-        const targetCell = impossible ? '<span class="badge tier-4">נכשל</span>' :
-          numericTarget ? `${E(target.target)}${target.note.includes('לקיזוז') ? ' <span class="bagrut-target-condition">(בקיזוז)</span>' : ''}` : '-';
+          ? target30(s, ev, rules, true) : null;
+        const impossible = target && s.reverse && s.reverse.required30 > 100 &&
+          s.unresolved.concat(s.pending).every(c => c.internal);
+        const tooltip = 'גם 100 ב-30% אינו מספיק למעבר ישיר. במקצוע שאינו עברית ואינו מוחרג ניתן לבחון קיזוז או קומפנסציה (פיצוי נקודות), בכפוף לכללי הזכאות.';
+        const targetCell = impossible ? `<span class="badge tier-4" title="${E(tooltip)}">נכשל</span>` :
+          target && target.directTarget != null ? E(target.directTarget) : '-';
         const status = b.noData ? '-' : s.exempt ? 'פטור' : s.status === 'pass' ? 'עובר' : 'נכשל';
         const notes = alternatives(s.comps);
         blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
@@ -612,8 +616,19 @@
           const compensation = ev.notes.filter(note => note.includes(s.name) && /קיזוז|פיצוי/.test(note));
           notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז']));
         }
-        if (target && (impossible || !numericTarget || /לקיזוז|הרכיב החסר|משוקלל|הכרעה ידנית|החלטת רכזת/.test(target.note))) {
+        if (target && (impossible || target.directTarget == null || /לקיזוז|הרכיב החסר|משוקלל|הכרעה ידנית|החלטת רכזת/.test(target.note))) {
           notes.push(target.note);
+        }
+        if (impossible) {
+          if (s.critical) notes.push('המקצוע מוחרג מקיזוז ומפיצוי נקודות.');
+          else {
+            if (target.compensationTarget != null) notes.push(`להגעה לציון ${s.reverse.compMin} במקצוע נדרש ${target.compensationTarget} ב-30%; ${rules.allowCompensationRule ? 'הקיזוז כפוף לכללים ולמכסה' : 'הקיזוז מושבת בכללי המחזור'}.`);
+            else notes.push(`גם 100 ב-30% אינו מספיק להגעה לציון ${s.reverse.compMin} הנדרש לקיזוז.`);
+            if (rules.allowCompensationRule) notes.push(`טווח הקיזוז הוא ${s.reverse.compMin}–${rules.compensationMax}; מספר המקצועות המקוזזים כפוף למכסה של ${rules.maxCompensations}.`);
+            notes.push(pointsRules.enabled
+              ? `פיצוי נקודות נבחן למקצוע אחד בציון ${pointsRules.minScore}–${s.reverse.compMin - 1}, מול שני מקצועות עוברים של ${pointsRules.minUnits} יח״ל ומעלה. סכום הציונים הנדרש לפי סך היח״ל: ${Object.entries(pointsRules.table).map(([units, score]) => `${units} יח״ל: ${score}`).join(', ')}.`
+              : 'פיצוי נקודות מושבת בכללי המחזור.');
+          }
         }
         return subjectRow(s.id, s.name, s.comps, targetCell, status, notes);
       }).join('');
@@ -635,6 +650,22 @@
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
+      const impossibleSubjects = ev.subjects.filter(s => s.reverse && s.reverse.required30 > 100 &&
+        s.unresolved.concat(s.pending).every(c => c.internal) && target30(s, ev, rules));
+      const singleImpossible = impossibleSubjects.length === 1 ? impossibleSubjects[0] : null;
+      const additionalFailure = singleImpossible && (ev.subjects.some(s => s !== singleImpossible &&
+        ((!s.compApplied || s.compApplied === 'points') && ['comp', 'severe', 'fail'].includes(s.status) ||
+         s.comps.some(c => c.failed || c.blocked) || (s.reverse && s.reverse.required30 > 100))) ||
+        issues.some(x => x.gate === 2 && ['major-fail', 'bagrut-block'].includes(x.k)));
+      const usedCompensations = ev.subjects.filter(s => s.status === 'comp' && !s.critical).length;
+      const otherFailingSubject = singleImpossible && ev.subjects.some(s => s !== singleImpossible && ['comp', 'severe', 'fail'].includes(s.status));
+      const alternativesForHint = singleImpossible ? [
+        rules.allowCompensationRule && usedCompensations < rules.maxCompensations && singleImpossible.reverse.requiredFor45 <= 100 ? `קיזוז בציון ${rules.compensationMin} לפחות` : '',
+        pointsRules.enabled && !otherFailingSubject && singleImpossible.reverse.max >= pointsRules.minScore ? 'קומפנסציה (פיצוי נקודות) מול מקצועות חזקים' : ''
+      ].filter(Boolean) : [];
+      const compensationHint = !b.noData && !b.isTrack12 && singleImpossible && !singleImpossible.critical && !additionalFailure && alternativesForHint.length
+        ? `במקצוע ${singleImpossible.name} לא ניתן להגיע לעובר ${rules.passGrade} גם עם 100 ב-30%. אפשר לבדוק ${alternativesForHint.join(' או ')}, בכפוף לכללי הזכאות.`
+        : '';
       const review = ev.manualReview.required ? this.manualReviewLines(ev) : [];
       let simulation = '';
       if (st.whatifEntry) {
@@ -653,7 +684,7 @@
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
         <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>תוצאות שאלונים</th><th>סטטוס נוכחי</th><th>ציון נדרש ב-30%</th><th>פרטי חישוב</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
-        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}</ul>` : ''}
+        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
     }

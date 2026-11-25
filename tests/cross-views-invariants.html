@@ -1900,8 +1900,8 @@ window.fetch = (input, options) => {
       const roster = [1, 2, 3, 4].map(n => stu(n, 'יב', 'יב1')).concat(stu(21, 'יא', 'יא1'));
       const bagrut = bagrutRows([
         ...profile(T(1)),
-        ...profile(T(2), { '22283': null, '22261': 80 }),
-        ...profile(T(3), { '22283': null, '22261': 60 }),
+        ...profile(T(2), { '22283': null, '22261': 70 }),
+        ...profile(T(3), { '22283': null, '22261': 77 }),
         ...profile(T(4), { '22283': null, '22261': null }),
         ...partial(21, ELEVENTH)
       ]);
@@ -1932,7 +1932,7 @@ window.fetch = (input, options) => {
       choose(T(2));
       let detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       let historyRow = detail.querySelector('[data-subject="history"]');
-      check(historyRow && historyRow.children[3].textContent.trim() === '1' &&
+      check(historyRow && historyRow.children[3].textContent.trim() === '19' &&
         historyRow.children[2].textContent.includes('נכשל'),
         'Passing target appears alongside its subject');
       check(detail.querySelector('header p').textContent.includes(`י״ב · ${app._bagrutWorkIds.indexOf(T(2)) + 1} מתוך 4 חניכים`) &&
@@ -1943,8 +1943,8 @@ window.fetch = (input, options) => {
       choose(T(3));
       detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       historyRow = detail.querySelector('[data-subject="history"]');
-      check(historyRow.children[3].textContent.trim() === '9 (בקיזוז)',
-        'Compensation condition appears next to target');
+      check(historyRow.children[3].textContent.trim() === '2',
+        'The direct passing target is shown instead of the compensation target');
       choose(T(4));
       detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       const history = [...detail.querySelectorAll('strong')].find(el => el.textContent === 'היסטוריה');
@@ -1999,7 +1999,7 @@ window.fetch = (input, options) => {
 
     await group('Eligibility controls, subject rows and deferred students', async () => {
       resetConfig();
-      const roster = [101, 102, 103, 104, 105, 106].map(n => stu(n, 'יב', 'יב1')).concat(stu(121, 'יא', 'יא1'));
+      const roster = [101, 102, 103, 104, 105, 106, 107, 108, 109].map(n => stu(n, 'יב', 'יב1')).concat(stu(121, 'יא', 'יא1'));
       const bagrut = bagrutRows([
         ...profile(T(101)),
         ...profile(T(102), { '86083': null }),
@@ -2007,6 +2007,9 @@ window.fetch = (input, options) => {
         ...profile(T(104), { '22283': 50, '22261': 50 }),
         ...profile(T(105), { '22283': 40, '22261': 40 }),
         ...profile(T(106), { '22283': null, '22261': 30 }),
+        ...profile(T(107), { '22283': null, '22261': 30, '34221': null, '34225': 30 }),
+        ...profile(T(108), { '11283': null, '11281': 30 }),
+        ...profile(T(109), { '22283': null, '22261': 30, '34221': 20, '34225': 20 }),
         ...partial(121, ELEVENTH)
       ]);
       world({ roster, bagrut });
@@ -2040,8 +2043,23 @@ window.fetch = (input, options) => {
         'Switching off 30% targets removes target and red target badge');
       toggle('show30', true);
       choose(T(106));
-      same([history().children[3].textContent.trim(), historyDetails().textContent.includes('לקיזוז')], ['79 (בקיזוז)', true],
-        'When a normal pass is impossible but compensation is available, the conditional target remains available');
+      const failedTarget = history().children[3].querySelector('.tier-4');
+      check(failedTarget && failedTarget.textContent === 'נכשל' && failedTarget.title.includes('100 ב-30%') &&
+        failedTarget.title.includes('קיזוז') && failedTarget.title.includes('פיצוי נקודות'),
+        'Impossible direct target shows a red badge explaining the possible alternatives');
+      check(historyDetails().textContent.includes('79 ב-30%') && historyDetails().textContent.includes('פיצוי נקודות'),
+        'Subject details explain the required compensation target and points compensation');
+      check(detail().textContent.includes('במקצוע היסטוריה לא ניתן להגיע לעובר 55') &&
+        detail().textContent.includes('קומפנסציה (פיצוי נקודות)'), 'A single impossible subject has conditional guidance');
+      choose(T(107));
+      check(!detail().textContent.includes('במקצוע היסטוריה לא ניתן להגיע לעובר 55'),
+        'No single-subject guidance when two subjects cannot pass directly');
+      choose(T(108));
+      check(!detail().textContent.includes('במקצוע עברית לא ניתן להגיע לעובר 55'),
+        'Excluded Hebrew does not receive compensation guidance');
+      choose(T(109));
+      check(!detail().textContent.includes('במקצוע היסטוריה לא ניתן להגיע לעובר 55'),
+        'No single-subject guidance when another subject has an unresolved failure');
 
       choose(T(104));
       check(BagrutEngine.evaluate(T(104), FULL).subjects.find(s => s.id === 'history').compApplied === 'range' &&
