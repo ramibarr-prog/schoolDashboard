@@ -580,20 +580,19 @@
       const examTag = comp => {
         const value = comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
           comp.state === 'pass' ? 'עבר' : comp.state === 'exempt' ? 'פטור' :
-          comp.blocked ? 'חסום' : comp.failed ? 'נכשל' : 'חסר';
-        return `<span class="bagrut-exam"><bdi dir="ltr">${E(comp.code)}</bdi> · ${E(value)}</span>`;
+          comp.blocked ? 'חסום' : comp.failed ? 'נכשל' : '-';
+        return `<span class="bagrut-exam"><bdi dir="ltr">${E(comp.code)}</bdi> – ${comp.internal ? '30%' : 'חיצוני'}: <bdi>${E(value)}</bdi></span>`;
       };
       const alternatives = comps => comps.filter(c => c.state === 'missing' && !c.failed && !c.blocked && c.codes.length > 1)
         .map(c => `חלופות לשאלון ${c.code}: ${c.codes.join(' / ')}`);
       let detailIndex = 0;
       const subjectRow = (id, name, exams, target, status, notes) => {
         const unique = [...new Set(notes.filter(Boolean))], detailsId = `bagrut-subject-details-${detailIndex++}`;
-        const statusClass = status === 'עובר' ? 'pass' : status === 'נכשל' ? 'bad' :
-          status === 'ממתין' || status === 'פטור' ? 'neutral' : 'warn';
-        const button = unique.length ? `<button type="button" class="bagrut-subject-toggle" data-bagrut-subject-details aria-expanded="false" aria-controls="${detailsId}" aria-label="${E(`פרטים: ${name}`)}">פרטים</button>` : '—';
+        const statusClass = status === 'עובר' ? 'pass' : status === 'נכשל' ? 'bad' : 'neutral';
+        const button = unique.length ? `<button type="button" class="bagrut-subject-toggle" data-bagrut-subject-details aria-expanded="false" aria-controls="${detailsId}" aria-label="${E(`פרטים: ${name}`)}">פרטים</button>` : '-';
         return `<tr data-subject="${E(id)}"><th scope="row"><strong>${E(name)}</strong></th>
-          <td><div class="bagrut-exams">${exams.map(examTag).join('') || '—'}</div></td><td>${target}</td>
-          <td><span class="bagrut-subject-status is-${statusClass}">${E(status)}</span></td><td>${button}</td></tr>
+          <td><div class="bagrut-exams">${exams.map(examTag).join('') || '-'}</div></td>
+          <td><span class="bagrut-subject-status is-${statusClass}">${E(status)}</span></td><td>${target}</td><td>${button}</td></tr>
           ${unique.length ? `<tr id="${detailsId}" class="bagrut-subject-detail-row" hidden><td colspan="5">${unique.map(note => `<div>${E(note)}</div>`).join('')}</td></tr>` : ''}`;
       };
       const subjects = ev.subjects.map(s => {
@@ -601,14 +600,11 @@
         const external = s.comps.filter(c => !c.internal && c.state === 'missing' && !c.failed && !c.blocked);
         const target = show30 && !b.noData && !external.length && s.status !== 'pass' && !s.compApplied
           ? target30(s, ev, rules) : null;
-        const impossible = target && s.reverse && s.reverse.required30 > 100;
         const numericTarget = target && target.target !== 'לא ניתן לקבוע' && target.target !== 'לא אפשרי';
+        const impossible = target && target.target === 'לא אפשרי';
         const targetCell = impossible ? '<span class="badge tier-4">נכשל</span>' :
-          numericTarget ? `${E(target.target)}${target.note.includes('לקיזוז') ? ' <span class="bagrut-target-condition">בקיזוז</span>' : ''}` : '—';
-        const status = b.noData ? 'ממתין' : s.exempt ? 'פטור' : s.compApplied || s.status === 'pass' ? 'עובר' :
-          s.comps.some(c => c.failed) || ['fail', 'severe', 'comp'].includes(s.status) || (s.reverse && s.reverse.level === 'red') ? 'נכשל' :
-          s.comps.some(c => c.blocked) ? 'ממתין' : external.length ? 'חסר שאלון' :
-          s.reverse ? 'נדרש שיפור' : 'ממתין';
+          numericTarget ? `${E(target.target)}${target.note.includes('לקיזוז') ? ' <span class="bagrut-target-condition">(בקיזוז)</span>' : ''}` : '-';
+        const status = b.noData ? '-' : s.exempt ? 'פטור' : s.status === 'pass' ? 'עובר' : 'נכשל';
         const notes = alternatives(s.comps);
         blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
           .forEach(x => notes.push(x.text));
@@ -617,7 +613,6 @@
           notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז']));
         }
         if (target && (impossible || !numericTarget || /לקיזוז|הרכיב החסר|משוקלל|הכרעה ידנית|החלטת רכזת/.test(target.note))) {
-          if (impossible && numericTarget && target.note.includes('לקיזוז')) notes.push(`נדרש ${target.target} ב־30% בכפוף לקיזוז`);
           notes.push(target.note);
         }
         return subjectRow(s.id, s.name, s.comps, targetCell, status, notes);
@@ -632,12 +627,11 @@
             code: result.code, codes, state: result.exempt ? 'exempt' : result.kind, num: result.num, blocked: result.block, failed: result.kind === 'fail'
           })) : [{ code: codes[0], codes, state: 'missing' }];
         });
-        const status = b.noData ? 'ממתין' : c.exempt ? 'פטור' : c.blocked ? 'ממתין' : c.failed ? 'נכשל' :
-          c.missing.length ? 'חסר שאלון' : c.status === 'pass' ? 'עובר' : c.status === 'fail' ? 'נכשל' : 'ממתין';
+        const status = b.noData ? '-' : c.exempt ? 'פטור' : c.status === 'pass' ? 'עובר' : 'נכשל';
         const notes = alternatives(exams);
         if (c.blocked) notes.push(`חסם בשאלון ${c.blocked}`);
         if (c.exempt) notes.push('פטור במגמה דורש החלטת רכזת');
-        return subjectRow(`major:${c.id}`, `${c.name} · מגמה`, exams, '—', status, notes);
+        return subjectRow(`major:${c.id}`, `${c.name} · מגמה`, exams, '-', status, notes);
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
@@ -649,12 +643,16 @@
         const simulated = UI.buildBagrutBreakdown(t, signal.ev, { noData: noBagrutData(signal, options) });
         simulation = `<h3>סימולציית מה־אם לחניך זה</h3><p>${E(simulated.status)} · ${E(simulated.cellSummary)}</p><p>הסימולציה אינה משנה את הבדיקה שלמעלה או את חדר הבקרה.</p>`;
       }
-      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}</h2><p>${E(b.status)}</p>
+      const position = index < 0 ? active.length + lowered.findIndex(r => r.t.tz === t.tz) + 1 : index + 1;
+      const eligibility = eligible(ev);
+      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}</h2>
+        <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
+        <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>
-        <span>${index < 0 ? 'חניך שהורד למטה' : `${index + 1} מתוך ${active.length}`}</span><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
-        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>שאלונים וציונים</th><th>נדרש ב־30%</th><th>החלטה</th><th>פירוט</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
+        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>תוצאות שאלונים</th><th>סטטוס נוכחי</th><th>ציון נדרש ב-30%</th><th>פרטי חישוב</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
         ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;

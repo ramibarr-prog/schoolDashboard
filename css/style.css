@@ -19,11 +19,10 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-subjects th, .bagrut-work-subjects td { padding: .35rem .5rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; vertical-align: middle; }
 .bagrut-work-subjects thead { color: var(--muted); }
 .bagrut-work-subjects td:nth-child(2) { white-space: normal; }
-.bagrut-exams { display: flex; flex-wrap: wrap; gap: .25rem; }
-.bagrut-exam { display: inline-flex; gap: .25rem; padding: .15rem .4rem; border-radius: .35rem; background: var(--track); white-space: nowrap; }
+.bagrut-exams { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; }
+.bagrut-exam { display: block; white-space: nowrap; }
 .bagrut-subject-status { display: inline-block; padding: .15rem .45rem; border-radius: .4rem; font-weight: 700; }
 .bagrut-subject-status.is-pass { color: #166534; background: #dcfce7; }
-.bagrut-subject-status.is-warn { color: #92400e; background: #fef3c7; }
 .bagrut-subject-status.is-bad { color: #991b1b; background: #fee2e2; }
 .bagrut-subject-status.is-neutral { color: #475569; background: #e2e8f0; }
 .bagrut-target-condition { color: #92400e; font-size: .72rem; }

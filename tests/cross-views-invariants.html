@@ -1932,22 +1932,26 @@ window.fetch = (input, options) => {
       choose(T(2));
       let detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       let historyRow = detail.querySelector('[data-subject="history"]');
-      check(historyRow && historyRow.children[2].textContent.trim() === '1' &&
-        historyRow.children[3].textContent.includes('נדרש שיפור'),
+      check(historyRow && historyRow.children[3].textContent.trim() === '1' &&
+        historyRow.children[2].textContent.includes('נכשל'),
         'Passing target appears alongside its subject');
+      check(detail.querySelector('header p').textContent.includes(`י״ב · ${app._bagrutWorkIds.indexOf(T(2)) + 1} מתוך 4 חניכים`) &&
+        detail.querySelector('header .bagrut-subject-status').textContent ===
+          (qualifies(BagrutEngine.evaluate(T(2), FULL)) ? 'זכאי' : 'לא זכאי כרגע'),
+        'Header shows position and eligibility in final grade-12 mode');
       check(detail.querySelector(`[data-act="openProfile"][data-tz="${T(2)}"]`), 'Detail links to 360');
       choose(T(3));
       detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       historyRow = detail.querySelector('[data-subject="history"]');
-      check(historyRow.children[2].textContent.includes('9') && historyRow.children[2].textContent.includes('בקיזוז'),
+      check(historyRow.children[3].textContent.trim() === '9 (בקיזוז)',
         'Compensation condition appears next to target');
       choose(T(4));
       detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       const history = [...detail.querySelectorAll('strong')].find(el => el.textContent === 'היסטוריה');
       historyRow = history && history.closest('tr');
       check(historyRow && historyRow.children[1].textContent.includes('22261') &&
-        historyRow.children[1].textContent.includes('חסר') && historyRow.children[2].textContent.trim() === '—' &&
-        historyRow.children[3].textContent.includes('חסר שאלון'), 'Missing external questionnaire replaces a numeric target');
+        historyRow.children[1].textContent.includes('חיצוני: -') && historyRow.children[3].textContent.trim() === '-' &&
+        historyRow.children[2].textContent.includes('נכשל'), 'Missing external questionnaire replaces a numeric target');
       const ids = [...app._bagrutWorkIds], pos = ids.indexOf(T(4));
       if (pos > 0) {
         app.acts.bagrutWorkStep.call(app, { dataset: { step: '-1' } });
@@ -2028,20 +2032,20 @@ window.fetch = (input, options) => {
       const toggle = (key, checked) => { const el = option(key); el.checked = checked; app.chgs.bagrutWorkOption.call(app, el); };
 
       choose(T(103));
-      check(history().children[2].querySelector('.tier-4') && history().children[2].textContent.includes('נכשל') &&
+      check(history().children[3].querySelector('.tier-4') && history().children[3].textContent.includes('נכשל') &&
         historyDetails().textContent.includes('100'),
         'Impossible 30% target is prominently marked as failed');
       toggle('show30', false);
-      check(history().children[2].textContent.trim() === '—' && !history().children[2].querySelector('.tier-4'),
+      check(history().children[3].textContent.trim() === '-' && !history().children[3].querySelector('.tier-4'),
         'Switching off 30% targets removes target and red target badge');
       toggle('show30', true);
       choose(T(106));
-      check(history().children[2].querySelector('.tier-4') && historyDetails().textContent.includes('בכפוף לקיזוז'),
-        'When a normal pass is impossible but compensation is available, both are explicit');
+      same([history().children[3].textContent.trim(), historyDetails().textContent.includes('לקיזוז')], ['79 (בקיזוז)', true],
+        'When a normal pass is impossible but compensation is available, the conditional target remains available');
 
       choose(T(104));
       check(BagrutEngine.evaluate(T(104), FULL).subjects.find(s => s.id === 'history').compApplied === 'range' &&
-        history().children[2].textContent.trim() === '—' && history().children[3].textContent.includes('עובר') &&
+        history().children[3].textContent.trim() === '-' && history().children[2].textContent.includes('נכשל') &&
         historyDetails().textContent.includes('קיזוז'), 'Existing range compensation is shown in subject details');
       const detailsButton = history().querySelector('[data-bagrut-subject-details]');
       check(detailsButton && historyDetails().hidden && detailsButton.getAttribute('aria-expanded') === 'false',
@@ -2060,16 +2064,16 @@ window.fetch = (input, options) => {
       const subjectRows = [...detail().querySelectorAll('tbody tr[data-subject]')];
       same(subjectRows.length, ev.subjects.length + ev.major.cands.filter(c => !c.coreId).length, 'One row per core subject and actual major');
       same([...detail().querySelectorAll('.bagrut-work-subjects thead th')].map(th => th.textContent),
-        ['מקצוע', 'שאלונים וציונים', 'נדרש ב־30%', 'החלטה', 'פירוט'], 'Subject table has exactly five clear columns');
-      check(subjectRows.some(r => r.children[3].textContent.includes('עובר')) && subjectRows.every(r => r.children.length === 5),
+        ['מקצוע', 'תוצאות שאלונים', 'סטטוס נוכחי', 'ציון נדרש ב-30%', 'פרטי חישוב'], 'Subject table has exactly five clear columns');
+      check(subjectRows.some(r => r.children[2].textContent.includes('עובר')) && subjectRows.every(r => r.children.length === 5),
         'Passing subjects and compact five-column rows are present');
-      check(history().children[1].textContent.includes('22283') && history().children[1].textContent.includes('22261') &&
-        history().children[1].querySelectorAll('.bagrut-exam').length === 2 && history().children[2].textContent.trim() === '—',
-        'Reported questionnaire codes and scores are grouped into tags and a passing subject has no target');
-      check(!history().querySelector('[data-bagrut-subject-details]'), 'A subject without additional notes has no details button');
+      same([...history().children[1].querySelectorAll('.bagrut-exam')].map(el => el.textContent.trim()),
+        ['22283 – 30%: 70', '22261 – חיצוני: 70'], 'Each questionnaire displays its type and result separately');
+      check(history().children[3].textContent.trim() === '-' && history().children[4].textContent.trim() === '-' &&
+        !history().querySelector('[data-bagrut-subject-details]'), 'Passing subject without notes has no target or details button');
       const majorRow = detail().querySelector('[data-subject="major:physics"]');
       check(majorRow && majorRow.children[1].textContent.includes('36361') &&
-        majorRow.children[1].textContent.includes('80') && majorRow.children[3].textContent.includes('עובר'),
+        majorRow.children[1].textContent.includes('80') && majorRow.children[2].textContent.includes('עובר'),
         'An expanded subject also shows its reported questionnaire and decision');
       check(detail().querySelector('header [data-act="bagrutWorkStep"]') &&
         detail().querySelector('header [data-act="bagrutPin"][data-defer="true"]') &&
@@ -2106,6 +2110,8 @@ window.fetch = (input, options) => {
       choose(target);
       check(detail().querySelector('[data-step="-1"]').disabled && detail().querySelector('[data-step="1"]').disabled,
         'Navigation does not treat a deferred student as active');
+      check(detail().querySelector('header p').textContent.includes(`י״ב · ${originalIds.length} מתוך ${originalIds.length} חניכים`) &&
+        detail().querySelector('header p').textContent.includes('חניך שהורד למטה'), 'Deferred student has a valid position after active students');
       app.requireEdit = () => false;
       app.acts.bagrutPin.call(app, detail().querySelector('[data-act="bagrutPin"][data-defer="true"]'));
       check(!app._bagrutWorkIds.includes(target), 'Read-only mode does not persist a restore');
