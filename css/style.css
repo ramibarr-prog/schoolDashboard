@@ -1,11 +1,23 @@
 body.sadin-active.sadin-weak-active #localControls { display: none; }
+#globalFilterBar[hidden] { display: none !important; }
+#localControls.hidden { display: none; }
+.screen-scope { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .75rem; }
+.screen-scope.hidden { display: none; }
+.screen-scope label { display: inline-flex; align-items: center; gap: .3rem; }
 .bagrut-work-title h1 { color: var(--forest); font-size: 1.3rem; font-weight: 700; }
 .bagrut-work-summary, .bagrut-work-detail { padding: .8rem 1rem; }
 .bagrut-work-summary p, .bagrut-work-detail p { color: var(--muted); font-size: .8rem; }
 .bagrut-work-metrics, .bagrut-work-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; }
 .bagrut-work-metrics strong { color: var(--forest); font-size: 1.2rem; }
-.bagrut-work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 1fr); gap: .75rem; align-items: start; }
+.bagrut-work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: .75rem; align-items: start; }
+.bagrut-work-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.bagrut-work-controls.hidden { display: none; }
+.bagrut-work-controls label { display: inline-flex; align-items: center; gap: .25rem; }
 .bagrut-work-list { overflow: auto; }
+.bagrut-work-subject-scroll { overflow-x: auto; margin-top: .75rem; }
+.bagrut-work-subjects { width: 100%; border-collapse: collapse; text-align: right; font-size: .8rem; }
+.bagrut-work-subjects th, .bagrut-work-subjects td { padding: .35rem .5rem; border-bottom: 1px solid #e2e8f0; white-space: nowrap; vertical-align: middle; }
+.bagrut-work-subjects thead { color: var(--muted); }
 .bagrut-work-detail h2 { color: var(--forest); font-size: 1.1rem; font-weight: 700; }
 .bagrut-work-detail h3 { margin-top: .75rem; font-weight: 700; }
 .bagrut-work-detail ul { margin: .4rem 1.2rem; list-style: disc; }
@@ -289,11 +301,11 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 #localControls:has(> .bagrut-toolbar:not(.hidden)) > #bagrutActions { order: 5; flex-shrink: 0; }
 #localControls:has(> .bagrut-toolbar:not(.hidden)) .bagrut-quality-slot { order: 6; flex-shrink: 0; }
 #localControls:has(> .bagrut-toolbar:not(.hidden)) .bagrut-controls > * { white-space: nowrap; }
-#mainContent:has(> #localControls > .bagrut-toolbar:not(.hidden)) { padding-top: .5rem; }
+#mainContent:has(#panel-bagrut > #localControls > .bagrut-toolbar:not(.hidden)) { padding-top: .5rem; }
 #panel-bagrut > :not([hidden]) ~ :not([hidden]) { margin-top: .35rem; }
 @media (min-width: 1024px) {
   #mainContent:has(> #panel-bagrut:not([hidden])) { display: flex; flex-direction: column; min-height: 0; }
-  #mainContent:has(> #panel-bagrut:not([hidden])) > #localControls { flex-shrink: 0; }
+  #panel-bagrut:not([hidden]) > #localControls { flex-shrink: 0; }
   #panel-bagrut:not([hidden]) { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
   #panel-bagrut:not([hidden]) > :not(#bagrut-table) { flex-shrink: 0; }
   #panel-bagrut #bagrut-table { flex: 1 1 auto; min-height: 12rem; max-height: none !important; }

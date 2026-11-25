@@ -1064,7 +1064,7 @@ window.fetch = (input, options) => {
       await part('INV-5 / QA-10.2 / QA-10.3 / QA-10.7 every student: engine, eligibility table and 360 card agree', async () => {
         buildSchool();
         const app = newApp();
-        app.state.sim = { ...ADAPTIVE };
+        app.state.sim = { ...FULL };
         app.state.bagrut.overviewEntry = true;
         app.evals.clear();
         app.renderBagrutPanel();
@@ -1726,6 +1726,7 @@ window.fetch = (input, options) => {
         'Two distinct main navigation entries select the heatmap and the sheet');
       $id('stage').append(weakNav, sheetNav);
       weakNav.click();
+      app.changeGradeFilter('יא');
       check($id('sadin-table').querySelector('.weak-table') && weakNav.getAttribute('aria-selected') === 'true' &&
         sheetNav.getAttribute('aria-selected') === 'false', 'Weakness navigation opens the heatmap');
       sheetNav.click();
@@ -1800,6 +1801,100 @@ window.fetch = (input, options) => {
       windowListeners.forEach(args => window.removeEventListener(...args));
     });
 
+    await group('Screen filters and numbered current-grades sheet', async () => {
+      resetConfig();
+      const english = 'אנגלית 4 יח"ל יב1 דוד בדיקה [8801]';
+      const roster = [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב1'), stu(3, 'יב', 'יב2'), stu(4, 'יא', 'יא1')];
+      const groups = groupRows([1, 2].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: english })));
+      const sadin = sadinRows([1, 2].map(n => ({ tz: T(n), ev: 'מבחן (100)', sc: n === 1 ? 40 : 85, grp: english, dt: '01/10/2026' })));
+      world({ roster, groups, sadin });
+      const listeners = [], app = newApp(null, listeners);
+      const doc = new DOMParser().parseFromString(await (await fetch('../index.html')).text(), 'text/html');
+      const stage = $id('stage');
+      stage.innerHTML = '';
+      ['tabs', 'globalFilterBar', 'mainContent'].forEach(id => stage.appendChild(document.importNode(doc.getElementById(id), true)));
+      app.bindRulesEvents = () => {};
+      const windowListeners = [], addWindowListener = window.addEventListener;
+      window.addEventListener = function (...args) { windowListeners.push(args); return addWindowListener.apply(this, args); };
+      try { app.bindEvents(); } finally { window.addEventListener = addWindowListener; }
+      listeners.forEach(({ type, fn, options }) => stage.addEventListener(type, fn, options));
+      app._cloudWriteReady = false;
+      app.showTab('overview');
+      const bar = $id('globalFilterBar'), setScope = (screen, field, value) => {
+        const select = stage.querySelector(`[data-scope-controls="${screen}"] [data-field="${field}"]`);
+        check(!!select, `${screen}: ${field} selector exists`);
+        if (select) { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); }
+      };
+      check(bar.hidden && doc.querySelector('#headerCloudSync + [data-act="openDataTools"]'), 'Hidden global bar and accessible header data loading');
+      setScope('overview', 'grade', 'יב');
+      same(app.overviewModel().list.map(t => t.tz).sort(), [T(1), T(2), T(3)], 'Overview grade selector filters overview');
+      $id('tab-sadin').click();
+      same(app.state.filters.grade, 'all', 'Sheet starts with its own scope');
+      check($id('panel-sadin').contains($id('localControls')) && $id('localControls').contains($id('globalSearch')) &&
+        $id('localControls').contains($id('sadinSubjectSelect')) && $id('localControls').contains($id('sadinTeacherSelect')) &&
+        $id('localControls').contains($id('fClear')) && $id('localControls').contains(stage.querySelector('[data-act="sadinAlerts"]')),
+        'Sheet toolbar contains its own scope, student search, subject, teacher, reset and alerts');
+      setScope('sheet', 'grade', 'יב');
+      setScope('sheet', 'cls', 'יב1');
+      same(tzsIn($id('sadin-table')), [T(1), T(2)], 'Sheet grade and homeroom filters work');
+      const assertNumbers = label => {
+        const table = $id('sadin-table').querySelector('table.sadin-sheet');
+        const rows = [...table.querySelectorAll('tbody tr')].filter(row => row.querySelector('[data-act="openProfile"]'));
+        same(rows.map(row => row.firstElementChild.textContent.trim()), rows.map((_, i) => String(i + 1)), `${label}: continuous row numbers`);
+        check(table.querySelector('thead th:first-child').textContent.trim() === '#' &&
+          rows.every(row => row.firstElementChild.classList.contains('sx-number')), `${label}: number is first`);
+      };
+      assertNumbers('Initial order');
+      for (const key of ['avg', 'negatives', 'subj:אנגלית']) {
+        const button = [...stage.querySelectorAll('[data-act="sadinSort"]')].find(el => el.dataset.key === key);
+        check(!!button, `Sort ${key} exists`);
+        if (button) {
+          button.click(); assertNumbers(key);
+          const firstOrder = [...$id('sadin-table').querySelectorAll('tbody [data-act="openProfile"]')].map(el => el.dataset.tz);
+          stage.querySelector(`[data-act="sadinSort"][data-key="${key}"]`).click(); assertNumbers(`${key} descending`);
+          const secondOrder = [...$id('sadin-table').querySelectorAll('tbody [data-act="openProfile"]')].map(el => el.dataset.tz);
+          same(secondOrder, firstOrder.slice().reverse(), `${key}: sort changes row order`);
+        }
+      }
+      let table = $id('sadin-table').querySelector('table.sadin-sheet');
+      check(table.style.minWidth === '100%' && parseInt(table.style.width, 10) >= 44 + 155 + 105 + 120 + 145 + 130,
+        'Sheet fills its container and has balanced minimum column widths');
+      app.setSadinColWidth(table, 1, 'name', 200);
+      same([table.querySelectorAll('col')[1].style.width, table.style.minWidth], ['200px', '100%'], 'Resizing preserves full-width minimum');
+      app.selectStudent(T(1));
+      same([app.state.tab, tzsIn($id('sadin-table'))], ['sadin', [T(1)]], 'Student selection filters the sheet rather than opening 360');
+      app.clearSearch();
+      const subject = $id('sadinSubjectSelect');
+      subject.value = 'אנגלית'; subject.dispatchEvent(new Event('change', { bubbles: true }));
+      same(app.state.sadin.subject, 'אנגלית', 'Sheet subject selector works');
+      const teacher = $id('sadinTeacherSelect');
+      const teacherValue = [...teacher.options].find(option => option.value !== 'all');
+      check(!!teacherValue, 'Sheet offers a teacher for the selected subject');
+      if (teacherValue) {
+        teacher.value = teacherValue.value; teacher.dispatchEvent(new Event('change', { bubbles: true }));
+        same(app.state.sadin.teacher, teacherValue.value, 'Sheet teacher selector works');
+      }
+      $id('tab-groups').click();
+      setScope('groups', 'grade', 'יא');
+      same(app.filtered().map(t => t.tz), [T(4)], 'Groups scope filters its own population');
+      $id('tab-weakness').click();
+      setScope('weakness', 'grade', 'יב');
+      setScope('weakness', 'cls', 'יב1');
+      check(!$id('panel-sadin').querySelector('[data-scope-controls="weakness"]').classList.contains('hidden') &&
+        app.filtered().length === 2, 'Weakness has working grade and homeroom filters');
+      $id('tab-overview').click();
+      same([app.state.filters.grade, app.state.filters.cls], ['יב', 'all'], 'Overview scope is restored independently');
+      $id('tab-sadin').click();
+      same([app.state.filters.grade, app.state.filters.cls, app.state.sadin.subject, app.state.sadin.teacher],
+        ['יב', 'יב1', 'אנגלית', teacherValue ? teacherValue.value : 'all'], 'Sheet scope and subject/teacher are restored independently');
+      $id('tab-bagrut').click();
+      check($id('panel-bagrut').contains($id('localControls')) &&
+        !$id('localControls').querySelector('[data-scope-controls]:not(.hidden)'), 'Eligibility uses its own toolbar without other screen scope controls');
+      same(errorsOf(app), [], 'No panel errors in read-only filtering');
+      listeners.forEach(({ type, fn, options }) => stage.removeEventListener(type, fn, options));
+      windowListeners.forEach(args => window.removeEventListener(...args));
+    });
+
     await group('Grade-12 focused eligibility worklist', async () => {
       resetConfig();
       const roster = [1, 2, 3, 4].map(n => stu(n, 'יב', 'יב1')).concat(stu(21, 'יא', 'יא1'));
@@ -1845,8 +1940,8 @@ window.fetch = (input, options) => {
       choose(T(4));
       detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
       const history = [...detail.querySelectorAll('strong')].find(el => el.textContent === 'היסטוריה');
-      check(history && history.parentElement.textContent.includes('חסר שאלון חיצוני: 22261') &&
-        !history.parentElement.textContent.includes('נדרש 1 ב־30%'), 'Missing external questionnaire replaces a numeric target');
+      check(history && history.closest('tr').textContent.includes('חסר שאלון חיצוני: 22261') &&
+        !history.closest('tr').textContent.includes('נדרש 1 ב־30%'), 'Missing external questionnaire replaces a numeric target');
       const ids = [...app._bagrutWorkIds], pos = ids.indexOf(T(4));
       if (pos > 0) {
         app.acts.bagrutWorkStep.call(app, { dataset: { step: '-1' } });
@@ -1881,13 +1976,126 @@ window.fetch = (input, options) => {
       same(errorsOf(app), [], 'No eligibility render errors');
     });
 
+    await group('Eligibility controls, subject rows and deferred students', async () => {
+      resetConfig();
+      const roster = [101, 102, 103, 104, 105, 106].map(n => stu(n, 'יב', 'יב1')).concat(stu(121, 'יא', 'יא1'));
+      const bagrut = bagrutRows([
+        ...profile(T(101)),
+        ...profile(T(102), { '86083': null }),
+        ...profile(T(103), { '22283': null, '22261': 20 }),
+        ...profile(T(104), { '22283': 50, '22261': 50 }),
+        ...profile(T(105), { '22283': 40, '22261': 40 }),
+        ...profile(T(106), { '22283': null, '22261': 30 }),
+        ...partial(121, ELEVENTH)
+      ]);
+      world({ roster, bagrut });
+      const app = newApp({ grade: 'יב' });
+      app.state.sim = { ...ADAPTIVE };
+      app.state.tab = 'bagrut';
+      app.requireEdit = () => true;
+      $id('stage').insertAdjacentHTML('beforeend', '<div id="localControls"><button id="fClear">נקה</button></div><div id="bagrut-scope"></div><div id="sadinPop"></div><div id="mxPop"></div>');
+      const simBefore = JSON.stringify(app.state.sim), overviewBefore = JSON.stringify(app.overviewModel());
+      app.state.profileTz = T(102); app.renderTrainee360Panel();
+      const profileBefore = $id('profBadges').textContent + $id('profBody').textContent;
+      app.renderBagrutPanel();
+      const controls = () => $id('bagrutWorkControls');
+      const option = key => controls().querySelector(`[data-chg="bagrutWorkOption"][data-key="${key}"]`);
+      check(controls() && controls().parentElement === $id('localControls') && controls().previousElementSibling.id === 'fClear',
+        'Export and local options are in the filter toolbar beside clear');
+      check(controls().querySelector('[data-act="exportTargets30"]') && option('ignoreInternals') && option('show30'),
+        'Export and both options are available');
+      const choose = tz => app.acts.bagrutWorkSelect.call(app, $id('bagrut-table').querySelector(`[data-act="bagrutWorkSelect"][data-tz="${tz}"]`));
+      const detail = () => $id('bagrut-table').querySelector('.bagrut-work-detail');
+      const history = () => detail().querySelector('[data-subject="history"]');
+      const toggle = (key, checked) => { const el = option(key); el.checked = checked; app.chgs.bagrutWorkOption.call(app, el); };
+
+      choose(T(103));
+      check(history().querySelector('.tier-4') && history().textContent.includes('נכשל') && history().textContent.includes('100'),
+        'Impossible 30% target is prominently marked as failed');
+      toggle('show30', false);
+      check(!history().querySelector('.tier-4') && !history().textContent.includes('לקביעת יעד 30%'),
+        'Switching off 30% targets removes target and red target badge');
+      toggle('show30', true);
+      choose(T(106));
+      check(history().querySelector('.tier-4') && history().textContent.includes('בכפוף לקיזוז'),
+        'When a normal pass is impossible but compensation is available, both are explicit');
+
+      choose(T(104));
+      check(BagrutEngine.evaluate(T(104), FULL).subjects.find(s => s.id === 'history').compApplied === 'range' &&
+        history().textContent.includes('קיזוז'), 'Existing range compensation is shown in its subject row');
+      choose(T(105));
+      check(BagrutEngine.evaluate(T(105), FULL).subjects.find(s => s.id === 'history').compApplied === 'points' &&
+        history().textContent.includes('פיצוי נקודות'), 'Existing points compensation is shown in its subject row');
+      choose(T(101));
+      const ev = BagrutEngine.evaluate(T(101), FULL);
+      const subjectRows = [...detail().querySelectorAll('tbody tr[data-subject]')];
+      same(subjectRows.length, ev.subjects.length + ev.major.cands.filter(c => !c.coreId).length, 'One row per core subject and actual major');
+      check(subjectRows.some(r => r.textContent.includes('עובר')) && subjectRows.every(r => r.children.length === 3),
+        'Passing subjects and a compact name, score and status row are present');
+      check(detail().querySelector('header [data-act="bagrutWorkStep"]') &&
+        detail().querySelector('header [data-act="bagrutPin"][data-defer="true"]') &&
+        detail().querySelector('header [data-act="openProfile"]'), 'Navigation, defer and 360 actions are at the top');
+
+      choose(T(102));
+      const before = BagrutEngine.evaluate(T(102), FULL);
+      const ignored = BagrutEngine.evaluate(T(102), { ...FULL, ignoreInternals: true });
+      check(before.blockers.some(b => b.gate === 3) && !ignored.blockers.some(b => b.gate === 3),
+        'Fixture demonstrates the effect of ignoring internal units');
+      toggle('ignoreInternals', true);
+      check($id('bagrut-kpis').textContent.includes('מתעלמת מיחידות פנימיות') &&
+        !detail().textContent.includes('מעורבות חברתית'), 'Local evaluation and label reflect ignoring internal units');
+      same(JSON.stringify(app.state.sim), simBefore, 'Global mode is unchanged by both controls');
+      same(JSON.stringify(app.overviewModel()), overviewBefore, 'Overview is unchanged by local controls');
+      app.renderTrainee360Panel();
+      same($id('profBadges').textContent + $id('profBody').textContent, profileBefore, '360 is unchanged by local controls');
+      toggle('ignoreInternals', false);
+
+      const originalIds = [...app._bagrutWorkIds];
+      const target = originalIds[1];
+      app.acts.bagrutPin.call(app, { dataset: { tz: T(101) } });
+      const oldPins = window.localStorage.getItem('schoolDashboard.bagrut.pins.v1');
+      choose(target);
+      app.acts.bagrutPin.call(app, detail().querySelector('[data-act="bagrutPin"][data-defer="true"]'));
+      check(!app._bagrutWorkIds.includes(target) && $id('bagrut-table').textContent.includes('חניכים שהורדו למטה (1)'),
+        'Deferred student moves to a separate lower section');
+      check(JSON.parse(window.localStorage.getItem('sd.bagrut.deferred.v1')).includes(target), 'Deferral is persisted locally');
+      same(window.localStorage.getItem('schoolDashboard.bagrut.pins.v1'), oldPins, 'Existing close-monitoring pins are not reinterpreted or changed');
+      const activeIds = [...app._bagrutWorkIds];
+      choose(activeIds[0]);
+      app.acts.bagrutWorkStep.call(app, { dataset: { step: '1' } });
+      same(app.state.bagrut.workTz, activeIds[1], 'Next skips the deferred student');
+      choose(target);
+      check(detail().querySelector('[data-step="-1"]').disabled && detail().querySelector('[data-step="1"]').disabled,
+        'Navigation does not treat a deferred student as active');
+      app.requireEdit = () => false;
+      app.acts.bagrutPin.call(app, detail().querySelector('[data-act="bagrutPin"][data-defer="true"]'));
+      check(!app._bagrutWorkIds.includes(target), 'Read-only mode does not persist a restore');
+      app.requireEdit = () => true;
+      app.acts.bagrutPin.call(app, detail().querySelector('[data-act="bagrutPin"][data-defer="true"]'));
+      same(app._bagrutWorkIds, originalIds, 'Restoring returns the student to the main ordering');
+      check(!JSON.parse(window.localStorage.getItem('sd.bagrut.deferred.v1')).includes(target), 'Restore persists locally');
+      check(!$id('bagrut-table').textContent.includes('חניכים שהורדו למטה (1)'), 'Empty deferred section is removed');
+      app.acts.bagrutPin.call(app, { dataset: { tz: T(101) } });
+      same(errorsOf(app), [], 'No panel errors');
+
+      app.state.filters.grade = 'all';
+      app.state.bagrut.overviewEntry = true;
+      app.state.bagrut.chip = 'all';
+      app.evals.clear();
+      app.renderBagrutPanel();
+      const senior = app._bagrutLegacyList.find(r => r.t.tz === T(102));
+      check(senior && senior.ev.mode === 'full' && senior.ev.tier === before.tier, 'All-grade overview drill uses final mode for grade 12');
+      same(JSON.stringify(app.state.sim), simBefore, 'Mixed-grade drill does not change global mode');
+    });
+
     await group('Minimum 30% target export', async () => {
       resetConfig();
       const ids = ['000000001', '000000002', '000000003'];
       const roster = ids.map((tz, i) => ({ ...stu(i + 1, 'יב', i === 0 ? 'יב1' : 'יב2'), tz,
         ...(i === 0 ? { firstName: '=שם,"בדיקה"', lastName: 'חניך' } : {}) }));
       world({ roster, bagrut: bagrutRows(ids.flatMap((tz, i) => profile(tz, { '22283': null, '22261': [80, 60, 20][i] }))) });
-      const app = newApp({ grade: 'יב' });
+      const listeners = [];
+      const app = newApp({ grade: 'יב' }, listeners);
       const targets = BagrutView.target30Rows.call(app, app.dashRows()).filter(r => r.subject === 'היסטוריה');
       same(targets.map(r => [r.t.tz, r.target]), [[ids[0], '1'], [ids[1], '9'], [ids[2], 'לא אפשרי']], 'Positive minimum, compensation and impossible target');
       check(targets[1].note.includes('קיזוז') && targets[2].note.includes('100'), 'Compensation and impossible cases explain their constraints');
@@ -1898,7 +2106,18 @@ window.fetch = (input, options) => {
         URL.revokeObjectURL = () => {};
         HTMLAnchorElement.prototype.click = () => {};
         app.state.filters.cls = 'יב1';
-        app.acts.exportTargets30.call(app);
+        app.state.tab = 'bagrut';
+        $id('stage').insertAdjacentHTML('beforeend', '<div id="localControls"><button id="fClear">נקה</button></div><div id="bagrut-scope"></div><div id="sadinPop"></div><div id="mxPop"></div>');
+        app.bindRulesEvents = () => {};
+        app.bindSadinColResize = () => {};
+        const windowListeners = [], addWindowListener = window.addEventListener;
+        window.addEventListener = function (...args) { windowListeners.push(args); return addWindowListener.apply(this, args); };
+        try { app.bindEvents(); } finally { window.addEventListener = addWindowListener; }
+        listeners.forEach(({ type, fn, options }) => $id('stage').addEventListener(type, fn, options));
+        app.renderBagrutPanel();
+        $id('bagrutWorkControls').querySelector('[data-act="exportTargets30"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        listeners.forEach(({ type, fn, options }) => $id('stage').removeEventListener(type, fn, options));
+        windowListeners.forEach(args => window.removeEventListener(...args));
         check(!!blob, 'Export creates a CSV blob for filtered targets');
         if (blob) {
           const bytes = await new Promise((resolve, reject) => {
@@ -1966,13 +2185,14 @@ window.fetch = (input, options) => {
         $id('stage').appendChild(document.importNode(doc.getElementById('localControls'), true));
         const f = app.state.filters, isHidden = el => el.classList.contains('hidden');
         const trackBox = $id('fTrack').closest('[data-hide-overview]'), searchBox = $id('globalSearch').closest('#searchWrap');
-        check(bar.querySelectorAll('[data-act="openDataTools"]').length === 1 && !bar.querySelector('input[type="file"], #fTrack, [data-bagrut-only]'), 'Global bar has one loading action and no local controls');
+        check(bar.hidden && !bar.querySelector('[data-act="openDataTools"]') &&
+          doc.querySelector('#headerCloudSync + [data-act="openDataTools"]'), 'Global bar is hidden and data loading is beside cloud sync');
         app.showTab('bagrut');
         check(!isHidden($id('bagrutActions')), 'Simulation controls visible in eligibility');
         same(app.filtered().map(t => t.tz), [T(5)], 'Precondition: search + track narrow bagrut to one pupil');
         app.showTab('overview');
-        check(isHidden(trackBox) && !isHidden(searchBox) && isHidden($id('bagrutActions')), 'Overview keeps search while hiding track and simulation');
-        check(!isHidden($id('fGrade').closest('label')) && !isHidden($id('fHomeroom').closest('label')) && !isHidden($id('fClear')), 'Overview keeps grade, homeroom and clear');
+        check(isHidden(trackBox) && isHidden(searchBox) && isHidden($id('bagrutActions')), 'Overview hides eligibility controls and search');
+        check(doc.querySelector('#panel-overview [data-scope-controls="overview"]'), 'Overview has its own scope controls');
         const grade12 = Store.traineeList().filter(t => t.gradeKey === 'יב').map(t => t.tz).sort();
         same(app.overviewModel().list.map(t => t.tz).sort(), grade12, 'Overview model is the whole grade, not one pupil');
         same([f.track, f.q], ['אתגר', T(5)], 'Peeking at the overview keeps track and search');
@@ -1983,7 +2203,7 @@ window.fetch = (input, options) => {
         check(!isHidden(trackBox) && !isHidden(searchBox), 'Other tabs show track and search again');
         same(app.filtered().map(t => t.tz), [T(5)], 'Returning keeps the previous search');
         app.showTab('profile');
-        check(isHidden(trackBox) && !isHidden(searchBox), 'Profile keeps its own track hiding');
+        check(isHidden(trackBox) && isHidden(searchBox), 'Profile hides unrelated search and track controls');
 
         const narrow = () => {
           Object.assign(f, { track: 'אתגר', q: T(5) });

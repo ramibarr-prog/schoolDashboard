@@ -101,7 +101,6 @@
     .brand-pill:empty { display: none; }
     .brand-pill { max-width: 100%; }
     html, body { margin: 0; }
-    #globalFilterBar > div { max-width: 100%; box-sizing: border-box; }
     #appShell { min-width: 0; }
     #leafCorner { position: fixed; left: 0; bottom: 0; width: 220px; height: 220px; pointer-events: none; z-index: -1; opacity: .6; }
     @media (max-width: 1023px) { #leafCorner { width: 120px; height: 120px; } }
@@ -270,8 +269,8 @@
     .sadin-bad { color: var(--terracotta); font-weight: 600; white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td, table.sadin-sheet th span, table.sadin-sheet td span, table.sadin-sheet td button { white-space: nowrap; }
     table.sadin-sheet th, table.sadin-sheet td { text-align: center; }
-    table.sadin-sheet th:first-child, table.sadin-sheet tbody tr td:first-child { position: sticky; right: 0; z-index: 5; background: inherit; text-align: right; }
-    table.sadin-sheet thead th:first-child { background: var(--forest); z-index: 30; }
+    table.sadin-sheet .sx-number { position: sticky; right: 0; z-index: 5; background: inherit; text-align: center; }
+    table.sadin-sheet thead th.sx-number { background: var(--forest); z-index: 30; }
     /* סדין בסגנון אקסל: גריד מלא, שורות מפוספסות, צפיפות אנכית קומפקטית ורוחבי עמודות אחידים */
     #sadin-table table.sadin-sheet { table-layout: fixed; border-collapse: separate; border-spacing: 0; width: auto; }
     #sadin-table table.sadin-sheet th, #sadin-table table.sadin-sheet td { padding: 6px 8px; height: 34px; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid #D5DFD8; border-left: 1px solid #D5DFD8; }
@@ -282,11 +281,11 @@
     #sadin-table table.sadin-sheet tbody tr:hover { background: #EDF4F0; }
     #sadin-table table.sadin-sheet td.sx-name { background: inherit; text-align: right; }
     #sadin-table table.sadin-sheet td.sx-name button { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; text-align: right; }
-    #sadin-table table.sadin-sheet .sx-name { width: 155px; min-width: 155px; max-width: 155px; position: sticky; right: 0; z-index: 5; }
-    #sadin-table table.sadin-sheet .sx-room { width: 105px; min-width: 105px; max-width: 105px; text-align: right; }
-    #sadin-table table.sadin-sheet .sx-avg { width: 82px; min-width: 82px; max-width: 82px; text-align: center; }
+    #sadin-table table.sadin-sheet .sx-name { position: sticky; right: var(--sadin-number-width, 44px); z-index: 5; text-align: right; }
+    #sadin-table table.sadin-sheet .sx-room { text-align: right; }
+    #sadin-table table.sadin-sheet .sx-avg { text-align: center; }
     #sadin-table table.sadin-sheet td.sx-avg { background-color: rgba(232, 185, 95, .08); }
-    #sadin-table table.sadin-sheet .sx-neg { width: 118px; min-width: 118px; max-width: 118px; text-align: center; }
+    #sadin-table table.sadin-sheet .sx-neg { text-align: center; }
     .neg-cell { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
     .neg-badge { padding: 1px 6px; border-radius: 4px; font-weight: 700; font-size: 12px; line-height: 1.3; }
     .neg-fail { background: #FDECE6; color: #C0392B; }
@@ -295,7 +294,7 @@
     #sadin-table .col-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 15; }
     #sadin-table .col-resizer:hover { background: rgba(232, 185, 95, .7); }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
-    #sadin-table table.sadin-sheet .sx-s { width: 82px; min-width: 82px; max-width: 82px; text-align: center; }
+    #sadin-table table.sadin-sheet .sx-s { text-align: center; }
     /* כותרות לחיצות למיון */
     #sadin-table .sx-sort { display: flex; align-items: center; justify-content: space-between; gap: 4px; width: 100%; height: 34px; padding: 0 8px; color: var(--cream-bg); font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; text-align: right; }
     #sadin-table .sx-sort:hover { background: rgba(250, 247, 239, .12); }
@@ -312,26 +311,10 @@
     .gstat-ok { border-right-color: var(--sage); } .gstat-bad { border-right-color: var(--terracotta); }
     .gstat-violet { border-right-color: var(--sage-soft); } .gstat-amber { border-right-color: var(--mustard); }
     .panel .text-slate-400, .panel .text-slate-500, #modal-root .text-slate-400, #modal-root .text-slate-500 { color: var(--muted); }
-    #globalFilterBar .inp { height: 2rem; padding: .2rem .5rem; font-size: .75rem; }
-    #globalFilterBar .chip, #globalFilterBar .btn { padding: .25rem .5rem; font-size: .75rem; white-space: nowrap; }
-    /* תיבות בחירה דחוסות כדי שתיבת החיפוש תישאר קריאה במלואה גם עם בקרי הסדין */
-    #globalFilterBar select.inp { padding: 4px 8px; font-size: 12.5px; max-width: 145px; }
-    #globalFilterBar #sadinFilterSelect { max-width: 145px; }
-    #globalFilterBar #profSelect { max-width: 13rem; }
     #globalSearch { min-width: 210px !important; width: 210px !important; flex-shrink: 0 !important; }
-    @media (min-width: 1024px) {
-      body.sadin-active #globalFilterBar > div { column-gap: .25rem; }
-    }
-    #globalFilterBar #sadinActions .chip, #globalFilterBar #sadinActions .btn { padding: .25rem .35rem; }
-    /* סרגל סינון גלובלי: הבקרים אינם מתכווצים ואינם חופפים; כשאין מקום השורה עוברת לשורה נוספת (בשולחן עבודה רחב הכול נכנס בשורה אחת) */
-    #globalFilterBar { position: relative; z-index: 40; }
-    #globalFilterBar > div { padding: 6px 16px; gap: 6px 8px; flex-wrap: wrap; }
-    #globalFilterBar label, #globalFilterBar select.inp, #globalFilterBar .btn, #globalFilterBar .chip { flex-shrink: 0; }
-    #globalFilterBar #bagrutActions, #globalFilterBar #groupActions, #globalFilterBar #sadinActions, #globalFilterBar #profileSwitcher { flex-shrink: 0; }
     #ribbonStatus { gap: 6px; flex-shrink: 0; }
     #ribbonStatus .brand-pill { font-size: 12px; padding: 4px 10px; white-space: nowrap; }
-    /* עטיפות הבקרים הייחודיים ללשונית משתתפות ישירות בפריסת השורה */
-    #globalFilterBar div[data-sadin-only]:not(.hidden), #globalFilterBar > div > div[data-groups-only]:not(#groupActions):not(.hidden), #gctl-explorer:not(.hidden) { display: contents; }
+    #gctl-explorer:not(.hidden) { display: contents; }
     #groups-detail table.grid td { padding: .125rem .75rem; font-size: .75rem; line-height: 1rem; }
     #groups-table table.grid td { padding: .45rem .75rem; font-size: .8rem; line-height: 1.25rem; }
     #groups-detail table.grid tr.room-divider td { padding: .125rem .75rem; }
@@ -614,6 +597,7 @@
   <div class="px-4 py-2 flex flex-wrap items-center gap-2 bg-white border-b border-[#E6ECE6]">
     <span id="headerCloudStatus" role="status" aria-live="polite"></span>
     <button id="headerCloudSync" type="button" class="btn btn-ghost btn-sm">סנכרון ורענון</button>
+    <button type="button" class="btn btn-ghost btn-sm" data-act="openDataTools">טעינת נתונים</button>
     <span id="cloudReadOnly" class="text-sm font-semibold text-amber-800">מצב קריאה בלבד — שינויים לא יישמרו או יסונכרנו עד להתחברות ולבדיקת עדכניות</span>
   </div>
   <div id="cloudAccessDialog" hidden>
@@ -631,8 +615,8 @@
     </div>
   </div>
 
-  <!-- סרגל סינון גלובלי -->
-  <div id="globalFilterBar" class="bg-white border-b border-[#E6ECE6] z-40 shrink-0">
+  <!-- מזהי סינון לתאימות -->
+  <div id="globalFilterBar" hidden>
     <div class="px-6 py-2 flex flex-wrap items-center gap-2 text-xs">
       <label class="flex items-center gap-1"><span class="text-slate-600">שכבה</span>
         <select id="fGrade" class="inp">
@@ -640,6 +624,12 @@
         </select></label>
       <label class="flex items-center gap-1"><span class="text-slate-600">כיתת אם</span>
         <select id="fHomeroom" class="inp"><option value="all">כל הכיתות</option></select></label>
+    </div>
+  </div>
+
+  <main id="mainContent" class="w-full px-4 py-4 lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain">
+    <div id="localControls" class="flex flex-wrap items-center gap-2 text-xs mb-2">
+      <div data-sadin-only class="hidden screen-scope" data-scope-controls="sheet"></div>
       <div id="searchWrap" class="relative flex items-center gap-1"><span class="sr-only">חיפוש חניך</span>
         <i data-lucide="search" class="w-4 h-4 text-slate-400" aria-hidden="true"></i>
         <div class="relative">
@@ -648,12 +638,6 @@
         </div>
         <div id="searchSuggestPopup" class="hidden" role="listbox" aria-label="הצעות חיפוש"></div>
       </div>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="openDataTools">טעינת נתונים</button>
-    </div>
-  </div>
-
-  <main id="mainContent" class="w-full px-4 py-4 lg:flex-1 lg:min-h-0 lg:overflow-y-auto overscroll-contain">
-    <div id="localControls" class="flex flex-wrap items-center gap-2 text-xs mb-2">
       <label hidden data-profile-exclude data-hide-overview class="items-center gap-1"><span class="text-slate-600">מסלול</span>
         <select id="fTrack" class="inp">
           <option value="all">הכל</option><option value="רגילה">רגילה</option><option value="אתגר">אתגר</option><option value="מב&quot;ר">מב"ר</option><option value="חנ&quot;מ">חנ"מ</option>
@@ -676,7 +660,7 @@
       <div id="profileSwitcher" data-profile-only class="hidden flex-wrap items-center gap-1" role="group" aria-label="בחירת חניך">
         <select id="profSelect" class="inp w-52" aria-label="בחירת חניך"></select>
       </div>
-      <button id="fClear" data-profile-exclude type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון גלובלי">נקה</button>
+      <button id="fClear" data-profile-exclude type="button" class="btn btn-ghost btn-sm" aria-label="נקה סינון">נקה</button>
       <div id="bagrutActions" data-bagrut-only class="hidden flex-wrap items-center gap-1">
         <details class="relative" id="bagrutSimulation">
           <summary class="btn btn-ghost btn-sm">⚙️ סימולציית מה-אם</summary>
@@ -711,6 +695,7 @@
 
     <!-- 0. חדר בקרה פדגוגי (ברירת מחדל) -->
     <section id="panel-overview" class="panel" role="tabpanel" aria-labelledby="tab-overview">
+      <div class="screen-scope mb-2" data-scope-controls="overview"></div>
       <div id="overview-body" class="space-y-4"></div>
     </section>
 
@@ -728,6 +713,7 @@
 
     <!-- 2. סייר קבוצות (קריאה בלבד) -->
     <section id="panel-groups" class="panel space-y-2 lg:space-y-0" role="tabpanel" aria-labelledby="tab-groups" hidden>
+      <div class="screen-scope mb-2" data-scope-controls="groups"></div>
       <div id="stale-groupsData" class="hidden card p-5 text-center" data-stale-overlay="groupsData"></div>
       <div id="groups-head" class="groups-head hidden">
         <div id="groups-mode" aria-label="מצב תצוגה"></div>
@@ -744,6 +730,7 @@
 
     <!-- 3. מוניטור ציונים שוטפים -->
     <section id="panel-sadin" class="panel space-y-2" role="tabpanel" aria-labelledby="tab-sadin" hidden>
+      <div class="screen-scope mb-2" data-scope-controls="weakness"></div>
       <div id="stale-sadinData" class="hidden card p-5 text-center" data-stale-overlay="sadinData"></div>
       <div id="sadin-table" class="tbl-wrap"></div>
       <div id="sadinPop" class="hidden" role="tooltip"></div>

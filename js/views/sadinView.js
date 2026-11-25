@@ -299,11 +299,11 @@
     });
   },
 
-  sadinMode(el) {
+  sadinMode(el, preserveFilter = false) {
     if (el.dataset.mode === 'full') SadinView.weaknessRiskClose.call(this);
     this.state.sadin.mode = el.dataset.mode;
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
-    this.state.sadin.strip = 'all';
+    if (!preserveFilter) this.state.sadin.strip = 'all';
     this.dirty.add('sadin'); this.showTab('sadin');
   },
 
@@ -388,6 +388,7 @@
   },
 
   openWeaknessEligibility(el) {
+    this.rememberScreenFilters();
     this.resetOverviewDrillFilters();
     this.state.filters.cls = el.dataset.class;
     this.state.bagrutScopeSet = true;
@@ -397,6 +398,7 @@
   },
 
   openWeaknessSheet(el) {
+    this.rememberScreenFilters();
     this.resetOverviewDrillFilters();
     this.state.filters.cls = el.dataset.class;
     Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: el.dataset.subject, teacher: 'all' });
@@ -510,6 +512,8 @@
     this.renderFreshnessBar('sadin');
     const st = this.state.sadin;
     const early = st.mode !== 'full';
+    const weaknessScope = document.querySelector('[data-scope-controls="weakness"]');
+    if (weaknessScope) weaknessScope.classList.toggle('hidden', !early);
     const panel = $('panel-sadin');
     if (panel && !$('weakness-styles')) {
       const link = document.createElement('link');
@@ -788,10 +792,11 @@
     const rowsSorted = this.sadinSortRows(rows, columns);
     const colKey = c => (c.kind === 'event' ? `evt:${c.name}|${c.event.key}` : `subj:${c.name}`);
     /* רוחב עמודה: ערך שהמשתמש גרר (נשמר ב-state.sadinColWidths) או ברירת המחדל */
-    const DEFAULT_W = { name: 155, homeroom: 105, avg: 82, negatives: 118 };
-    const widthOf = key => this.state.sadinColWidths[key] || DEFAULT_W[key] || 82;
-    const wStyle = key => `width:${widthOf(key)}px;min-width:${widthOf(key)}px;max-width:${widthOf(key)}px`;
-    const body = rowsSorted.map(r => {
+    const DEFAULT_W = { number: 44, name: 155, homeroom: 105, avg: 120, negatives: 145 };
+    const columnWidths = new Map(columns.map(c => [colKey(c), Math.min(240, Math.max(130, [...c.header].length * 8 + 32))]));
+    const widthOf = key => this.state.sadinColWidths[key] || DEFAULT_W[key] || columnWidths.get(key) || 130;
+    const wStyle = key => `width:${widthOf(key)}px;min-width:${widthOf(key)}px`;
+    const body = rowsSorted.map((r, index) => {
       const readiness = prereqs.get(r.t.gradeKey);
       const score = (value, missed, social) => Config.withRulesForGrade(r.t.gradeKey, () => this.sadinScore(value, missed, social));
       const hasSocial = Store.activeCurrentOf(r.t.tz).some(e => e.avg != null && isSocial(e.subject));
@@ -821,7 +826,7 @@
         : r.failing || missed || uncertain
           ? `<span class="neg-cell">${r.failing ? `<span class="neg-badge neg-fail">${r.failing} נכשל</span>` : ''}${missed ? `<span class="neg-badge neg-miss">${missed} חסר</span>` : ''}${uncertain ? `<span class="text-slate-500" title="לא ניתן לאמת ללא שיבוץ מאומת">${uncertain} לבדיקה</span>` : ''}</span>`
           : '<span class="neg-ok">✓ תקין</span>';
-      return `<tr><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(r.t.name)} · ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
+      return `<tr><td class="sx-number">${index + 1}</td><td class="sx-name" style="${wStyle('name')}"><button type="button" class="font-bold text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer" data-act="openProfile" data-tz="${E(r.t.tz)}" title="${E(r.t.name)} · ת.ז ${E(r.t.tz)}">${E(r.t.name)}</button></td>
         <td class="sx-room" style="${wStyle('homeroom')}">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.t.tz)}</td>
         <td class="sx-avg font-bold" style="${wStyle('avg')}" title="${E(`ממוצע שווה-משקל של ממוצעי המקצועות: ${r.overall == null ? '—' : String(r.overall)}${hasSocial ? ' · כולל מעורבות חברתית בסולם שונה' : ''}`)}">${overall}</td>
         <td class="sx-neg" style="${wStyle('negatives')}" title="${E(`${r.failing} נכשלים · ${missed} חסרים${uncertain ? ` · ${uncertain} ללא שיבוץ מאומת` : ''}`)}">${negBadges}</td>${cells}</tr>`;
@@ -831,11 +836,22 @@
       const active = sortKey === key;
       return `<th class="${cls}" style="${wStyle(key)}" data-ck="${E(key)}" aria-sort="${active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none'}"><button type="button" class="sx-sort${active ? ' is-active' : ''}" data-act="sadinSort" data-key="${E(key)}" title="${E(title || `מיון לפי ${label}`)}"><span class="sx-label">${E(label)}</span><span class="sx-ind" aria-hidden="true">${active ? (sort.dir === 'desc' ? '▼' : '▲') : '⇅'}</span></button><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה להתאמה אוטומטית)"></span></th>`;
     };
-    const keys = ['name', 'homeroom', 'avg', 'negatives', ...columns.map(colKey)];
+    const keys = ['number', 'name', 'homeroom', 'avg', 'negatives', ...columns.map(colKey)];
     const width = keys.reduce((sum, k) => sum + widthOf(k), 0);
-    setHtml('sadin-table', `<div class="sticky-scroll overscroll-contain"><table class="grid sadin-sheet" style="width:${width}px"><colgroup>${keys.map(k => `<col style="width:${widthOf(k)}px">`).join('')}</colgroup>
-      <thead><tr>${th('name', 'חניך', 'sx-name')}${th('homeroom', 'כיתה', 'sx-room')}${th('avg', 'ממוצע כללי', 'sx-avg')}${th('negatives', 'נכשלים / חסרים', 'sx-neg', 'מיון לפי מספר הנכשלים והחסרים')}${columns.map(c => th(colKey(c), c.header, 'sx-s', c.header)).join('')}</tr></thead>
-      <tbody>${body || `<tr><td colspan="${columns.length + 4}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
+    setHtml('sadin-table', `<div class="sticky-scroll overscroll-contain"><table class="grid sadin-sheet" style="width:${width}px;min-width:100%"><colgroup>${keys.map(k => `<col style="width:${widthOf(k)}px">`).join('')}</colgroup>
+      <thead><tr><th class="sx-number" scope="col">#</th>${th('name', 'חניך', 'sx-name')}${th('homeroom', 'כיתה', 'sx-room')}${th('avg', 'ממוצע כללי', 'sx-avg')}${th('negatives', 'נכשלים / חסרים', 'sx-neg', 'מיון לפי מספר הנכשלים והחסרים')}${columns.map(c => th(colKey(c), c.header, 'sx-s', c.header)).join('')}</tr></thead>
+      <tbody>${body || `<tr><td colspan="${columns.length + 5}" class="text-center text-slate-700 py-8">אין חניכים בסינון הנוכחי</td></tr>`}</tbody></table></div>`);
+    const table = $('sadin-table').querySelector('table.sadin-sheet'), number = table.querySelector('th.sx-number');
+    const updateOffset = () => {
+      const actual = number.getBoundingClientRect().width;
+      if (actual) table.style.setProperty('--sadin-number-width', `${actual}px`);
+    };
+    if (this._sadinNumberObserver) this._sadinNumberObserver.disconnect();
+    if (window.ResizeObserver) {
+      this._sadinNumberObserver = new ResizeObserver(updateOffset);
+      this._sadinNumberObserver.observe(number);
+    }
+    updateOffset();
   },
 
   /** מציב רוחב לעמודה בסדין (56–360px) ב-col וב-th/td שלה, ושומר ב-state.sadinColWidths */

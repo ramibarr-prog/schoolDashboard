@@ -351,6 +351,13 @@ const App = {
     if (name !== 'profile' && this.state.navOrigin) { this.state.navOrigin = null; this._histPushed = false; this.dirty.add('profile'); }
     const changed = this.state.tab !== name;
     this.state.tab = name;
+    const controls = $('localControls'), panel = $(`panel-${name}`);
+    if (controls && panel) {
+      panel.insertBefore(controls, panel.firstChild);
+      controls.classList.toggle('hidden', !['groups', 'bagrut', 'sadin', 'profile'].includes(name));
+    }
+    const searchWrap = $('searchWrap');
+    if (searchWrap) searchWrap.classList.toggle('hidden', !['groups', 'bagrut', 'sadin'].includes(name));
     document.body.classList.toggle('sadin-active', name === 'sadin');
     const toggle = (selector, on) => document.querySelectorAll(selector).forEach(el => el.classList.toggle('hidden', !on));
     toggle('[data-groups-only]', name === 'groups');
@@ -377,6 +384,7 @@ const App = {
     TABS.forEach(t => { const p = $(`panel-${t}`); if (p) p.hidden = t !== name; });
     const sadinPanel = $('panel-sadin');
     if (sadinPanel) sadinPanel.setAttribute('aria-labelledby', this.state.sadin.mode === 'full' ? 'tab-sadin' : 'tab-weakness');
+    this.syncFilters();
     this.renderChrome();
     this.renderTab(name);
     this.fitTables();
@@ -455,6 +463,10 @@ const App = {
     const opt = (v, label, cur) => `<option value="${E(v)}" ${v === cur ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('fGrade', opt('all', 'הכל', f.grade) + grades.map(g => opt(g, Util.gl(g), f.grade)).join(''));
     setHtml('fHomeroom', opt('all', 'כל הכיתות', f.cls) + classes.map(c => opt(c, Config.classLabel(c), f.cls)).join(''));
+    document.querySelectorAll('[data-scope-controls]').forEach(box => {
+      box.innerHTML = `<label>שכבה <select class="inp" data-chg="screenScope" data-field="grade" aria-label="שכבה">${opt('all', 'כל השכבות', f.grade)}${grades.map(g => opt(g, Util.gl(g), f.grade)).join('')}</select></label>
+        <label>כיתת אם <select class="inp" data-chg="screenScope" data-field="cls" aria-label="כיתת אם">${opt('all', 'כל הכיתות', f.cls)}${classes.map(c => opt(c, Config.classLabel(c), f.cls)).join('')}</select></label>`;
+    });
     setVal('fTrack', f.track);
     /* חניך נעול שנפל מחוץ לסינון (או נמחק מהמצבת) משחרר את הנעילה */
     const locked = this.lockedTrainee();
@@ -551,7 +563,7 @@ const App = {
     if (item.kind === 's') this.selectStudent(item.tz); else this.selectGroup(item.id);
   },
 
-  /** בחירת חניך בחיפוש המהיר פותחת את כרטיס ה-360° שלו. */
+  /** בסדין בחירה מסננת לחניך; בשאר המסכים נפתח כרטיס 360°. */
   selectStudent(tz) {
     const t = Store.trainees.get(tz);
     if (!t) return;
@@ -561,7 +573,41 @@ const App = {
     setVal('globalSearch', t.name);
     FILTERED_TABS.forEach(tab => this.dirty.add(tab));
     this.renderSearchChrome();
+    if (this.state.tab === 'sadin' && this.state.sadin.mode === 'full') {
+      this.renderTab('sadin');
+      return;
+    }
     this.openProfile(tz);
+  },
+
+  screenKey(tab = this.state.tab, mode = this.state.sadin.mode) {
+    return tab === 'sadin' ? (mode === 'full' ? 'sheet' : 'weakness') : tab;
+  },
+
+  rememberScreenFilters() {
+    const current = this.screenKey();
+    if (!this._screenFilters) this._screenFilters = {};
+    if (['overview', 'groups', 'bagrut', 'sheet', 'weakness'].includes(current)) {
+      this._screenFilters[current] = {
+        filters: { ...this.state.filters }, selectedSearchTz: this.state.selectedSearchTz,
+        subject: this.state.sadin.subject, teacher: this.state.sadin.teacher, strip: this.state.sadin.strip
+      };
+    }
+  },
+
+  switchScreenFilters(key) {
+    if (this.screenKey() === key) return;
+    this.rememberScreenFilters();
+    const saved = this._screenFilters[key];
+    this.state.filters = saved ? { ...saved.filters } : { grade: key === 'bagrut' ? 'יב' : 'all', cls: 'all', track: 'all', q: '' };
+    this.state.selectedSearchTz = saved ? saved.selectedSearchTz : null;
+    if (key === 'sheet' || key === 'weakness') {
+      Object.assign(this.state.sadin, { subject: saved ? saved.subject : 'all', teacher: saved ? saved.teacher : 'all', strip: saved ? saved.strip : 'all' });
+    }
+    this.state.bagrutScope = this.scopeOfGrade(this.state.filters.grade);
+    this.state.bagrutScopeSet = true;
+    this.alertOut = [];
+    FILTERED_TABS.forEach(tab => this.dirty.add(tab));
   },
 
   selectGroup(groupId) {
@@ -616,11 +662,12 @@ const App = {
   },
 
   /** "נקה": שכבה עליונה ובורר השכבות חוזרים יחד ל"הכל" / "כל השכבות" */
-  resetFilters() {
+  resetFilters(keepGrade12 = false) {
     clearTimeout(this._searchTimer);
     this.state.selectedSearchTz = null;
-    this.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '' };
-    this.state.bagrutScope = 'all';
+    this.state.filters = { grade: keepGrade12 ? 'יב' : 'all', cls: 'all', track: 'all', q: '' };
+    if (this.state.tab === 'sadin') Object.assign(this.state.sadin, { subject: 'all', teacher: 'all', strip: 'all' });
+    this.state.bagrutScope = keepGrade12 ? '12' : 'all';
     this.state.bagrutScopeSet = true;
     this.hideSuggestions();
     this.onFilterChange();
@@ -1173,7 +1220,9 @@ const App = {
       const tab = e.target.closest('[data-tab]');
       if (tab) {
         e.stopPropagation();
-        if (tab.dataset.sadinMode) return SadinView.sadinMode.call(this, { dataset: { mode: tab.dataset.sadinMode } });
+        const key = this.screenKey(tab.dataset.tab, tab.dataset.sadinMode);
+        if (['overview', 'groups', 'bagrut', 'sheet', 'weakness'].includes(key)) this.switchScreenFilters(key);
+        if (tab.dataset.sadinMode) return SadinView.sadinMode.call(this, { dataset: { mode: tab.dataset.sadinMode } }, true);
         if (tab.dataset.tab === 'bagrut') {
           Object.assign(this.state.bagrut, { drill: 'all', targets: false, chip: 'all', overviewEntry: false, whatifEntry: false });
           this.dirty.add('bagrut');
@@ -1234,7 +1283,7 @@ const App = {
     });
     on('searchSuggestPopup', 'mousedown', e => e.preventDefault());
     document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) this.hideSuggestions(); });
-    on('fClear', 'click', () => this.resetFilters());
+    on('fClear', 'click', () => this.resetFilters(this.state.tab === 'bagrut'));
     on('bagrutSubjectDrillSelect', 'change', e => BagrutView.bagrutSubjectChange.call(this, e.target.value));
     on('sadinFilterSelect', 'change', e => {
       this.state.sadin.strip = e.target.value;
@@ -1416,6 +1465,7 @@ const App = {
     /** ניווט מכרטיסי חדר הבקרה ללשונית מסוננת מראש */
     ovGo(el) {
       const { go, chip, strip, view, scope } = el.dataset;
+      this.rememberScreenFilters();
       this.resetOverviewDrillFilters();
       if (go === 'bagrut') {
         Object.assign(this.state.bagrut, { chip: chip || 'all', drill: 'all', targets: false, overviewEntry: true, whatifEntry: false }); this.dirty.add('bagrut');
@@ -1435,6 +1485,7 @@ const App = {
       this.showTab(go);
     },
     ovCompletion(el) {
+      this.rememberScreenFilters();
       this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
       Object.assign(this.state.bagrut, { chip: 'completion', drill: 'all', targets: false, readinessClass: '', readinessFilter: 'all', overviewEntry: true, whatifEntry: el.dataset.simulation === 'true', drillSim: { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: false } });
@@ -1446,6 +1497,7 @@ const App = {
       }
     },
     ovHotspot(el) {
+      this.rememberScreenFilters();
       this.resetOverviewDrillFilters();
       Object.assign(this.state.sadin, { mode: 'early', strip: 'all', subject: 'all', teacher: 'all', cell: { cls: el.dataset.class, subject: el.dataset.subject } });
       this.alertOut = [];
@@ -1453,6 +1505,7 @@ const App = {
       this.showTab('sadin');
     },
     ovReadiness(el) {
+      this.rememberScreenFilters();
       this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
       Object.assign(this.state.bagrut, { drill: el.dataset.sel, chip: 'all', targets: false, onlyPending: true, readinessClass: '', readinessFilter: 'all', mxSort: 'current', mxDir: 1, overviewEntry: true, whatifEntry: false, drillSim: { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: true } });
@@ -1582,6 +1635,15 @@ const App = {
   },
 
   chgs: {
+    screenScope(el) {
+      if (el.dataset.field === 'grade') this.changeGradeFilter(el.value);
+      else if (el.dataset.field === 'cls') { this.state.filters.cls = el.value; this.onFilterChange(); }
+    },
+    bagrutWorkOption(el) {
+      if (!['ignoreInternals', 'show30'].includes(el.dataset.key)) throw new Error('אפשרות זכאות לא מוכרת');
+      this.state.bagrut[el.dataset.key] = el.checked;
+      this.dirty.add('bagrut'); this.renderTab('bagrut');
+    },
     weaknessRiskRules(el) { return SadinView.weaknessRiskChange.call(this, el); },
     submittedQuestionnaire(el) { return SadinView.submittedQuestionnaireChange.call(this, el); },
     async backupImport(el) {
