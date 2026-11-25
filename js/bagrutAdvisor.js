@@ -104,7 +104,8 @@ const BagrutAdvisor = (() => {
    */
   function majorCell(tz, major, blockers, ctx) {
     const rank = { pass: 0, pending: 1, fail: 2, missing: 3, nodata: 4 };
-    const electives = major.cands.filter(c => !c.coreId).sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5));
+    const requiredUnits = (ctx.rules.gates && ctx.rules.gates.major && ctx.rules.gates.major.requiredUnits) || 5;
+    const electives = major.cands.filter(c => !c.coreId && Number(c.units) >= requiredUnits).sort((a, b) => (rank[a.status] ?? 5) - (rank[b.status] ?? 5));
     const short = c => c.name.split('/')[0].trim();
     if (!electives.length) {
       const none = blockers.some(b => b.k === 'major-none');
@@ -310,7 +311,7 @@ const BagrutAdvisor = (() => {
           complete = false;
           const timing = resolveTiming({
             ord: compOrd(c, b), rank: gradeRank(t.gradeKey), strict: false,
-            cohTaken: cohortOf(t.gradeKey, c.codes, scope).taken, hasAttempt: !!(b && b.kind !== 'none')
+            cohTaken: cohortOf(t.gradeKey, c.codes, scope).taken, hasAttempt: !!(b && (b.kind !== 'none' || b.incomplete))
           });
           if (b && b.kind === 'fail') cells[key] = { state: 'fail' };
           /* שאלון שמועדו בשכבה גבוהה משל החניך וטרם דווח לו ציון: עתידי, לא חסר */

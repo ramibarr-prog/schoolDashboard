@@ -281,9 +281,10 @@
     const majorRows = majors.map(c => {
       const def = rules.majors.find(m => m.id === c.id);
       const groups = def ? groupsFor(def.keywords) : [];
-      const units = groups.find(g => g.units);
+      const units = groups.find(g => Number(g.units) === Number(c.units)) || groups.find(g => g.units);
       const codes = def ? def.codes.filter(code => Store.bagrutBest(t.tz, [code])) : [];
-      const status = breakdown.isTrack12 ? '<span class="badge fresh-slate">מסלול 12 שנות לימוד</span>' : c.exempt ? '<span class="badge tier-3">פטור — נדרשת החלטת רכזת</span>' : c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && c.complete && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${!c.complete && c.bagrut != null ? 'נצברו' : c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
+      const requiredUnits = (rules.gates && rules.gates.major && rules.gates.major.requiredUnits) || 5;
+      const status = breakdown.isTrack12 ? '<span class="badge fresh-slate">מסלול 12 שנות לימוד</span>' : c.units < requiredUnits ? '<span class="text-slate-500">לא מגמה מורחבת</span>' : c.exempt ? '<span class="badge tier-3">פטור — נדרשת החלטת רכזת</span>' : c.blocked || c.failed ? '<span class="badge tier-4">לא עבר</span>' : c.status === 'fail' ? '<span class="badge tier-4">נכשל</span>' : c.status === 'pass' && c.source === 'bagrut' && c.complete && !c.forecast ? '<span class="text-emerald-700 font-semibold">✓ עובר</span>' : `<span class="text-slate-500">${!c.complete && c.bagrut != null ? 'נצברו' : c.enrolled ? 'לומד' : 'ממתין לדיווח'}</span>`;
       const value = c.adj != null ? c.adj : c.bagrut;
       const detail = c.adj != null ? (c.forecast ? 'תחזית' : c.source === 'current' ? 'שוטף' : '') : c.bagrut != null ? 'חלקי' : c.missing.length ? 'חלקי' : '';
       const comps = (def ? def.codes : []).map(code => {
@@ -341,6 +342,7 @@
       /* כמו שער 3 במנוע: מעורבות חברתית בסולם 1–4 – 2–4 עבר, 0–1 לא עבר; ציון 0–100 נשפט לפי ציון עובר */
       const social = internalDef ? internalDef.scale === '1-4' || internalDef.id === 'social' : String(a.code) === '86083' || /מעורבות חברתית/.test(a.subject || '');
       const cls = exempt ? (internal ? ['text-emerald-700 font-semibold', '✓ פטור'] : ['badge tier-3', 'פטור — נדרשת החלטת רכזת']) :
+        a.partial ? ['text-slate-500', 'ניסיון חלקי'] :
         a.cls.kind === 'num' ? (SignalEngine.isPassingScore(a.cls.num, { social }) ? ['text-emerald-700 font-semibold', '✓ עבר'] : social && a.cls.num <= 1 ? ['badge tier-4', 'לא עבר'] : ['badge tier-4', 'נכשל']) : a.cls.kind === 'pass' ? ['text-emerald-700 font-semibold', '✓ עבר'] : a.cls.kind === 'fail' ? ['badge tier-4', 'לא עבר'] : ['text-slate-500', '—'];
       return `<tr><td>${a.code}</td><td class="text-xs">${E((rules.questionnaires[a.code] || {}).name || '')}</td><td>${E(a.subject)}</td>
         <td>${E(a.submission || '—')}</td><td>${E(a.exam || '—')}</td><td class="font-medium">${E(a.final || '—')}</td><td>${E(a.moed || '—')}</td><td><span class="${cls[0]}">${cls[1]}</span></td></tr>`;

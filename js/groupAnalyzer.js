@@ -147,9 +147,9 @@ const Store = {
       if (!t) { if (!ignored.has(r0.tz)) unknown.bagrut.add(r0.tz); return; }
       /* ציון נגזר (הגשה + בחינה) מחושב מחדש לפי משקל המגן של השאלון במחזור של שכבת החניך, כך ששינוי ההגדרה חל גם על נתונים שנשמרו */
       let r = r0;
-      if (r0.derived) {
+      if (r0.derived || r0.partial) {
         const res = Parser.resolveAttempt(r0.final, r0.exam, r0.submission, r0.code, Config.rulesForGrade(t.gradeKey));
-        r = { ...r0, cls: res.cls, shown: res.shown, scoreRaw: res.shown };
+        r = { ...r0, cls: res.cls, shown: res.shown, scoreRaw: res.shown, derived: res.derived, partial: res.partial };
       }
       t.inBagrut = true;
       if (!bagrut.has(r.tz)) bagrut.set(r.tz, new Map());
@@ -257,16 +257,19 @@ const Store = {
   },
 
   bestOf(attempts) {
-    let num = null, pass = false, fail = false, block = false;
+    let num = null, pass = false, exempt = false, fail = false, block = false, incomplete = false;
     attempts.forEach(a => {
+      if (a.partial) { incomplete = true; return; }
+      if (a.cls.exempt || Parser.classify(a.final || a.shown || a.scoreRaw).exempt) { exempt = true; return; }
       if (a.cls.kind === 'num') num = num == null ? a.cls.num : Math.max(num, a.cls.num);
       else if (a.cls.kind === 'pass') pass = true;
       else if (a.cls.kind === 'fail') { fail = true; if (a.cls.block) block = true; }
     });
     if (num != null) return { kind: 'num', num };
     if (pass) return { kind: 'pass' };
+    if (exempt) return { kind: 'pass', exempt: true };
     if (fail) return { kind: 'fail', block };
-    return { kind: 'none' };
+    return incomplete ? { kind: 'none', incomplete: true } : { kind: 'none' };
   },
 
   /**
@@ -335,7 +338,9 @@ const Store = {
       const e = m.get(String(c));
       if (!e) return;
       const b = { ...e.best, code: String(c) };
-      if (!best || rank[b.kind] > rank[best.kind] || (b.kind === 'num' && best.kind === 'num' && b.num > best.num)) best = b;
+      if (!best || rank[b.kind] > rank[best.kind] || (b.kind === 'num' && best.kind === 'num' && b.num > best.num) ||
+          (b.kind === 'pass' && best.kind === 'pass' && best.exempt && !b.exempt) ||
+          (b.kind === 'none' && best.kind === 'none' && b.incomplete && !best.incomplete)) best = b;
     });
     return best;
   }

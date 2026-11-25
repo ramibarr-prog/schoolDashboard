@@ -295,8 +295,7 @@
       const fullTarget = n => Math.ceil(+((recordedInternal + Math.max(1, n) * internalWeight) / totalInternalWeight).toFixed(6));
       if (r.required30 <= 100) directTarget = fullTarget(r.required30);
       if (r.requiredFor45 <= 100) compensationTarget = fullTarget(r.requiredFor45);
-      const compUsed = ev.subjects.filter(subject => subject.status === 'comp' && !subject.critical).length;
-      const canCompensate = !s.critical && rules.allowCompensationRule && compUsed < rules.maxCompensations &&
+      const canCompensate = !!r.compensationAvailable &&
         r.requiredFor45 <= 100 && r.requiredFor45 < Math.max(1, r.required30);
       if (canCompensate) {
         target = String(fullTarget(r.requiredFor45));
@@ -787,7 +786,8 @@
             code: result.code, codes, state: result.exempt ? 'exempt' : result.kind, num: result.num, blocked: result.block, failed: result.kind === 'fail'
           })) : [{ code: codes[0], codes, state: 'missing' }];
         });
-        const status = b.noData ? '-' : c.exempt ? 'פטור' : c.status === 'pass' ? 'עובר' : 'נכשל';
+        const requiredUnits = (rules.gates && rules.gates.major && rules.gates.major.requiredUnits) || 5;
+        const status = b.noData ? '-' : c.units < requiredUnits ? `${c.units} יח״ל — לא מגמה מורחבת` : c.exempt ? 'פטור' : c.status === 'pass' ? 'עובר' : 'נכשל';
         const notes = alternatives(exams);
         if (c.blocked) notes.push(`חסם בשאלון ${c.blocked}`);
         if (c.exempt) notes.push('פטור במגמה דורש החלטת רכזת');

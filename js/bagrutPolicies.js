@@ -100,7 +100,9 @@ const BagrutPolicies = (() => {
     const r = s.reverse, rules = ctx.rules;
     if (!r || s.critical || !rules.allowCompensationRule || compUsed >= rules.maxCompensations) return;
     if (r.requiredFor45 > 100 || (r.level !== 'red' && r.requiredFor45 >= Math.max(1, r.required30))) return;
+    r.compensationAvailable = true;
     if (r.level === 'red') {
+      r.requiresCompensation = true;
       r.level = 'amber';
       r.text = `🎯 חסר ${r.pct}% — עובר ${rules.passGrade} אינו אפשרי (מקסימום ${r.max}), אך עם קיזוז מספיק ${r.requiredFor45} ב-${r.pct}%`;
     } else {
@@ -133,7 +135,7 @@ const BagrutPolicies = (() => {
       else if (r.state === 'exempt') res.exempt = true;
       else if (r.due) {
         /* כישלון או חסם שדווחו בפועל אינם מתמלאים בציון שוטף */
-        if (ctx.useCurrent && cur != null && !r.failed && !r.blocked) { sum += cur * r.weight; w += r.weight; res.filled.push(r); }
+        if (ctx.useCurrent && cur != null && !r.failed && !r.blocked && !(ctx.strict && r.incompleteAttempt)) { sum += cur * r.weight; w += r.weight; res.filled.push(r); }
         else res.unresolved.push(r);
       } else res.pending.push(r);
     });
@@ -146,7 +148,7 @@ const BagrutPolicies = (() => {
     /* מצב תעודה סופית: כל רכיב שהגיע מועדו נדרש. צפי מותאם: רק רכיב שהשכבה כבר נבחנה בו והחניך החמיץ;
        רכיב שטרם דווח לשכבה אינו חוסר, והמקצוע נשפט לפי החלק שכבר דווח (partial) */
     const missingDue = ctx.strict ? res.unresolved.concat(res.pending.filter(c => c.targetRank <= ctx.rank)) : res.unresolved;
-    res.incomplete = ctx.mode === 'full' && (reported.length > 0 || nPass > 0) && missingDue.length > 0 && !res.exempt;
+    res.incomplete = ctx.mode === 'full' && (reported.length > 0 || nPass > 0 || res.comps.some(c => c.incompleteAttempt)) && missingDue.length > 0 && !res.exempt;
     if (res.incomplete && totalW > 0) {
       res.earnedScore = reported.length ? Math.round(sum / totalW) : null;
       res.missingPct = Math.round(missingDue.reduce((a, c) => a + c.weight, 0) / totalW * 100);
@@ -195,7 +197,9 @@ const BagrutPolicies = (() => {
     const full = ctx.mode === 'full';
 
     const compUsed = subjects.filter(s => s.status === 'comp' && !s.critical).length;
-    subjects.forEach(s => addCompensationTip(s, ctx, compUsed));
+    const needsComp = s => s.reverse && s.reverse.level === 'red' && !s.critical && s.reverse.requiredFor45 <= 100;
+    const reserved = subjects.filter(needsComp).length;
+    subjects.forEach(s => addCompensationTip(s, ctx, compUsed + reserved - (needsComp(s) ? 1 : 0)));
 
     subjects.forEach((s, i) => {
       const firstBlocker = B.length;
@@ -285,7 +289,7 @@ const BagrutPolicies = (() => {
         const w = Number(m.weights && m.weights[codes[0]]);
         const found = codes.map(code => bestResult(tz, [code]));
         const nums = found.filter(b => b && b.kind === 'num').map(b => b.num);
-        const hasPartAttempt = found.some(b => b && b.kind !== 'none');
+        const hasPartAttempt = found.some(b => b && (b.kind !== 'none' || b.incomplete));
         const timing = resolveTiming({
           ord: compOrd({ codes, expectedGrade: m.expectedGrade }, Store.bagrutBest(tz, codes)), rank: ctx.rank, strict: ctx.strict,
           cohTaken: cohortOf(ctx.gradeKey, codes, mScope).taken, hasAttempt: hasPartAttempt
@@ -294,7 +298,7 @@ const BagrutPolicies = (() => {
           codes, w: w > 0 ? w : 1, nums, num: nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null,
           pass: found.some(b => b && b.kind === 'pass' && !b.exempt),
           exempt: !nums.length && found.some(b => b && b.exempt) && !found.some(b => b && b.kind === 'pass' && !b.exempt),
-          fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), due: timing.due
+          fail: found.some(b => b && b.kind === 'fail'), block: found.some(b => b && b.block), incomplete: found.some(b => b && b.incomplete), due: timing.due
         };
       });
       const nums = parts.filter(p => p.num != null);
@@ -302,23 +306,27 @@ const BagrutPolicies = (() => {
       const exempt = parts.some(p => p.exempt);
       const blocked = parts.find(p => p.block && p.num == null && !p.pass);
       const missing = parts.filter(p => p.num == null && !p.pass && !p.exempt && p.due);
-      if (!enrolled && !nums.length && !passes.length && !exempt) return;
+      if (!enrolled && !nums.length && !passes.length && !exempt && !parts.some(p => p.incomplete)) return;
       const sumW = list => list.reduce((a, p) => a + p.w, 0);
       const cur = enrolled ? currentInfo(tz, m.keywords).value : null;
-      const group = Store.groupsOf(tz).find(g => !g.reinforcement && Util.matchKeywords(g.subject, m.keywords) && Number(g.units));
+      const groups = Store.groupsOf(tz).filter(g => !g.reinforcement && Util.matchKeywords(g.subject, m.keywords));
+      const group = groups.find(g => Number(g.units) >= requiredUnits);
+      const belowThreshold = groups.length && !groups.some(g => !g.units || Number(g.units) >= requiredUnits);
       const c = { id: m.id, unitSubjectId: m.coreId || m.id, name: m.name,
-        units: Number(m.units) || (group && Number(group.units)) || requiredUnits, complete: parts.every(p => p.num != null || p.pass), exempt,
+        units: belowThreshold ? Math.max(...groups.map(g => Number(g.units))) : Number(m.units) || (group && Number(group.units)) || requiredUnits,
+        complete: parts.every(p => p.num != null || p.pass), exempt,
         enrolled, bagrut: null, bagrutPass: passes.length > 0, failed: parts.some(p => p.fail && p.num == null && !p.pass), current: cur, grade: null, source: 'none', status: 'nodata', forecast: false, missing: missing.map(p => p.codes.join('/')), blocked: blocked ? blocked.codes[0] : '' };
       if (nums.length) {
         const numSum = nums.reduce((a, p) => a + p.num * p.w, 0);
         c.bagrut = numSum / sumW(nums);
         if (!missing.length) { c.grade = c.bagrut; c.source = 'bagrut'; }
-        else if (ctx.useCurrent && cur != null) { c.grade = (numSum + cur * sumW(missing)) / (sumW(nums) + sumW(missing)); c.source = 'bagrut'; c.forecast = full; }
+        else if (ctx.useCurrent && cur != null && !(ctx.strict && missing.some(p => p.incomplete))) { c.grade = (numSum + cur * sumW(missing)) / (sumW(nums) + sumW(missing)); c.source = 'bagrut'; c.forecast = full; }
         else c.status = 'missing';
       } else if (passes.length) {
         c.source = 'bagrut';
         c.status = missing.length ? 'missing' : 'pass';
-      } else if (cur != null && (ctx.useCurrent || !full)) { c.grade = cur; c.source = 'current'; c.forecast = full; }
+      } else if (ctx.strict && missing.some(p => p.incomplete)) c.status = 'missing';
+      else if (cur != null && (ctx.useCurrent || !full)) { c.grade = cur; c.source = 'current'; c.forecast = full; }
       if (c.grade != null) {
         let v = c.grade;
         if (ctx.plus5 && Math.round(v) >= rules.borderlineMin && Math.round(v) < rules.passGrade) v += rules.borderlineBonus;
@@ -345,19 +353,20 @@ const BagrutPolicies = (() => {
       });
     });
 
-    const ok = cands.find(c => c.status === 'pass') || cands.find(c => c.status === 'pending');
+    const eligible = cands.filter(c => Number(c.units) >= requiredUnits);
+    const ok = eligible.find(c => c.status === 'pass') || eligible.find(c => c.status === 'pending');
     if (ok) return { cands, chosen: ok };
 
-    const blockedCand = cands.find(c => c.blocked);
-    const failing = cands.find(c => c.status === 'fail');
+    const blockedCand = eligible.find(c => c.blocked);
+    const failing = eligible.find(c => c.status === 'fail');
     if (blockedCand) B.push({ gate: 2, k: 'bagrut-block', hard: true, unitSubject: blockedCand.coreId || blockedCand.unitSubjectId || blockedCand.id, text: `חסם בגרות – מגמה ${blockedCand.name} (שאלון ${blockedCand.blocked})` });
     else if (failing) {
       const soft = failing.source === 'current' && ctx.adaptive;
       B.push({ gate: 2, k: 'major-fail', hard: !soft, watch: soft, grade: failing.adj, unitSubject: failing.coreId || failing.unitSubjectId || failing.id, text: `מגמה ${failing.name} ${failing.source === 'current' ? 'שוטף ' : ''}(${rnd(failing.adj)})` });
     }
-    else if (cands.some(c => c.exempt)) { /* הפטור כבר מסומן להכרעת רכזת */ }
-    else if (cands.length) {
-      const first = cands.find(c => c.missing.length) || cands[0];
+    else if (eligible.some(c => c.exempt)) { /* הפטור כבר מסומן להכרעת רכזת */ }
+    else if (eligible.length) {
+      const first = eligible.find(c => c.missing.length) || eligible[0];
       B.push({ gate: 2, k: 'major-missing', hard: full && (ctx.strict || !first.enrolled), miss: true, unitSubject: first.coreId || first.unitSubjectId || first.id, text: first.missing.length ? `שאלון ${first.missing.join('/')} במגמה ${first.name}` : `ציון מגמה (${first.name})` });
     }
     else if (!full && !Store.groups.size) { /* אין קבוצות בכלל – אין על מה לקבוע חוסר שיבוץ */ }
@@ -443,11 +452,11 @@ const BagrutPolicies = (() => {
     const items = [];
     if (gateOn(1)) {
       subjects.forEach(s => s.comps.forEach(c => {
-        const has = c.state === 'num' || c.state === 'pass' || c.state === 'exempt' || !!c.failed || !!c.blocked;
-        const score = c.state === 'num' ? (c.reportedNum ?? c.num) : null;
+        const has = !c.incompleteAttempt && (c.state === 'num' || c.state === 'pass' || c.state === 'exempt' || !!c.failed || !!c.blocked);
+        const score = has && c.state === 'num' ? (c.reportedNum ?? c.num) : null;
         items.push({
           subject: s.name, code: c.code || c.codes[0], has, score,
-          review: c.state === 'exempt', failed: !!c.failed || !!c.blocked || (c.state === 'num' && score < pass),
+          review: c.state === 'exempt', failed: !!c.failed || !!c.blocked || (score != null && score < pass),
           due: !!c.due, future: !!c.future, active: !!c.due, missing: !!c.due && !has
         });
       }));
@@ -519,7 +528,7 @@ const BagrutPolicies = (() => {
 
   /** המקצוע ברמה שנבחרה הושלם ועבר בפועל: כל רכיביו דווחו בבגרות, ללא פטור, תחזית או קיזוז */
   const passedClean = s => !!s && s.status === 'pass' && s.source === 'bagrut' && !s.forecast && !s.compApplied &&
-    s.comps.length > 0 && s.comps.every(c => c.state === 'num' || c.state === 'pass');
+    s.comps.length > 0 && s.comps.every(c => !c.incompleteAttempt && (c.state === 'num' || c.state === 'pass'));
 
   /* ---------- ליבה משותפת: הרצת שלושת השערים על עובדות החניך ---------- */
   function runGates(facts) {
@@ -528,7 +537,8 @@ const BagrutPolicies = (() => {
     const subjects = gate1(tz, ctx, B, notes);
     const major = gate2(tz, ctx, B, subjects);
     applyPointsCompensation(B, subjects, major, ctx, notes);
-    const internals = gate3(tz, ctx, B, major.cands);
+    const requiredUnits = (ctx.rules.gates && ctx.rules.gates.major && ctx.rules.gates.major.requiredUnits) || 5;
+    const internals = gate3(tz, ctx, B, major.cands.filter(c => Number(c.units) >= requiredUnits));
     const units = facts.countUnits(subjects, major);
     return { B, notes, subjects, major, internals, units };
   }
@@ -545,7 +555,7 @@ const BagrutPolicies = (() => {
     const recoverable = new Set(blockers.some(b => b.k === 'units')
       ? blockers.filter(b => b.hard && b.unitSubject && b.k !== 'exempt-review').map(b => b.unitSubject) : []);
     const recoveredUnits = recoverable.size ? facts.countUnits(
-      subjects.map(s => recoverable.has(s.id) ? { ...s, status: 'pass', exempt: false, forecast: false, source: 'bagrut', comps: s.comps.map(c => ({ ...c, state: 'num' })) } : s),
+      subjects.map(s => recoverable.has(s.id) ? { ...s, status: 'pass', exempt: false, forecast: false, source: 'bagrut', comps: s.comps.map(c => ({ ...c, state: 'num', incompleteAttempt: false })) } : s),
       { ...major, cands: major.cands.map(c => recoverable.has(c.coreId || c.unitSubjectId || c.id) ? { ...c, status: 'pass', complete: true, exempt: false, forecast: false, source: 'bagrut' } : c) }
     ).totalUnits : units.totalUnits;
     const derivedUnits = recoveredUnits >= 21;
@@ -578,7 +588,9 @@ const BagrutPolicies = (() => {
 
     /* מחשבון הפוך: פעולות נדרשות ב-30% החסר. "ניתן להציל" = אין חסם קשה מלבד ה-30% החסר, ושום מקצוע אינו אבוד גם עם 100 */
     const reverse = gateOn(1) ? subjects.filter(s => s.reverse).map(s => s.reverse) : [];
+    const compUsed = subjects.filter(s => s.status === 'comp' && !s.critical).length;
     const savable = !manual && !reviewHold && tier >= 3 && reverse.length > 0 && reverse.every(r => r.level !== 'red') &&
+      compUsed + reverse.filter(r => r.requiresCompensation).length <= rules.maxCompensations &&
       classificationBlockers.filter(b => b.hard).every(b => b.inner);
 
     const gateStatus = g => {

@@ -38,7 +38,7 @@ const BagrutFacts = (() => {
 
   /** הסמל המייצג של הרכב: סמל הניסיון הטוב ביותר שדווח, ובהיעדרו הסמל הראשון */
   function codeOfComp(comp, b) {
-    if (b && b.kind !== 'none' && b.code) return Util.normQuestionnaireCode(b.code);
+    if (b && (b.kind !== 'none' || b.incomplete) && b.code) return Util.normQuestionnaireCode(b.code);
     return Util.normQuestionnaireCode(comp && comp.codes && comp.codes[0]);
   }
 
@@ -51,7 +51,7 @@ const BagrutFacts = (() => {
     const explicit = validRank(comp && comp.expectedGrade);
     if (explicit) return explicit;
     const cat = Config.rules().questionnaires || {};
-    if (b && b.kind !== 'none' && b.code) {
+    if (b && (b.kind !== 'none' || b.incomplete) && b.code) {
       const r = validRank((cat[Util.normQuestionnaireCode(b.code)] || {}).expectedGrade);
       if (r) return r;
     }
@@ -150,17 +150,18 @@ const BagrutFacts = (() => {
     if (!levels.length) return null;
     const g = Store.groupsOf(tz).find(x => !x.reinforcement && Util.matchKeywords(x.subject, subj.keywords) && x.units && subj.levels[x.units]);
     if (g) return g.units;
-    let best = null, bestScore = 0;
+    let best = null, bestScore = 0, partialBest = null, partialScore = 0;
     levels.forEach(l => {
       const comps = activeOnly(subj.levels[l]);
-      const matched = comps.filter(c => {
-        const best = Store.bagrutBest(tz, c.codes);
-        return best && best.kind !== 'none';
-      }).length;
+      const results = comps.map(c => Store.bagrutBest(tz, c.codes));
+      const matched = results.filter(b => b && b.kind !== 'none').length;
+      const partial = results.filter(b => b && b.incomplete).length;
       const score = comps.length ? (matched / comps.length) * 100 + matched : 0;
+      const incompleteScore = comps.length ? (partial / comps.length) * 100 + partial : 0;
       if (score > bestScore || (score > 0 && score === bestScore && l === String(subj.defaultLevel))) { best = l; bestScore = score; }
+      if (incompleteScore > partialScore || (incompleteScore > 0 && incompleteScore === partialScore && l === String(subj.defaultLevel))) { partialBest = l; partialScore = incompleteScore; }
     });
-    return best || subj.defaultLevel || levels[0];
+    return best || partialBest || subj.defaultLevel || levels[0];
   }
 
   function componentsOf(tz, subj) {
@@ -183,14 +184,8 @@ const BagrutFacts = (() => {
     return list.length > 1 && w > 0 && w <= 30 && w < Math.max(...weights);
   }
 
-  /* Store שומר "עבר" בלי דגל פטור; גם קבצים שנשמרו לפני הוספת הדגל מזוהים לפי הטקסט המקורי. */
   function bestResult(tz, codes) {
-    const best = Store.bagrutBest(tz, codes);
-    if (!best || best.kind !== 'pass') return best;
-    const set = new Set(codes.map(Util.normQuestionnaireCode));
-    const passes = Store.attemptsOf(tz).filter(a => set.has(Util.normQuestionnaireCode(a.code)) && a.cls.kind === 'pass');
-    const exempt = passes.length > 0 && passes.every(a => a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt);
-    return { ...best, exempt };
+    return Store.bagrutBest(tz, codes);
   }
 
   /**
@@ -199,29 +194,36 @@ const BagrutFacts = (() => {
    */
   function resolveComp(tz, comp, ctx, siblings, cur, scope) {
     const b = bestResult(tz, comp.codes);
-    const code = codeOfComp(comp, b);
+    const partials = b && b.kind === 'none' && b.incomplete ? Store.attemptsOf(tz).filter(a =>
+      comp.codes.includes(a.code) && (a.partial === 'exam' || a.partial === 'magen' || a.partial === 'submission') &&
+      Util.parseScore(a.partial === 'exam' ? a.exam : a.submission) != null && !a.cls.exempt)
+      .sort((a, b) => a.code.localeCompare(b.code) || a.partial.localeCompare(b.partial)) : [];
+    const code = partials.length ? partials[0].code : codeOfComp(comp, b);
     const ord = compOrd(comp, b);
     const internal = isInternalComp(comp, siblings || [comp]);
     const coh = cohortOf(ctx.gradeKey, comp.codes, scope);
     /* צפי מותאם: רק רכיב של השכבה הנוכחית שטרם נבחנה בו נשאר "בתהליך השנה". */
-    const timing = resolveTiming({ ord, rank: ctx.rank, strict: ctx.strict, cohTaken: coh.taken, hasAttempt: !!(b && b.kind !== 'none') });
+    const timing = resolveTiming({ ord, rank: ctx.rank, strict: ctx.strict, cohTaken: coh.taken, hasAttempt: !!(b && (b.kind !== 'none' || b.incomplete)) });
     const base = {
       codes: comp.codes, code, weight: Number(comp.weight) || 0, targetRank: ord,
       due: timing.due, pending: timing.pending, pendingCohort: timing.pendingCohort, future: timing.future, hasAttempt: timing.hasAttempt,
       takenByCohort: coh.taken, cohortPct: Math.round(coh.pct), internal
     };
-    if (ctx.sim100 && internal && (!b || b.kind === 'none') && !(b && b.block))
+    if (ctx.sim100 && internal && (!b || b.kind === 'none') && !(b && (b.block || b.incomplete)))
       return { ...base, state: 'num', num: 100, simulated: true };
     if (b && b.kind === 'num') {
-      const examOnly = ctx.useCurrent && cur != null && Store.attemptsOf(tz).find(a =>
-        a.code === b.code && a.partial === 'exam' && a.cls.kind === 'num' && a.cls.num === b.num);
-      if (examOnly) {
-        const mw = Config.magenWeight(b.code || (comp.codes && comp.codes[0]), ctx.rules) / 100;
-        return { ...base, state: 'num', num: Parser.roundWeightedScore(cur, b.num, mw), reportedNum: b.num, magenForecast: true };
-      }
       return { ...base, state: 'num', num: b.num };
     }
     if (b && b.kind === 'pass') return { ...base, state: b.exempt ? 'exempt' : 'pass' };
+    if (b && b.incomplete) {
+      const forecast = ctx.useCurrent && cur != null ? partials.map(a => {
+        const score = Util.parseScore(a.partial === 'exam' ? a.exam : a.submission);
+        const weight = Config.magenWeight(a.code, ctx.rules) / 100;
+        return { a, score, num: a.partial === 'exam' ? Parser.roundWeightedScore(cur, score, weight) : Parser.roundWeightedScore(score, cur, weight) };
+      }).sort((x, y) => y.num - x.num || x.a.code.localeCompare(y.a.code) || x.a.partial.localeCompare(y.a.partial) || y.score - x.score)[0] : null;
+      if (forecast && !ctx.strict) return { ...base, code: forecast.a.code, state: 'num', num: forecast.num, reportedNum: forecast.score, magenForecast: true, incompleteAttempt: true };
+      return { ...base, state: 'missing', incompleteAttempt: true, ...(forecast ? { forecastNum: forecast.num, magenForecast: true } : {}) };
+    }
     return { ...base, state: 'missing', failed: !!(b && b.kind === 'fail'), blocked: !!(b && b.block) };
   }
 
@@ -259,7 +261,7 @@ const BagrutFacts = (() => {
     subjects.forEach(s => {
       const units = Number(s.units) || 0;
       expected.set(s.id, units);
-      if ((s.status === 'pass' || s.compApplied) && !s.exempt && !s.forecast && s.source === 'bagrut' &&
+      if ((s.status === 'pass' || s.compApplied) && !s.exempt && !s.forecast && s.source === 'bagrut' && !s.comps.some(c => c.incompleteAttempt) &&
           s.comps.length && s.comps.every(c => c.state === 'num' || c.state === 'pass')) earned.set(s.id, units);
     });
     major.cands.forEach(c => {

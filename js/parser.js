@@ -63,7 +63,7 @@ const Parser = (() => {
         { key: 'grade', label: 'שכבה', syn: ['שכבה', 'כיתה'] },
         { key: 'subject', label: 'שם מקצוע', syn: ['שםמקצוע', 'מקצוע'] },
         { key: 'questionnaireCode', label: 'סמל שאלון', req: true, syn: ['סמלשאלון', 'קודשאלון', 'שאלון', 'סמל'] },
-        { key: 'submissionGrade', label: 'ציון הגשה / מגן', syn: ['ציוןהגשה', 'ציוןמגן', 'הגשה', 'מגן'] },
+        { key: 'submissionGrade', label: 'ציון הגשה / מגן', syn: ['ציוןהגשה', 'ציוןמגן', 'ציוןשנתי', 'הגשה', 'מגן', 'שנתי'] },
         { key: 'examGrade', label: 'ציון בחינה', syn: ['ציוןבחינה', 'בחינה', 'ציוןבגרות'] },
         { key: 'finalGrade', label: 'ציון סופי בשאלון', syn: ['ציוןסופיבשאלון', 'ציוןסופי', 'סופי', 'ציוןמסכם', 'ציון'] },
         { key: 'moed', label: 'מועד / שנה', syn: ['מועד', 'מועדבחינה', 'שנה', 'שנתבחינה'] }
@@ -420,9 +420,9 @@ const Parser = (() => {
   /** סיווג ערך ציון: מספר / עבר / לא עבר-חסר / ריק. "חסם" מסומן ב-block כדי להציגו כחסם בגרות */
   function classify(v) {
     if (v == null || String(v).trim() === '') return { kind: 'none' };
-    const n = Util.parseScore(v);
-    if (n !== null) return { kind: 'num', num: n };
     const s = String(v).trim();
+    const n = Util.parseScore(v);
+    if (n !== null) return EXEMPT_RE.test(s) ? { kind: 'num', num: n, exempt: true } : { kind: 'num', num: n };
     if (FAIL_RE.test(s)) return /חסם/.test(s) ? { kind: 'fail', block: true } : { kind: 'fail' };
     if (EXEMPT_RE.test(s)) return { kind: 'pass', exempt: true };
     if (PASS_RE.test(s)) return { kind: 'pass' };
@@ -518,15 +518,19 @@ const Parser = (() => {
   function resolveAttempt(fin, exam, sub, code, rules) {
     const f = classify(fin);
     if (f.kind !== 'none') return { cls: f, shown: String(fin).trim(), derived: false, partial: '' };
+    for (const v of [exam, sub]) {
+      if (classify(v).exempt) return { cls: { kind: 'pass', exempt: true }, shown: String(v).trim(), derived: false, partial: '' };
+    }
     const e = Util.parseScore(exam), s = Util.parseScore(sub);
     if (e !== null && s !== null) {
       const w = Config.magenWeight(code, rules) / 100;
       const num = roundWeightedScore(s, e, w);
       return { cls: { kind: 'num', num }, shown: String(num), derived: true, partial: '' };
     }
-    for (const [v, partial] of [[exam, 'exam'], [sub, 'submission']]) {
+    for (const [v, partial] of [[exam, 'exam'], [sub, 'magen']]) {
       const c = classify(v);
-      if (c.kind !== 'none') return { cls: c, shown: String(v).trim(), derived: false, partial: c.kind === 'num' ? partial : '' };
+      if (c.kind !== 'none') return { cls: c.kind === 'num' || c.kind === 'pass' ? { kind: 'none' } : c,
+        shown: String(v).trim(), derived: false, partial: c.kind === 'num' || c.kind === 'pass' ? partial : '' };
     }
     return { cls: { kind: 'none' }, shown: '', derived: false, partial: '' };
   }
@@ -612,7 +616,7 @@ const Parser = (() => {
   function detectWide(aoa, headerIdx) {
     const cells = (aoa[headerIdx] || []).map(c => String(c ?? ''));
     const count = fn => cells.filter(fn).length;
-    if (count(c => /\n/.test(c) && /\(\d+\)/.test(c) && /(שנתי|בחינה|סופי)[^\n]*$/.test(c.trim())) >= 3) return 'bagrut';
+    if (count(c => { const lines = c.split(/\r?\n/).map(cleanLine).filter(Boolean); return lines.length >= 3 && /\(\d+\)\s*$/.test(lines[0]); }) >= 1) return 'bagrut';
     if (count(c => /\n/.test(c) && /משקל\s*[\d.]+\s*$/.test(c.trim()) && /\[\d+\]/.test(c)) >= 1) return 'grades';
     if (count(c => !/\n/.test(c) && /\[\d+\]\s*$/.test(c.trim())) >= 3) return 'groups';
     return null;
@@ -698,14 +702,15 @@ const Parser = (() => {
   function parseWideBagrut(aoa, headerIdx) {
     const header = aoa[headerIdx] || [];
     const col = fixedCols(header);
-    const TYPE = [[/שנתי|מגן/, 'submission'], [/בחינה/, 'exam'], [/סופי/, 'final']];
-    const cols = [];
+    const TYPE = [[/סופי/, 'final'], [/שנתי|מגן|הגשה/, 'submission'], [/בחינה/, 'exam']];
+    const cols = [], warnings = [];
     header.forEach((c, i) => {
       const lines = String(c ?? '').split(/\r?\n/).map(cleanLine).filter(Boolean);
       if (lines.length < 3) return;
       const code = Util.normQuestionnaireCode((lines[0].match(/\((\d+)\)\s*$/) || [])[1]);
       const type = (TYPE.find(([re]) => re.test(lines[2])) || [])[1];
-      if (!code || !type) return;
+      if (!code) return;
+      if (!type) { warnings.push(`עמודת בגרות דולגה עקב כותרת ציון לא מזוהה: "${lines.join(' · ')}".`); return; }
       const moed = lines[1].match(/^(.*?)\s*\((\d+)\)\s*$/);
       cols.push({
         i, code, type, moed: moed ? moed[1].trim() : lines[1], moedCode: moed ? moed[2] : lines[1],
@@ -732,7 +737,7 @@ const Parser = (() => {
         });
       });
     });
-    return { rows, skipped: 0 };
+    return { rows, skipped: 0, warnings };
   }
 
   const WIDE_PARSERS = { groups: parseWideGroups, grades: parseWideGrades, bagrut: parseWideBagrut };
@@ -845,7 +850,7 @@ const Parser = (() => {
       const check = validateAgainstRoster(rows);
       const grades = [...new Set(rows.map(r => r.gradeKey).filter(Boolean))];
       return { targetType, type, wide: true, grades, fileName: file.name, headerRow: table.headerRow, sheetName: table.sheetName, rows, skipped: wide.skipped, ignored,
-        mapping: null, unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: [...table.warnings, ...takeIdWarnings()] };
+        mapping: null, unmatchedIds: check.unmatchedIds, matchedCount: check.matchedCount, rosterEmpty: check.rosterEmpty, warnings: [...table.warnings, ...(wide.warnings || []), ...takeIdWarnings()] };
     }
 
     let mapping = autoMap(type, table.headers, table.rows);

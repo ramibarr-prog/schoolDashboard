@@ -33,6 +33,7 @@ function sanitizeState(s) {
         else if (field === 'cls' && obj(value)) rec.cls = {
           kind: ['num', 'pass', 'none', 'fail'].includes(value.kind) ? value.kind : 'none',
           ...(value.block === true ? { block: true } : {}),
+          ...(value.exempt === true ? { exempt: true } : {}),
           ...(typeof value.num === 'number' && Number.isFinite(value.num) ? { num: value.num } : {})
         };
         else if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) rec[field] = field === 'scoreRaw' ? value : String(value);
