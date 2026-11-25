@@ -123,6 +123,14 @@
   });
   document.addEventListener('scroll', hideBreakdownTooltip, true);
   document.addEventListener('click', event => {
+    const button = event.target.closest && event.target.closest('#bagrut-table [data-bagrut-subject-details]');
+    if (!button) return;
+    const row = button.closest('tr'), details = row && row.nextElementSibling;
+    if (!details || details.id !== button.getAttribute('aria-controls')) throw new Error('חסרה שורת פירוט למקצוע');
+    details.hidden = !details.hidden;
+    button.setAttribute('aria-expanded', String(!details.hidden));
+  });
+  document.addEventListener('click', event => {
     const app = window.App;
     if (!app || app.state.tab !== 'bagrut' || !app.state.bagrut.drawerTz) return;
     const target = event.target;
@@ -529,7 +537,7 @@
     const signalMap = signalsFor(roster.map(t => ({ t })), options);
     const rows = roster.map(t => ({ t, ev: signalMap.get(t.tz).ev }));
     const known = rows.filter(r => !noBagrutData(signalMap.get(r.t.tz), options) && r.ev.tier !== 0 && r.ev.tier !== 5);
-    const forecastOptions = { ...options, useCurrent: true };
+    const forecastOptions = { ...options, fullMode: false, useCurrent: true };
     const forecast = signalsFor(known, forecastOptions);
     const eligible = ev => ev.tier === 1 || ev.tier === 2;
     const todayCount = known.filter(r => eligible(r.ev)).length;
@@ -547,10 +555,10 @@
     const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => this.chipMatch(r, id, signalMap.get(r.t.tz))).length}</span></button>`;
     setHtml('bagrut-kpis', `<div class="card bagrut-work-summary">
       <div class="bagrut-work-metrics">${metric(todayCount, 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
-      <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל חנ״מ והכרעות ידניות; ללא מסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי משלב ציונים שוטפים להשלמת נתונים חסרים ואינו הבטחה לזכאות.</p>
+      <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל חנ״מ והכרעות ידניות; ללא מסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי מותאם לשלב בשנה ומשלב ציונים שוטפים; רכיבי י״ב שטרם דווחו בהיקף הנדרש בשכבה אינם נחשבים חסרים. הצפי אינו הבטחה לזכאות.</p>
       ${st.overviewEntry ? '<p>הרשימה שומרת על החניכים שנבחרו בחדר הבקרה; מצב כל חניך נבדק כאן לפי סוף י״ב.</p>' : ''}
       ${attention ? `<p>במעקב: ${attention.tzSet.size} חניכים · ${attention.bagrutRisk.length} בסיכון בבגרות · ${attention.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both ? ` (${attention.both} בשניהם)` : ''}</p>` : ''}
-      <div class="bagrut-tabs" role="group" aria-label="סינון רשימת העבודה">${quick('all', 'הכל')}${quick('risk', 'בסיכון')}${quick('completion', 'השלמה או החלטה')}${quick('eligible', 'עומדים בתנאים')}${quick('pinned', 'במעקב צמוד')}</div></div>`);
+      <div class="bagrut-tabs" role="group" aria-label="סינון רשימת העבודה">${quick('all', 'הכל')}${quick('risk', 'בסיכון')}${quick('eligible', 'עומדים בתנאים')}${quick('pinned', 'במעקב צמוד')}</div></div>`);
     const kpis = $('bagrut-kpis');
     if (kpis) kpis.classList.remove('hidden');
     const pinButton = t => `<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutPin" data-defer="true" data-tz="${E(t.tz)}" aria-pressed="${deferred.has(t.tz)}" aria-label="${deferred.has(t.tz) ? 'החזר למעלה' : 'הורד למטה'}: ${E(t.name)}">${deferred.has(t.tz) ? 'החזר למעלה' : 'הורד למטה'}</button>`;
@@ -568,35 +576,68 @@
       const index = this._bagrutWorkIds.indexOf(t.tz);
       const issues = ev.blockers.filter(x => !x.info);
       const show30 = st.show30 !== false;
+      const rules = Config.rulesForGrade('יב');
+      const examTag = comp => {
+        const value = comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
+          comp.state === 'pass' ? 'עבר' : comp.state === 'exempt' ? 'פטור' :
+          comp.blocked ? 'חסום' : comp.failed ? 'נכשל' : 'חסר';
+        return `<span class="bagrut-exam"><bdi dir="ltr">${E(comp.code)}</bdi> · ${E(value)}</span>`;
+      };
+      const alternatives = comps => comps.filter(c => c.state === 'missing' && !c.failed && !c.blocked && c.codes.length > 1)
+        .map(c => `חלופות לשאלון ${c.code}: ${c.codes.join(' / ')}`);
+      let detailIndex = 0;
+      const subjectRow = (id, name, exams, target, status, notes) => {
+        const unique = [...new Set(notes.filter(Boolean))], detailsId = `bagrut-subject-details-${detailIndex++}`;
+        const statusClass = status === 'עובר' ? 'pass' : status === 'נכשל' ? 'bad' :
+          status === 'ממתין' || status === 'פטור' ? 'neutral' : 'warn';
+        const button = unique.length ? `<button type="button" class="bagrut-subject-toggle" data-bagrut-subject-details aria-expanded="false" aria-controls="${detailsId}" aria-label="${E(`פרטים: ${name}`)}">פרטים</button>` : '—';
+        return `<tr data-subject="${E(id)}"><th scope="row"><strong>${E(name)}</strong></th>
+          <td><div class="bagrut-exams">${exams.map(examTag).join('') || '—'}</div></td><td>${target}</td>
+          <td><span class="bagrut-subject-status is-${statusClass}">${E(status)}</span></td><td>${button}</td></tr>
+          ${unique.length ? `<tr id="${detailsId}" class="bagrut-subject-detail-row" hidden><td colspan="5">${unique.map(note => `<div>${E(note)}</div>`).join('')}</td></tr>` : ''}`;
+      };
       const subjects = ev.subjects.map(s => {
         const blockers = issues.filter(x => x.gate === 1 && x.k !== 'units' && (x.subject === s.id || x.text.includes(s.name)));
         const external = s.comps.filter(c => !c.internal && c.state === 'missing' && !c.failed && !c.blocked);
-        const target = show30 ? target30(s, ev, Config.rulesForGrade('יב')) : null;
-        const current = b.noData ? 'אין נתונים' : s.adj != null ? Util.fmt(s.adj, 0) :
-          s.reportedScore != null ? `דווח ${Util.fmt(s.reportedScore, 0)}` : s.exempt ? 'פטור' : '—';
-        const lines = b.noData ? ['לא ניתן לקבוע ללא נתוני בגרות'] :
-          blockers.map(x => ['reverse30', 'reverse-pending'].includes(x.k) ? 'נדרש שיפור או השלמה ב־30%' : x.text);
-        if (!b.noData && external.length) lines.push(`חסר שאלון חיצוני: ${external.map(c => c.codes.join(' / ')).join(', ')}`);
-        if (!b.noData && s.compApplied) lines.push(s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז');
-        else if (!b.noData && s.status === 'pass') lines.push('עובר');
-        else if (!b.noData && s.exempt) lines.push('פטור · נדרשת בדיקה');
-        if (!b.noData && show30 && target && !external.length) {
-          if (target.target !== 'לא ניתן לקבוע' && target.target !== 'לא אפשרי') {
-            lines.push(target.note.includes('לקיזוז')
-              ? `נדרש ${target.target} ב־30% בכפוף לקיזוז; ${target.note}`
-              : `נדרש ${target.target} ב־30% כדי לעבור את המקצוע`);
-          } else lines.push(`${target.target} לקביעת יעד 30% · ${target.note}`);
+        const target = show30 && !b.noData && !external.length && s.status !== 'pass' && !s.compApplied
+          ? target30(s, ev, rules) : null;
+        const impossible = target && s.reverse && s.reverse.required30 > 100;
+        const numericTarget = target && target.target !== 'לא ניתן לקבוע' && target.target !== 'לא אפשרי';
+        const targetCell = impossible ? '<span class="badge tier-4">נכשל</span>' :
+          numericTarget ? `${E(target.target)}${target.note.includes('לקיזוז') ? ' <span class="bagrut-target-condition">בקיזוז</span>' : ''}` : '—';
+        const status = b.noData ? 'ממתין' : s.exempt ? 'פטור' : s.compApplied || s.status === 'pass' ? 'עובר' :
+          s.comps.some(c => c.failed) || ['fail', 'severe', 'comp'].includes(s.status) || (s.reverse && s.reverse.level === 'red') ? 'נכשל' :
+          s.comps.some(c => c.blocked) ? 'ממתין' : external.length ? 'חסר שאלון' :
+          s.reverse ? 'נדרש שיפור' : 'ממתין';
+        const notes = alternatives(s.comps);
+        blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
+          .forEach(x => notes.push(x.text));
+        if (s.compApplied) {
+          const compensation = ev.notes.filter(note => note.includes(s.name) && /קיזוז|פיצוי/.test(note));
+          notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז']));
         }
-        const impossible = !b.noData && show30 && target && !external.length && s.reverse && s.reverse.required30 > 100;
-        const text = [...new Set(lines)].join(' · ') || 'ממתין לדיווח';
-        return `<tr data-subject="${E(s.id)}"><th scope="row"><strong>${E(s.name)}</strong></th><td>${E(current)}</td><td>${impossible ? '<span class="badge tier-4">נכשל</span> גם 100 אינו מספיק למעבר · ' : ''}${E(text)}</td></tr>`;
+        if (target && (impossible || !numericTarget || /לקיזוז|הרכיב החסר|משוקלל|הכרעה ידנית|החלטת רכזת/.test(target.note))) {
+          if (impossible && numericTarget && target.note.includes('לקיזוז')) notes.push(`נדרש ${target.target} ב־30% בכפוף לקיזוז`);
+          notes.push(target.note);
+        }
+        return subjectRow(s.id, s.name, s.comps, targetCell, status, notes);
       }).join('');
       const majors = ev.major.cands.filter(c => !c.coreId).map(c => {
-        const score = c.adj != null ? Util.fmt(c.adj, 0) : c.bagrut != null ? `דווח ${Util.fmt(c.bagrut, 0)}` : '—';
-        const text = c.exempt ? 'פטור · נדרשת בדיקה' : c.blocked ? `חסם בשאלון ${c.blocked}` :
-          c.missing.length ? `חסר שאלון ${c.missing.join(', ')}` : c.status === 'pass' ? 'עובר' :
-          c.status === 'fail' ? 'נכשל' : 'ממתין לדיווח';
-        return `<tr data-subject="major:${E(c.id)}"><th scope="row"><strong>${E(c.name)} · מגמה</strong></th><td>${E(score)}</td><td>${E(text)}</td></tr>`;
+        const def = rules.majors.find(m => m.id === c.id);
+        if (!def) throw new Error(`חסרה הגדרת מגמה: ${c.id}`);
+        const groups = def.codeMode === 'any' ? [def.codes] : def.codes.map(code => [code]);
+        const exams = groups.flatMap(codes => {
+          const reported = codes.map(code => BagrutFacts.bestResult(t.tz, [code])).filter(result => result && result.kind !== 'none');
+          return reported.length ? reported.map(result => ({
+            code: result.code, codes, state: result.exempt ? 'exempt' : result.kind, num: result.num, blocked: result.block, failed: result.kind === 'fail'
+          })) : [{ code: codes[0], codes, state: 'missing' }];
+        });
+        const status = b.noData ? 'ממתין' : c.exempt ? 'פטור' : c.blocked ? 'ממתין' : c.failed ? 'נכשל' :
+          c.missing.length ? 'חסר שאלון' : c.status === 'pass' ? 'עובר' : c.status === 'fail' ? 'נכשל' : 'ממתין';
+        const notes = alternatives(exams);
+        if (c.blocked) notes.push(`חסם בשאלון ${c.blocked}`);
+        if (c.exempt) notes.push('פטור במגמה דורש החלטת רכזת');
+        return subjectRow(`major:${c.id}`, `${c.name} · מגמה`, exams, '—', status, notes);
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
@@ -613,7 +654,7 @@
         <span>${index < 0 ? 'חניך שהורד למטה' : `${index + 1} מתוך ${active.length}`}</span><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
-        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>ציון או מצב</th><th>פירוט</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
+        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects"><thead><tr><th>מקצוע</th><th>שאלונים וציונים</th><th>נדרש ב־30%</th><th>החלטה</th><th>פירוט</th></tr></thead><tbody>${subjects}${majors}</tbody></table></div>
         ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
@@ -771,6 +812,14 @@
     }
     const st = this.state.bagrut;
     const controls = $('localControls');
+    const updateDrillControls = () => {
+      const visible = st.drill !== 'all' && !st.targets && Store.hasData();
+      const select = $('bagrutSubjectDrillSelect'), actions = $('bagrutActions');
+      const info = actions && actions.querySelector(':scope > details:not(#bagrutSimulation)');
+      if (select) select.hidden = !visible;
+      if (info) info.hidden = !visible;
+    };
+    updateDrillControls();
     if (controls) {
       let workControls = $('bagrutWorkControls');
       if (!workControls) {
@@ -871,6 +920,7 @@
       if (subject.name) drillOpts.push({ value: st.drill, label: subject.name });
       else st.drill = 'all';
     }
+    updateDrillControls();
     const drill = st.drill !== 'all' && Store.hasData() ? this.subjectDrillModel(this.filterByChip(rows, st.chip, signals)) : null;
     this.renderBagrutKpis(stats, tierCount, TT, paceRows, rows, drill);
     setHtml('bagrutSubjectDrillSelect',
