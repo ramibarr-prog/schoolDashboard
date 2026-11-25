@@ -13,14 +13,16 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .bagrut-work-controls.hidden { display: none; }
 .bagrut-work-controls label { display: inline-flex; align-items: center; gap: .25rem; }
-.bagrut-work-list { overflow: auto; }
+.bagrut-work-list { overflow-x: auto; }
 .bagrut-work-subject-scroll { overflow-x: auto; margin-top: .75rem; }
 .bagrut-work-subjects { width: 100%; border-collapse: collapse; text-align: right; font-size: .8rem; }
-.bagrut-work-subjects, .bagrut-work-students { table-layout: fixed; }
+.bagrut-work-subjects, #bagrut-table table.bagrut-work-students { table-layout: fixed; border-collapse: separate; border-spacing: 0; }
 .bagrut-work-subjects thead th { position: relative; }
 .bagrut-col-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#bagrut-table .col-resizer { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 15; }
-#bagrut-table .col-resizer:hover { background: rgba(232, 185, 95, .7); }
+.bagrut-work-subjects th, .bagrut-work-subjects td, .bagrut-work-list th, .bagrut-work-list td { border-left: 1px solid #d5dfd8; }
+#bagrut-table .col-resizer { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; z-index: 21; }
+#bagrut-table .col-resizer::after { content: ""; position: absolute; left: 4px; top: 10%; bottom: 10%; width: 2px; background: #8fa89b; }
+#bagrut-table .col-resizer:hover::after, #bagrut-table .col-resizer.is-resizing::after { background: #e8b95f; width: 3px; }
 .bagrut-work-subjects th, .bagrut-work-subjects td { padding: .35rem .5rem; border-bottom: 1px solid #e2e8f0; overflow-wrap: anywhere; vertical-align: middle; }
 .bagrut-work-subjects thead { color: var(--muted); }
 .bagrut-work-subjects td:nth-child(2) { white-space: normal; }

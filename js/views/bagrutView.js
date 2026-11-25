@@ -55,15 +55,23 @@
       headers: columns.map(c => `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה להתאמה אוטומטית)"></span></th>`).join('')
     };
   }
+  function lockWorkColWidths(table) {
+    const kind = table.dataset.widthGroup, widths = loadWorkWidths()[kind];
+    const cols = table.querySelectorAll('colgroup col');
+    const headers = table.querySelectorAll('thead th');
+    headers.forEach((th, index) => {
+      const width = th.getBoundingClientRect().width;
+      cols[index].style.width = `${width}px`;
+      widths[th.dataset.ck] = width;
+    });
+    table.style.width = `${[...cols].reduce((sum, col) => sum + parseFloat(col.style.width), 0)}px`;
+  }
   function setWorkColWidth(table, index, key, width) {
     const kind = table.dataset.widthGroup, widths = loadWorkWidths();
     if (!WORK_COLUMNS[kind] || !WORK_COLUMNS[kind].some(c => c[0] === key)) throw new Error('עמודת זכאות לא מוכרת');
     const w = Math.max(56, Math.min(360, Math.round(width)));
     const cols = table.querySelectorAll('colgroup col');
     if (cols[index]) cols[index].style.width = `${w}px`;
-    table.querySelectorAll(`tr > :nth-child(${index + 1})`).forEach(c => {
-      if (c.colSpan <= 1) c.style.width = c.style.minWidth = c.style.maxWidth = `${w}px`;
-    });
     table.style.width = `${[...cols].reduce((sum, c) => sum + parseFloat(c.style.width), 0)}px`;
     widths[kind][key] = w;
   }
@@ -74,11 +82,13 @@
     e.stopPropagation(); e.preventDefault();
     const th = h.closest('th'), table = th.closest('table'), key = th.dataset.ck, index = th.cellIndex;
     const startX = e.clientX, startW = th.getBoundingClientRect().width;
+    lockWorkColWidths(table);
+    h.classList.add('is-resizing');
     document.body.classList.add('col-resizing');
     const move = ev => setWorkColWidth(table, index, key, startW + (startX - ev.clientX));
     const up = () => {
       document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
-      document.body.classList.remove('col-resizing'); saveWorkWidths();
+      h.classList.remove('is-resizing'); document.body.classList.remove('col-resizing'); saveWorkWidths();
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
@@ -89,7 +99,9 @@
     if (!h) return;
     e.stopPropagation(); e.preventDefault();
     const th = h.closest('th'), label = th.querySelector('.bagrut-col-label');
-    setWorkColWidth(th.closest('table'), th.cellIndex, th.dataset.ck, (label ? label.scrollWidth : th.scrollWidth) + 24);
+    const table = th.closest('table');
+    lockWorkColWidths(table);
+    setWorkColWidth(table, th.cellIndex, th.dataset.ck, (label ? label.scrollWidth : th.scrollWidth) + 24);
     saveWorkWidths();
   }, true);
   function loadPins() {
@@ -767,12 +779,12 @@
         <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
-        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width}px;min-width:100%"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
+        <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width}px"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
         ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}</ul>` : ''}
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
     }
-    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width}px;min-width:100%"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
+    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width}px"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
       <tbody>${workRows(active) || '<tr><td colspan="4">אין חניכים פעילים להצגה</td></tr>'}${lowered.length ? `<tr class="room-divider"><td colspan="4">חניכים שהורדו למטה (${lowered.length})</td></tr>${workRows(lowered)}` : ''}</tbody></table></div><section class="card bagrut-work-detail" aria-label="בדיקת חניך">${detail}</section></div>`);
   },
 
