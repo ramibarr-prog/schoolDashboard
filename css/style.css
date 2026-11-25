@@ -1,4 +1,16 @@
 body.sadin-active.sadin-weak-active #localControls { display: none; }
+.bagrut-work-title h1 { color: var(--forest); font-size: 1.3rem; font-weight: 700; }
+.bagrut-work-summary, .bagrut-work-detail { padding: .8rem 1rem; }
+.bagrut-work-summary p, .bagrut-work-detail p { color: var(--muted); font-size: .8rem; }
+.bagrut-work-metrics, .bagrut-work-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; }
+.bagrut-work-metrics strong { color: var(--forest); font-size: 1.2rem; }
+.bagrut-work-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 1fr); gap: .75rem; align-items: start; }
+.bagrut-work-list { overflow: auto; }
+.bagrut-work-detail h2 { color: var(--forest); font-size: 1.1rem; font-weight: 700; }
+.bagrut-work-detail h3 { margin-top: .75rem; font-weight: 700; }
+.bagrut-work-detail ul { margin: .4rem 1.2rem; list-style: disc; }
+.bagrut-work-actions { margin-top: 1rem; }
+@media (max-width: 800px) { .bagrut-work-layout { grid-template-columns: minmax(0, 1fr); } }
 #panel-groups .ga-toolbar { gap: .5rem 1rem; }
 #panel-groups .ga-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem .65rem; }
 #panel-groups .ga-title h2 { margin: 0; color: var(--forest); font-size: 1.2rem; font-weight: 700; }
@@ -246,6 +258,9 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-name { color: var(--forest); font-weight: 600; text-decoration: underline; text-align: right; }
 .weak-detail-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
 .weak-primary { background: var(--forest); }
+.weak-questionnaire-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin-top: .75rem; }
+.weak-questionnaire-controls label { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .85rem; }
+.weak-questionnaire-controls input { width: 5rem; }
 @media (max-width: 900px) {
   .weak-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .weak-layout { grid-template-columns: minmax(0, 1fr); }

@@ -304,7 +304,7 @@
     this.state.sadin.mode = el.dataset.mode;
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
     this.state.sadin.strip = 'all';
-    this.dirty.add('sadin'); this.renderTab('sadin');
+    this.dirty.add('sadin'); this.showTab('sadin');
   },
 
   weaknessRiskToggle() {
@@ -396,6 +396,14 @@
     this.showTab('bagrut');
   },
 
+  openWeaknessSheet(el) {
+    this.resetOverviewDrillFilters();
+    this.state.filters.cls = el.dataset.class;
+    Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: el.dataset.subject, teacher: 'all' });
+    this.onFilterChange();
+    this.showTab('sadin');
+  },
+
   openWeaknessAlerts(el) {
     const cell = this.state.sadin.cell;
     if (!cell || cell.cls !== el.dataset.class || cell.subject !== el.dataset.subject) return;
@@ -441,6 +449,61 @@
       cleanCount: graded.filter(r => !confirmedRiskSubjects(r, prereqs.get(r.t.gradeKey).hasGroups).length).length,
       totalCount: sheet.length
     };
+  },
+
+  submittedQuestionnaireChange(el) {
+    const st = this.state.sadin;
+    if (el.dataset.field === 'threshold') {
+      const value = Number(el.value);
+      if (el.value === '' || !Number.isFinite(value) || value < 0 || value > 100) {
+        el.value = st.questionnaireThreshold == null ? 60 : st.questionnaireThreshold;
+        this.toast('יש לבחור רף ציון בין 0 ל־100', 'warn');
+        return;
+      }
+      st.questionnaireThreshold = value;
+    } else st.questionnaireCode = el.value;
+    SadinView.renderSubmittedQuestionnaires.call(this, this.filtered(), st);
+    const control = document.querySelector(`#weak-questionnaires [data-field="${el.dataset.field}"]`);
+    if (control) control.focus();
+  },
+
+  renderSubmittedQuestionnaires(roster, st) {
+    const box = $('weak-questionnaires');
+    if (!box) return;
+    const population = st.subject !== 'all' || st.teacher !== 'all'
+      ? GroupAnalyzer.sadinSheet(roster, st).map(row => row.t) : roster;
+    const options = new Map(), scores = new Map();
+    population.forEach(t => {
+      const attempts = Store.attemptsOf(t.tz), byCode = new Map();
+      [...new Set(attempts.map(a => String(a.code)))].forEach(code => {
+        const best = Store.bagrutBest(t.tz, [code]);
+        if (!best || best.kind !== 'num' || !Number.isFinite(best.num)) return;
+        byCode.set(code, best.num);
+        if (!options.has(code)) {
+          const catalog = Config.rulesForGrade(t.gradeKey).questionnaires || {};
+          const attempt = attempts.find(a => String(a.code) === code && a.subject);
+          options.set(code, (catalog[code] || {}).name || (attempt && attempt.subject) || 'שאלון ללא שם');
+        }
+      });
+      scores.set(t.tz, byCode);
+    });
+    const codes = [...options.keys()].sort((a, b) => natural(options.get(a), options.get(b)) || natural(a, b));
+    if (!codes.includes(st.questionnaireCode)) st.questionnaireCode = codes[0] || '';
+    const threshold = st.questionnaireThreshold == null ? 60 : st.questionnaireThreshold;
+    const results = population.filter(t => scores.get(t.tz).has(st.questionnaireCode) && scores.get(t.tz).get(st.questionnaireCode) < threshold)
+      .sort((a, b) => natural(a.name, b.name));
+    const list = results.map(t => {
+      const grades = scores.get(t.tz), low = [...grades.values()].filter(n => n < threshold).length;
+      return `<li><button type="button" class="weak-name" data-act="openProfile" data-tz="${E(t.tz)}">${E(t.name)}</button>
+        <span>ציון ${E(grades.get(st.questionnaireCode))} · ${low} מתוך ${grades.size} שאלונים מתחת לרף ${threshold}</span></li>`;
+    }).join('');
+    box.innerHTML = `<h2>שאלונים שכבר הוגשו</h2><p class="weak-muted">הציון הקובע לפי הנתונים שנקלטו, גם אם דווח ציון חלקי בלבד. ציון מתחת לרף אינו בהכרח חסם לזכאות.</p>
+      <div class="weak-questionnaire-controls"><label>שאלון
+        <select class="inp" data-chg="submittedQuestionnaire" data-field="code" ${codes.length ? '' : 'disabled'}>
+          ${codes.length ? codes.map(code => `<option value="${E(code)}" ${code === st.questionnaireCode ? 'selected' : ''}>${E(options.get(code))} · ${E(code)}</option>`).join('') : '<option>אין שאלונים עם ציון מספרי</option>'}
+        </select></label>
+        <label>ציונים מתחת ל־ <input class="inp" type="number" min="0" max="100" step="any" value="${threshold}" data-chg="submittedQuestionnaire" data-field="threshold"></label></div>
+      <ul class="weak-students">${list}</ul>${codes.length ? (results.length ? '' : '<p class="weak-muted">אין חניכים עם ציון מתחת לרף.</p>') : '<p class="weak-muted">אין שאלונים עם ציון מספרי באוכלוסייה שנבחרה.</p>'}`;
   },
 
   renderSadinPanel() {
@@ -509,6 +572,14 @@
     }
     summaryBox.innerHTML = '';
     summaryBox.classList.add('hidden');
+    let questionnaires = $('weak-questionnaires');
+    if (!questionnaires) {
+      questionnaires = document.createElement('section');
+      questionnaires.id = 'weak-questionnaires';
+      questionnaires.className = 'card weak-card';
+      $('sadin-table').insertAdjacentElement('afterend', questionnaires);
+    }
+    questionnaires.hidden = !early;
     $('sadin-table').className = early ? 'weakness-screen' : st.view === 'sheet' ? 'card overflow-hidden min-w-0' : 'tbl-wrap sticky-scroll';
     document.querySelectorAll('[data-sview]').forEach(b => {
       b.classList.toggle('hidden', early);
@@ -525,6 +596,7 @@
     const option = (v, label, selected) => `<option value="${E(v)}" ${v === selected ? 'selected' : ''}>${E(label)}</option>`;
     setHtml('sadinSubjectSelect', option('all', 'כל המקצועות', st.subject) + subjects.map(s => option(s, s, st.subject)).join(''));
     setHtml('sadinTeacherSelect', option('all', 'כל המורים', st.teacher) + teachers.map(t => option(t, t, st.teacher)).join(''));
+    if (early) SadinView.renderSubmittedQuestionnaires.call(this, this.filtered(), st);
     if (early && st.weakRiskDraft) updateRiskPopover(this);
     if (!Store.hasData()) {
       setHtml('sadinFilterSelect', option('all', 'כל החניכים (0)', 'all'));
@@ -603,7 +675,7 @@
       return `<h3>${E(selected.subject)} · ${E(Config.classLabel(selected.cls))}</h3><p class="weak-muted">מורים: ${E([...selected.teachers].sort(natural).join(', ') || 'לא ידוע')}</p>
         <div class="weak-metrics"><div><span>ממוצע</span><strong>${mean(selected.scores)}</strong></div><div><span>בסיכון</span><strong>${selected.risk} מתוך ${selected.students.length}</strong></div><div><span>הוחמצו</span><strong>${selected.uncertain && !selected.missed ? '—' : selected.missed}</strong></div></div>
         <h4>חניכים בסיכון</h4><ul class="weak-students">${list || '<li>אין חניכים בסיכון בתא</li>'}</ul>${students.length > 10 ? `<p class="weak-muted">ועוד ${students.length - 10} חניכים</p>` : ''}
-        <div class="weak-detail-actions"><button type="button" class="btn btn-primary weak-primary" data-act="sadinCellEligibility" ${attrs(selected)}>פתח בזכאות</button>
+        <div class="weak-detail-actions"><button type="button" class="btn btn-primary weak-primary" data-act="sadinCellSheet" ${attrs(selected)}>פתח בסדין</button>
         <button type="button" class="btn btn-ghost" data-act="sadinCellAlerts" ${attrs(selected)} data-teachers="${E(JSON.stringify([...selected.teachers].sort(natural)))}" ${selected.teachers.size ? '' : 'disabled title="אין מורה מזוהה בתא"'}>שלח התראה למורה</button></div>`;
     })() : '<p class="weak-muted">אין נתונים זמינים לבחירת תא בסינון הנוכחי.</p>';
     const prereqs = [...prerequisitesByGrade(roster).values()];

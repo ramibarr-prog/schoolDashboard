@@ -102,10 +102,10 @@ window.fetch = (input, options) => {
 
   /* ---------- the real App object, loaded the same way as tests/cloud-sync.html (no boot, no network) ---------- */
   const parsed = {};
-  const makeApp = () => {
+  const makeApp = (listeners = null) => {
     const doc = new Proxy(document, { get(target, key) {
       if (key === 'readyState') return 'loading';
-      if (key === 'addEventListener') return () => {};
+      if (key === 'addEventListener') return (type, fn, options) => { if (listeners) listeners.push({ type, fn, options }); };
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
@@ -139,8 +139,8 @@ window.fetch = (input, options) => {
   const $id = id => document.getElementById(id);
   const stageText = () => $id('stage').textContent + ($id('modal-root') ? $id('modal-root').textContent : '');
   const noGarbage = label => check(!/\b(NaN|undefined|Infinity)\b/.test(stageText()), `${label}: NaN/undefined/Infinity leaked into the screen`);
-  const newApp = filters => {
-    const instance = makeApp();
+  const newApp = (filters, listeners = null) => {
+    const instance = makeApp(listeners);
     instance.state.filters = { grade: 'all', cls: 'all', track: 'all', q: '', ...(filters || {}) };
     mount();
     return instance;
@@ -151,7 +151,7 @@ window.fetch = (input, options) => {
   const rowFor = (table, tz) => { const b = [...table.querySelectorAll('button[data-act="openProfile"]')].find(x => x.dataset.tz === tz); return b ? b.closest('tr') : null; };
   const colIndex = (table, label) => [...table.querySelectorAll('thead th')].findIndex(th => th.textContent.trim().includes(label));
   const cellOf = (table, tz, label) => { const tr = rowFor(table, tz), i = colIndex(table, label); return tr && i >= 0 ? tr.children[i] : null; };
-  const tzsIn = table => [...new Set([...table.querySelectorAll('button[data-act="openProfile"][data-tz]')].map(b => b.dataset.tz))].sort();
+  const tzsIn = table => [...new Set([...table.querySelectorAll('button[data-act="openProfile"][data-tz], button[data-act="bagrutWorkSelect"][data-tz]')].map(b => b.dataset.tz))].sort();
   const placementCategories = ['missing', 'missing_major', 'duplicate', 'suspect'];
   const checkPlacementCategories = (app, am, label) => {
     const allIds = new Set(), allFindings = [];
@@ -379,6 +379,7 @@ window.fetch = (input, options) => {
       await part('QA-5.2 weight change 30/70 -> 40/60 updates grade and status in engine, advisor and screens', async () => {
         resetConfig();
         const app = newApp();
+        app.state.bagrut.overviewEntry = true;
         const tz = T(1);
         world({ roster: [stu(1, 'יב', 'יב1')], bagrut: bagrutRows(profile(tz, { '22283': 40, '22261': 63 })) });
         app.evals.clear();
@@ -407,6 +408,7 @@ window.fetch = (input, options) => {
       await part('QA-6.3 passGrade 55 -> 60 on a borderline 57: one consistent change across engine, advisor, sadin, control room', async () => {
         resetConfig();
         const app = newApp();
+        app.state.bagrut.overviewEntry = true;
         const g = 'היסטוריה יב1 דוד בדיקה [7001]';
         world({
           roster: [stu(1, 'יב', 'יב1'), stu(2, 'יב', 'יב1'), stu(3, 'יב', 'יב1')],
@@ -970,7 +972,11 @@ window.fetch = (input, options) => {
           kpiCounts().forEach(({ value, n }) => check(n === app.filterByChip(allRows, value).length, `${label}: KPI ${value} count`));
           if (total !== expected.length) { check(false, `${label}: "all" shows ${total}, the slice has ${expected.length}`); return; }
           check(tiers + pace === total, `${label}: tier (${tiers}) + pace (${pace}) categories must equal the slice (${total})`);
-          check(tzsIn($id('bagrut-table')).length === total, `${label}: table rows must equal the slice`);
+          if (app.state.filters.grade === 'יב') {
+            check(tzsIn($id('bagrut-table')).length === total, `${label}: worklist rows must equal the slice`);
+          } else {
+            check($id('bagrut-table').textContent.includes('מעבר לשכבת י״ב'), `${label}: explicit grade-12 entry`);
+          }
           const rows = expected.map(t => ({ t, ev: app.getEval(t.tz) })).filter(x => app.tierBased(x.ev));
           const stats = tallies(rows);
           const kpi = $id('bagrut-kpis').textContent;
@@ -1007,13 +1013,13 @@ window.fetch = (input, options) => {
         } finally { console.error = originalError; }
         same(errors, [], 'No console errors');
         noGarbage('empty slice');
-        check(/אין חניכים בסינון הנוכחי/.test($id('profName').textContent) && /אין שורות להצגה/.test($id('bagrut-table').textContent), 'Clear "nothing to show" messages');
+        check(/אין חניכים בסינון הנוכחי/.test($id('profName').textContent) && /מעבר לשכבת י״ב/.test($id('bagrut-table').textContent), 'Clear empty profile and grade-12 entry');
         check(errorsOf(app).length === 0, 'No panel error');
       });
 
       await part('QA-12.2 KPI drill-down: every counter matches the list it opens (number and ID set)', async () => {
         buildSchool();
-        const app = newApp();
+        const app = newApp({ grade: 'יב' });
         app.evals.clear();
         const everyone = Store.traineeList();
         app.renderBagrutPanel();
@@ -1024,7 +1030,7 @@ window.fetch = (input, options) => {
           app.renderBagrutPanel();
           const opened = tzsIn($id('bagrut-table'));
           check(opened.length === n, `Chip ${value}: the counter says ${n}, the list opens ${opened.length}`);
-          const expected = app.filterByChip(everyone.map(t => ({ t, ev: app.getEval(t.tz) })), value).map(r => r.t.tz).sort();
+          const expected = app.filterByChip(everyone.filter(t => t.gradeKey === 'יב').map(t => ({ t, ev: app.getEval(t.tz) })), value).map(r => r.t.tz).sort();
           same(opened, expected, `Chip ${value}: opened ID set`);
         });
         app.state.bagrut.chip = 'all';
@@ -1059,6 +1065,7 @@ window.fetch = (input, options) => {
         buildSchool();
         const app = newApp();
         app.state.sim = { ...ADAPTIVE };
+        app.state.bagrut.overviewEntry = true;
         app.evals.clear();
         app.renderBagrutPanel();
         const table = $id('bagrut-table');
@@ -1171,7 +1178,7 @@ window.fetch = (input, options) => {
         });
         Config.setNickname('יב1', `${P4}'`);
         Config.setException(T(1), { isException: true, overrideStatus: 'noteligible', reason: `${P3}${P4}`, note: `${P4}'"` });
-        const app = newApp();
+        const app = newApp({ grade: 'יב' });
         const name = Store.trainees.get(T(1)).name;
         const injected = [];
         const probe = label => {
@@ -1194,7 +1201,7 @@ window.fetch = (input, options) => {
         same(injected, [], 'No element or event-handler attribute may be created from data');
         check($id('profName').textContent === name, 'The 360 header must show the hostile name as plain text');
         app.renderBagrutPanel();
-        const button = [...$id('bagrut-table').querySelectorAll('button[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
+        const button = [...$id('bagrut-table').querySelectorAll('button[data-act="bagrutWorkSelect"]')].find(b => b.dataset.tz === T(1));
         check(button && button.textContent === name && button.getAttribute('title') === `ת.ז ${T(1)}`, 'The table name button must keep its text, ID and title intact');
         app.state.sadin.mode = 'full';
         app.renderSadinPanel();
@@ -1319,6 +1326,7 @@ window.fetch = (input, options) => {
         });
         const app = newApp();
         app.state.sim = { ...FULL };
+        app.state.bagrut.overviewEntry = true;
         const junior = app.getEval(T(3)), senior = app.getEval(T(1));
         check(junior.adaptive === true && senior.adaptive === false && senior.mode === 'full', `fullMode: grade 11 adaptive ${junior.adaptive}, grade 12 adaptive ${senior.adaptive}`);
         same(junior, BagrutEngine.evaluate(T(3), ADAPTIVE), 'Grade 11 under fullMode equals the adaptive engine result');
@@ -1334,10 +1342,11 @@ window.fetch = (input, options) => {
         app.acts.bagrutMode.call(app, btn('final'));
         check(app.state.sim.fullMode === true, 'A disabled final button does not change state');
         app.acts.bagrutMode.call(app, btn('adaptive'));
-        check(app.state.sim.fullMode === false, 'The adaptive button still works');
+        check(app.state.sim.fullMode === true && app.state.bagrut.drillSim.fullMode === false, 'The adaptive button only changes the local drill');
 
         app.state.filters.grade = 'all';
         app.state.sim = { ...FULL };
+        app.state.bagrut.drillSim = null;
         app.evals.clear();
         app.renderBagrutPanel();
         check(!btn('final').disabled && btn('final').getAttribute('aria-pressed') === 'true' && /י"ב בלבד/.test(btn('final').title),
@@ -1351,7 +1360,7 @@ window.fetch = (input, options) => {
           app.renderTrainee360Panel();
           const badges = [...$id('profBadges').querySelectorAll('[data-eval-mode]')];
           check(badges.length === 1, `360 mode badge appears exactly once (got ${badges.length})`);
-          check(!badges[0] || (!badges[0].closest('button,select') && badges[0].title.includes('צפי זכאות לבגרות')), '360 mode badge is read-only and explains its source');
+          check(!badges[0] || (!badges[0].closest('button,select') && badges[0].title.includes('במערכת') || badges[0].title.includes('בדיקה במסך הזכאות')), '360 mode badge is read-only and explains its source');
           check($id('profBadges').firstElementChild.classList.contains('prof-status'), 'Status badge stays first');
           return badges[0] ? [badges[0].dataset.evalMode, badges[0].textContent.trim()] : null;
         };
@@ -1370,6 +1379,7 @@ window.fetch = (input, options) => {
           const app = newApp();
           $id('stage').insertAdjacentHTML('beforeend', '<select id="fGrade"></select><select id="fHomeroom"></select><div id="bagrut-scope"></div>');
           app.state.tab = 'bagrut';
+          app.state.bagrut.overviewEntry = true;
           return app;
         };
         const pill = scope => $id('bagrut-scope').querySelector(`button[data-scope="${scope}"]`);
@@ -1393,16 +1403,14 @@ window.fetch = (input, options) => {
 
         $id('fGrade').value = 'יב';
         app.changeGradeFilter($id('fGrade').value);
-        same(state(app), ['יב', 'יב', '12', ['12']], 'Top grade filter יב selects the grade-12 pill');
+        same([app.state.filters.grade, $id('fGrade').value], ['יב', 'יב'], 'Top grade filter selects grade 12');
         same(homerooms(), ['יב1', 'יב2'], 'Homeroom list follows the top grade filter');
 
-        app.acts.bagrutScope.call(app, pill('all'));
-        same(state(app), ['all', 'all', 'all', ['all']], 'All-grades pill resets the top filter to all');
         $id('fGrade').value = 'יא';
         app.changeGradeFilter('יא');
         $id('fGrade').value = 'all';
         app.changeGradeFilter('all');
-        same(state(app), ['all', 'all', 'all', ['all']], 'Top filter all resets the pill to all grades');
+        same(state(app), ['all', 'all', 'all', ['all']], 'Top filter all resets the legacy scope');
         app.acts.bagrutScope.call(app, pill('10'));
         app.resetFilters();
         same(state(app), ['all', 'all', 'all', ['all']], 'Clear resets both the top filter and the bagrut scope');
@@ -1675,6 +1683,204 @@ window.fetch = (input, options) => {
       check($id('overview-body').querySelector('[data-go="sadin"]').textContent.includes('לא ניתן לקבוע'), 'Missing sadin displays unknown rather than a numeric count');
     });
 
+    await group('Separate weakness and current-grades navigation and submitted questionnaires', async () => {
+      resetConfig();
+      const english = 'אנגלית 4 יח"ל יא1 מיכל בדיקה [9911]';
+      const math = 'מתמטיקה 3 יח"ל יא2 דוד בדיקה [9912]';
+      const roster = [stu(1, 'יא', 'יא1'), stu(2, 'יא', 'יא1'), stu(3, 'יא', 'יא2'), stu(4, 'י', 'י1')];
+      const groups = groupRows([
+        ...[1, 2].map(n => ({ tz: T(n), grade: 'יא', cls: 'יא1', gid: english })),
+        { tz: T(3), grade: 'יא', cls: 'יא2', gid: math }
+      ]);
+      const sadin = sadinRows([
+        { tz: T(1), ev: 'מבחן (100)', sc: 40, grp: english, dt: '01/10/2026' },
+        { tz: T(2), ev: 'מבחן (100)', sc: 80, grp: english, dt: '01/10/2026' },
+        { tz: T(3), ev: 'מבחן (100)', sc: 50, grp: math, dt: '01/10/2026' }
+      ]);
+      const bagrut = bagrutRows([
+        { tz: T(1), code: '16382', final: 40, moed: 'א' },
+        { tz: T(1), code: '16382', final: 55, moed: 'ב' },
+        { tz: T(1), code: '35471', final: 58 },
+        { tz: T(1), code: '35472', final: 70 },
+        { tz: T(1), code: '999999', final: '' },
+        { tz: T(2), code: '16382', final: 60 },
+        { tz: T(2), code: '35471', final: 30 },
+        { tz: T(3), code: '16382', final: 45 },
+        { tz: T(4), code: '16382', final: 35 }
+      ]);
+      world({ roster, groups, sadin, bagrut });
+      const listeners = [];
+      const app = newApp({ grade: 'יא' }, listeners);
+      let editChecks = 0;
+      app.requireEdit = () => { editChecks++; return false; };
+      app.bindRulesEvents = () => {};
+      app.bindSadinColResize = () => {};
+      $id('stage').insertAdjacentHTML('beforeend', '<div id="sadinPop"></div><div id="mxPop"></div>');
+      const windowListeners = [], addWindowListener = window.addEventListener;
+      window.addEventListener = function (...args) { windowListeners.push(args); return addWindowListener.apply(this, args); };
+      try { app.bindEvents(); } finally { window.addEventListener = addWindowListener; }
+      listeners.forEach(({ type, fn, options }) => $id('stage').addEventListener(type, fn, options));
+      const index = new DOMParser().parseFromString(await (await fetch('../index.html')).text(), 'text/html');
+      const weakNav = index.querySelector('#tab-weakness'), sheetNav = index.querySelector('#tab-sadin');
+      check(weakNav && sheetNav && weakNav.dataset.sadinMode === 'early' && sheetNav.dataset.sadinMode === 'full',
+        'Two distinct main navigation entries select the heatmap and the sheet');
+      $id('stage').append(weakNav, sheetNav);
+      weakNav.click();
+      check($id('sadin-table').querySelector('.weak-table') && weakNav.getAttribute('aria-selected') === 'true' &&
+        sheetNav.getAttribute('aria-selected') === 'false', 'Weakness navigation opens the heatmap');
+      sheetNav.click();
+      check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true' &&
+        weakNav.getAttribute('aria-selected') === 'false', 'Sheet navigation opens the matrix directly');
+      weakNav.click();
+      const heat = [...$id('sadin-table').querySelectorAll('.weak-heat')].find(b => b.dataset.class === 'יא1' && b.dataset.subject === 'אנגלית');
+      check(!!heat, 'English homeroom heatmap cell exists');
+      heat.click();
+      const sheetAction = $id('sadin-table').querySelector('[data-act="sadinCellSheet"]');
+      check(sheetAction && sheetAction.textContent.includes('פתח בסדין'), 'Selected heatmap cell offers open in sheet');
+      sheetAction.click();
+      same([app.state.sadin.mode, app.state.sadin.view, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
+        ['full', 'sheet', 'אנגלית', 'all', 'יא1'], 'Cell opens the matching class and subject without stale teacher filter');
+      check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true',
+        'Cell opens sheet matrix and selects sheet navigation');
+      same(tzsIn($id('sadin-table')), [T(1), T(2)], 'Sheet contains the selected homeroom');
+      check($id('sadin-table').querySelector('[data-ck="subj:אנגלית"]') && !$id('sadin-table').querySelector('[data-ck="subj:מתמטיקה"]'),
+        'Sheet is filtered to the selected subject');
+      app.state.sadin.subject = 'all';
+      app.state.filters.cls = 'all';
+      app.renderSadinPanel();
+      const overview = app.overviewModel();
+      const summary = app.sadinSummary(GroupAnalyzer.sadinSheet(overview.list, {}));
+      same([overview.avg, overview.clean], [summary.avg, summary.cleanCount], 'Overview and sheet use the same summary');
+      check($id('sadin-summary').textContent.includes(`ממוצע כללי בסינון: ${Util.fmt(summary.avg, 1)}`) &&
+        $id('sadin-summary').textContent.includes(`${summary.cleanCount} מתוך ${summary.gradedCount} עם ציונים`),
+        'Sheet summary displays the overview values');
+      weakNav.click();
+      let box = $id('weak-questionnaires');
+      const select = box.querySelector('[data-field="code"]');
+      const values = [...select.options].map(o => o.value);
+      check(values.includes('16382') && values.includes('35471') && values.includes('35472') && !values.includes('999999'),
+        'Only questionnaires with a numeric result appear in the filtered population');
+      check(select.options[values.indexOf('16382')].textContent.includes('אנגלית') &&
+        select.options[values.indexOf('16382')].textContent.includes('16382'), 'Questionnaire label contains name and code');
+      select.value = '16382';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      box = $id('weak-questionnaires');
+      same(tzsIn(box), [T(1), T(3)], 'Below 60 only; equal score, missing score and another grade excluded');
+      const first = box.querySelector(`[data-tz="${T(1)}"]`).closest('li');
+      check(first.textContent.includes('ציון 55') && first.textContent.includes('2 מתוך 3 שאלונים מתחת לרף 60'),
+        'Best of multiple attempts is displayed once and cumulative count uses numeric questionnaires');
+      check(box.querySelectorAll(`[data-tz="${T(1)}"]`).length === 1, 'Multiple attempts do not duplicate a student');
+      let threshold = box.querySelector('[data-field="threshold"]');
+      same(threshold.value, '60', 'Default threshold');
+      threshold.value = '55';
+      threshold.dispatchEvent(new Event('change', { bubbles: true }));
+      same(tzsIn($id('weak-questionnaires')), [T(3)], 'Threshold comparison is strictly less than');
+      threshold = $id('weak-questionnaires').querySelector('[data-field="threshold"]');
+      threshold.value = '55.5';
+      threshold.dispatchEvent(new Event('change', { bubbles: true }));
+      same(tzsIn($id('weak-questionnaires')), [T(1), T(3)], 'Decimal thresholds are supported');
+      threshold = $id('weak-questionnaires').querySelector('[data-field="threshold"]');
+      threshold.value = '0';
+      threshold.dispatchEvent(new Event('change', { bubbles: true }));
+      check($id('weak-questionnaires').textContent.includes('אין חניכים עם ציון מתחת לרף'), 'Empty result message');
+      app.state.filters.grade = 'י'; app.state.filters.cls = 'all';
+      app.onFilterChange();
+      same([...$id('weak-questionnaires').querySelector('[data-field="code"]').options].map(o => o.value), ['16382'], 'Changing grade updates questionnaire choices');
+      world({ roster, bagrut: bagrutRows([{ tz: T(1), code: '16382', final: 40 }]) });
+      app.state.filters.grade = 'יא'; app.state.filters.cls = 'יא1';
+      app.onFilterChange();
+      check(!$id('weak-questionnaires').hidden && $id('weak-questionnaires').querySelector('[data-field="code"]').value === '16382',
+        'Questionnaire tool remains available without current-grades data');
+      world({ roster });
+      app.onFilterChange();
+      check($id('weak-questionnaires').textContent.includes('אין שאלונים עם ציון מספרי'), 'No submitted questionnaire message');
+      same(editChecks, 0, 'Navigation and questionnaire controls remain usable in read-only mode');
+      same(errorsOf(app), [], 'No panel errors');
+      listeners.forEach(({ type, fn, options }) => $id('stage').removeEventListener(type, fn, options));
+      windowListeners.forEach(args => window.removeEventListener(...args));
+    });
+
+    await group('Grade-12 focused eligibility worklist', async () => {
+      resetConfig();
+      const roster = [1, 2, 3, 4].map(n => stu(n, 'יב', 'יב1')).concat(stu(21, 'יא', 'יא1'));
+      const bagrut = bagrutRows([
+        ...profile(T(1)),
+        ...profile(T(2), { '22283': null, '22261': 80 }),
+        ...profile(T(3), { '22283': null, '22261': 60 }),
+        ...profile(T(4), { '22283': null, '22261': null }),
+        ...partial(21, ELEVENTH)
+      ]);
+      const sadin = sadinRows([{ tz: T(2), ev: 'מבחן (100)', sc: 80, grp: 'היסטוריה יב1 דוד בדיקה [7001]', dt: '01/10/2026' }]);
+      world({ roster, bagrut, sadin });
+      const app = newApp({ grade: 'יב' });
+      app.state.sim = { ...ADAPTIVE };
+      app.state.tab = 'bagrut';
+      const globalBefore = JSON.stringify(app.state.sim);
+      const overviewBefore = JSON.stringify(app.overviewModel());
+      const evaluationBefore = JSON.stringify(app.getEval(T(2)));
+      app.state.profileTz = T(2);
+      app.renderTrainee360Panel();
+      const profileBefore = $id('profBadges').textContent + $id('profBody').textContent;
+      app.renderBagrutPanel();
+      const metricText = $id('bagrut-kpis').textContent;
+      const senior = roster.filter(t => t.grade === 'יב').map(t => t.tz);
+      const qualifies = ev => ev.tier === 1 || ev.tier === 2;
+      const today = senior.filter(tz => qualifies(BagrutEngine.evaluate(tz, FULL))).length;
+      const forecast = senior.filter(tz => qualifies(BagrutEngine.evaluate(tz, { ...FULL, useCurrent: true }))).length;
+      check(forecast > today, 'Fixture distinguishes the current and forecast metrics');
+      check(metricText.includes(`עומדים היום בתנאי סוף י״ב: ${today} מתוך 4`) &&
+        metricText.includes(`צפי לסוף השנה: ${forecast} מתוך 4`) && metricText.includes('ציונים שוטפים'),
+        'Today and forecast use separate engine evaluations and state the shared denominator and basis');
+      same(tzsIn($id('bagrut-table')), senior.sort(), 'All and only grade-12 students in the worklist');
+      check(!$id('bagrut-table').querySelector('#profile-academic'), 'Worklist detail does not duplicate 360');
+      const choose = tz => app.acts.bagrutWorkSelect.call(app, $id('bagrut-table').querySelector(`[data-act="bagrutWorkSelect"][data-tz="${tz}"]`));
+      choose(T(2));
+      let detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
+      check(detail.textContent.includes('היסטוריה') && detail.textContent.includes('נדרש 1 ב־30% כדי לעבור את המקצוע'),
+        'Passing target appears alongside its subject');
+      check(detail.querySelector(`[data-act="openProfile"][data-tz="${T(2)}"]`), 'Detail links to 360');
+      choose(T(3));
+      detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
+      check(detail.textContent.includes('היסטוריה') && detail.textContent.includes('נדרש 9 ב־30% בכפוף לקיזוז'), 'Compensation condition appears next to target');
+      choose(T(4));
+      detail = $id('bagrut-table').querySelector('.bagrut-work-detail');
+      const history = [...detail.querySelectorAll('strong')].find(el => el.textContent === 'היסטוריה');
+      check(history && history.parentElement.textContent.includes('חסר שאלון חיצוני: 22261') &&
+        !history.parentElement.textContent.includes('נדרש 1 ב־30%'), 'Missing external questionnaire replaces a numeric target');
+      const ids = [...app._bagrutWorkIds], pos = ids.indexOf(T(4));
+      if (pos > 0) {
+        app.acts.bagrutWorkStep.call(app, { dataset: { step: '-1' } });
+        same(app.state.bagrut.workTz, ids[pos - 1], 'Previous moves to previous worklist student');
+        app.acts.bagrutWorkStep.call(app, { dataset: { step: '1' } });
+        same(app.state.bagrut.workTz, T(4), 'Next returns to the selected student');
+      }
+      same(JSON.stringify(app.state.sim), globalBefore, 'Eligibility does not change global evaluation options');
+      same(JSON.stringify(app.getEval(T(2))), evaluationBefore, 'Global cached evaluation is unchanged');
+      same(JSON.stringify(app.overviewModel()), overviewBefore, 'Overview model remains unchanged');
+      app.renderTrainee360Panel();
+      same($id('profBadges').textContent + $id('profBody').textContent, profileBefore, '360 remains unchanged');
+      $id('stage').insertAdjacentHTML('beforeend', '<div id="bagrutActions"><details id="bagrutSimulation"></details></div>');
+      $id('bagrutSimulation').append($id('bagrut-whatif'), $id('bagrut-cohort'));
+      app.acts.ovCompletion.call(app, { dataset: { scope: '12', simulation: 'true' } });
+      check(!$id('bagrutSimulation').hidden && $id('bagrutSimulation').open &&
+        $id('bagrut-whatif').querySelector('[data-key="useCurrent"]'), 'Overview what-if action opens a local simulation');
+      const current = $id('bagrut-whatif').querySelector('[data-key="useCurrent"]');
+      current.checked = true;
+      app.chgs.sim.call(app, current);
+      same([app.state.bagrut.drillSim.useCurrent, JSON.stringify(app.state.sim)], [true, globalBefore], 'What-if changes only local options');
+      app.state.filters.grade = 'יא';
+      app.state.bagrut.overviewEntry = false;
+      app.state.bagrut.whatifEntry = false;
+      app.state.bagrut.chip = 'all';
+      app.renderBagrutPanel();
+      check($id('bagrut-table').textContent.includes('מסך זה מיועד לבדיקת זכאות בסוף י״ב') &&
+        $id('bagrut-table').querySelector('[data-act="bagrutWorkGrade12"]'), 'Non-senior scope offers an explicit grade-12 transition');
+      same(app.state.filters.grade, 'יא', 'Entry does not silently change the global grade');
+      app.acts.bagrutWorkGrade12.call(app);
+      same(app.state.filters.grade, 'יב', 'Explicit transition selects grade 12');
+      same(errorsOf(app), [], 'No eligibility render errors');
+    });
+
     await group('Minimum 30% target export', async () => {
       resetConfig();
       const ids = ['000000001', '000000002', '000000003'];
@@ -1735,12 +1941,12 @@ window.fetch = (input, options) => {
 
       await part('Removed selector and one-click attention reset', async () => {
         resetConfig(); world(schoolFixture()); applySchoolConfig();
-        const app = newApp();
+        const app = newApp({ grade: 'יב' });
         check(!$id('bagrutStatusSelect') && !appSource.includes('bagrutStatusSelect'), 'No status select in DOM or production App');
         app.state.bagrut.chip = 'attention';
         app.renderBagrutPanel();
         const reset = $id('bagrut-kpis').querySelector('[data-act="bagrutChip"][data-chip="all"]');
-        check(reset && reset.textContent.includes('✕ הצג הכל'), 'Attention has a visible show-all button');
+        check(reset && reset.textContent.includes('הכל'), 'Attention has a visible show-all button');
         app.acts.bagrutChip.call(app, reset);
         same(app.state.bagrut.chip, 'all', 'Attention reset');
         same(tzsIn($id('bagrut-table')), app.filtered().map(t => t.tz).sort(), 'All pupils restored');
@@ -1875,7 +2081,7 @@ window.fetch = (input, options) => {
           check(expected && expected.total === expected.rows.length, 'Overview readiness model retains its pending population');
           check(app.readinessCompact(expected).includes(`${expected.fail} נכשלים`) && app.readinessCompact(expected).includes(`${expected.borderline} גבוליים`) && app.readinessAverage(expected.avg), 'Compact breakdown and average are defined');
           app.acts.ovReadiness.call(app, readinessAction('core:history'));
-          same([app.state.tab, app.state.filters.grade, app.state.filters.cls, app.state.bagrut.drill, app.state.bagrut.chip, app.state.sim.useCurrent, app.state.bagrut.onlyPending, app.state.bagrut.readinessFilter, app.state.bagrut.mxSort, app.state.bagrut.mxDir],
+          same([app.state.tab, app.state.filters.grade, app.state.filters.cls, app.state.bagrut.drill, app.state.bagrut.chip, app.state.bagrut.drillSim.useCurrent, app.state.bagrut.onlyPending, app.state.bagrut.readinessFilter, app.state.bagrut.mxSort, app.state.bagrut.mxDir],
             ['bagrut', 'יב', filters.cls || 'all', 'core:history', 'all', true, true, 'all', 'current', 1], 'One click applies readiness, ascending current sort and preserves scope');
           const actual = app.subjectReadinessModel(app.state.bagrut.drill, app.filtered(), true);
           same([actual.total, actual.avg, actual.offTrack, actual.classes, actual.weakest], [expected.total, expected.avg, expected.offTrack, expected.classes, expected.weakest], 'Exact shared model including class ranking');
@@ -1918,10 +2124,10 @@ window.fetch = (input, options) => {
           app.acts.bagrutMxSort.call(app, { dataset: { key: 'current' } });
           same(shown(), ordered(-1), 'Descending current keeps blanks last');
           app.chgs.sim.call(app, Object.assign(kpis.querySelector('input[data-key="useCurrent"]'), { checked: false }));
-          same(app.state.sim.useCurrent, false, 'Strip current toggle syncs state');
+          same([app.state.bagrut.drillSim.useCurrent, app.state.sim.useCurrent], [false, false], 'Strip toggle changes only the local state');
           check(!$id('bagrut-table').querySelector('[data-readiness]') && !$id('bagrut-kpis').querySelector('[data-act="bagrutReadinessClass"]') && !$id('bagrut-kpis').querySelector('[data-act="readinessFilter"]'), 'Current off leaves clean matrix');
           check($id('bagrut-kpis').textContent.includes('שלב ציונים שוטפים') && !$id('bagrut-whatif').querySelector('input[data-key="useCurrent"]').checked, 'Current off: hint and what-if menu in sync');
-          app.state.sim.useCurrent = true;
+          app.state.bagrut.drillSim.useCurrent = true;
           app.renderBagrutPanel();
           app.chgs.bagrutOnlyPending.call(app, Object.assign($id('bagrut-kpis').querySelector('input[data-chg="bagrutOnlyPending"]'), { checked: false }));
           same(app.state.bagrut.onlyPending, false, 'Visible pending toggle');
@@ -1954,7 +2160,7 @@ window.fetch = (input, options) => {
         const everyone = app.subjectReadinessModel('core:history', app.filtered(), false);
         same([everyone.rows.length, everyone.total, everyone.notEnrolled, everyone.rows.find(r => r.t.tz === T(7)).readiness, everyone.rows.find(r => r.t.tz === T(8)).readiness], [8, 6, 2, 'notEnrolled', 'notEnrolled'], 'Ungrouped pupils, including the unassigned score, are notEnrolled');
         Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, mxSort: 'current', mxDir: 1, readinessFilter: 'all', readinessClass: '' });
-        app.state.sim.useCurrent = true;
+        app.state.bagrut.drillSim = { ...FULL, useCurrent: true };
         app.renderBagrutPanel();
         same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness),
           ['borderline', 'ok', 'noGrade', 'noGrade', 'unreported', 'unreported', 'notEnrolled', 'notEnrolled'], 'Ascending current sort: numeric, no-grade, unreported, notEnrolled');
@@ -2052,7 +2258,7 @@ window.fetch = (input, options) => {
         const card = app.overviewReadinessModel(app.overviewModel()).items.find(r => r.sel === 'core:history');
         check(card && card.total === 2 && card.unreported === 0, 'No eight unreported pupils in the overview model');
         Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, readinessFilter: 'all', readinessClass: '' });
-        app.state.sim.useCurrent = true;
+        app.state.bagrut.drillSim = { ...FULL, useCurrent: true };
         app.renderBagrutPanel();
         same([...$id('bagrut-table').querySelectorAll('[data-readiness="notEnrolled"]')].map(c => c.textContent.trim()), Array(8).fill('—'), 'All-pupils view shows dashes for notEnrolled');
         check(!$id('bagrut-kpis').textContent.includes('טרם דווח'), 'Strip has no unreported count');

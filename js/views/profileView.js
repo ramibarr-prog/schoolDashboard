@@ -193,10 +193,10 @@
   /** חיווי לקריאה בלבד: מצב ההערכה שבו מוצג כרטיס 360° (נגזר מהבחירה בלשונית צפי זכאות לבגרות) */
   profileModeBadge(t, ev) {
     const [cls, text, title] = t.gradeKey !== 'יב'
-      ? ['badge fresh-slate', '📅 קצב צבירה (מותאם לשלב בשנה)', 'שכבות י\' ו-י"א נשפטות תמיד לפי קצב צבירה (מותאם לשלב בשנה), ללא תלות בבחירה בלשונית "צפי זכאות לבגרות"']
+      ? ['badge fresh-slate', '📅 קצב צבירה (מותאם לשלב בשנה)', 'שכבות י\' ו-י"א נשפטות תמיד לפי קצב צבירה (מותאם לשלב בשנה), ללא תלות בבדיקה במסך הזכאות']
       : ev.adaptive
-        ? ['badge fresh-slate', '📅 צפי מותאם לשלב בשנה', 'מצב ההערכה נגזר מהבחירה בלשונית "צפי זכאות לבגרות": צפי מותאם לשלב בשנה']
-        : ['badge bg-indigo-50 text-indigo-800 border-indigo-200', '🎓 מצב תעודה סופית (סוף י"ב)', 'מצב ההערכה נגזר מהבחירה בלשונית "צפי זכאות לבגרות": מצב תעודה סופית — כל השאלונים והיחידות הפנימיות נדרשים'];
+        ? ['badge fresh-slate', '📅 צפי מותאם לשלב בשנה', 'מצב ההערכה הכללי במערכת: צפי מותאם לשלב בשנה; בדיקת הזכאות לסוף י״ב נפרדת']
+        : ['badge bg-indigo-50 text-indigo-800 border-indigo-200', '🎓 מצב תעודה סופית (סוף י"ב)', 'מצב ההערכה הכללי במערכת: תעודה סופית — כל השאלונים והיחידות הפנימיות נדרשים'];
     return `<span class="${cls}" data-eval-mode="${t.gradeKey !== 'יב' ? 'pace' : ev.adaptive ? 'adaptive' : 'final'}" title="${E(title)}">${text}</span>`;
   },
 
@@ -564,7 +564,7 @@
     st.navOrigin = {
       tab, tz, orderedTzList: list,
       subView: tab === 'groups' ? st.groupsViewMode : tab === 'sadin' ? st.sadin.view : tab === 'bagrut' ? st.bagrut.drill : '',
-      label: tab === 'sadin' && st.sadin.view === 'flat' ? 'פירוט ציונים' : this.NAV_LABELS[tab] || 'מסך קודם',
+      label: tab === 'sadin' && st.sadin.mode !== 'full' ? 'מוקדי חולשה' : tab === 'sadin' && st.sadin.view === 'flat' ? 'פירוט ציונים' : this.NAV_LABELS[tab] || 'מסך קודם',
       scrollTop: main ? main.scrollTop : 0, windowScrollTop: window.scrollY,
       containerScrollTop: scroller ? scroller.scrollTop : 0, masterScrollTop: tab === 'groups' && master ? master.scrollTop : 0
     };

@@ -371,8 +371,12 @@ const App = {
     if ($('navScrim')) $('navScrim').classList.add('hidden');
     const search = $('globalSearch');
     if (search) search.placeholder = name === 'groups' ? 'חיפוש חניך לפי שם, ת.ז או קוד קבוצה' : 'חיפוש חניך לפי שם או ת.ז';
-    document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+    document.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(
+      b.dataset.tab === name && (!b.dataset.sadinMode || b.dataset.sadinMode === this.state.sadin.mode)
+    )));
     TABS.forEach(t => { const p = $(`panel-${t}`); if (p) p.hidden = t !== name; });
+    const sadinPanel = $('panel-sadin');
+    if (sadinPanel) sadinPanel.setAttribute('aria-labelledby', this.state.sadin.mode === 'full' ? 'tab-sadin' : 'tab-weakness');
     this.renderChrome();
     this.renderTab(name);
     this.fitTables();
@@ -1077,7 +1081,7 @@ const App = {
   saveProfileField(...args) { return ProfileView.saveProfileField.apply(this, args); },
   renderProfile(...args) { return this.renderTrainee360Panel(...args); },
 
-  NAV_LABELS: { overview: 'חדר בקרה', bagrut: 'צפי זכאות לבגרות', groups: 'בקרת קבוצות', sadin: 'סדין ציונים', settings: 'הגדרות ומצבת' },
+  NAV_LABELS: { overview: 'חדר בקרה', bagrut: 'צפי זכאות לבגרות', groups: 'בקרת קבוצות', sadin: 'סדין ציונים שוטפים', settings: 'הגדרות ומצבת' },
 
   /* ==================================================================
      פאנל 5 – הגדרות ומצבת חניכים
@@ -1167,7 +1171,16 @@ const App = {
         return;
       }
       const tab = e.target.closest('[data-tab]');
-      if (tab) { e.stopPropagation(); this.showTab(tab.dataset.tab); return; }
+      if (tab) {
+        e.stopPropagation();
+        if (tab.dataset.sadinMode) return SadinView.sadinMode.call(this, { dataset: { mode: tab.dataset.sadinMode } });
+        if (tab.dataset.tab === 'bagrut') {
+          Object.assign(this.state.bagrut, { drill: 'all', targets: false, chip: 'all', overviewEntry: false, whatifEntry: false });
+          this.dirty.add('bagrut');
+        }
+        this.showTab(tab.dataset.tab);
+        return;
+      }
       const up = e.target.closest('[data-upload]');
       if (up) { e.stopPropagation(); e.preventDefault(); this.pickFile(up.dataset.upload); return; }
     }, true);
@@ -1359,6 +1372,9 @@ const App = {
     modalBackdrop(el, e) { if (e.target === el) this.closeModal(); },
     mxPop(el) { return BagrutView.mxPop.call(this, el); },
     bagrutMode(el) { return BagrutView.bagrutMode.call(this, el); },
+    bagrutWorkSelect(el) { return BagrutView.workSelect.call(this, el); },
+    bagrutWorkStep(el) { return BagrutView.workStep.call(this, el); },
+    bagrutWorkGrade12() { return BagrutView.workGrade12.call(this); },
     closeModal() { this.closeModal(); },
     sadinAlerts() { this.openSadinAlerts(); },
     sadinMode(el) { return SadinView.sadinMode.call(this, el); },
@@ -1368,6 +1384,7 @@ const App = {
     weaknessRiskApply() { return SadinView.weaknessRiskApply.call(this); },
     sadinSelectCell(el) { return SadinView.selectWeakness.call(this, el); },
     sadinCellEligibility(el) { return SadinView.openWeaknessEligibility.call(this, el); },
+    sadinCellSheet(el) { return SadinView.openWeaknessSheet.call(this, el); },
     sadinCellAlerts(el) { return SadinView.openWeaknessAlerts.call(this, el); },
     generateAlerts() { this.generateAlerts(); },
     sadinPop(el) {
@@ -1401,7 +1418,7 @@ const App = {
       const { go, chip, strip, view, scope } = el.dataset;
       this.resetOverviewDrillFilters();
       if (go === 'bagrut') {
-        this.state.bagrut.chip = chip || 'all'; this.state.bagrut.drill = 'all'; this.dirty.add('bagrut');
+        Object.assign(this.state.bagrut, { chip: chip || 'all', drill: 'all', targets: false, overviewEntry: true, whatifEntry: false }); this.dirty.add('bagrut');
         if (chip === 'attention') {
           this.state.bagrutScope = this.scopeOfGrade(this.state.filters.grade);
           this.state.bagrutScopeSet = true;
@@ -1420,7 +1437,7 @@ const App = {
     ovCompletion(el) {
       this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
-      Object.assign(this.state.bagrut, { chip: 'completion', drill: 'all', targets: false, readinessClass: '', readinessFilter: 'all' });
+      Object.assign(this.state.bagrut, { chip: 'completion', drill: 'all', targets: false, readinessClass: '', readinessFilter: 'all', overviewEntry: true, whatifEntry: el.dataset.simulation === 'true', drillSim: { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: false } });
       this.dirty.add('bagrut');
       this.showTab('bagrut');
       if (el.dataset.simulation === 'true') {
@@ -1438,10 +1455,8 @@ const App = {
     ovReadiness(el) {
       this.resetOverviewDrillFilters();
       if (this.state.filters.grade === 'all') this.applyBagrutScope(el.dataset.scope);
-      Object.assign(this.state.bagrut, { drill: el.dataset.sel, chip: 'all', onlyPending: true, readinessClass: '', readinessFilter: 'all', mxSort: 'current', mxDir: 1 });
-      this.state.sim.useCurrent = true;
-      this.evals.clear();
-      FILTERED_TABS.forEach(tab => this.dirty.add(tab));
+      Object.assign(this.state.bagrut, { drill: el.dataset.sel, chip: 'all', targets: false, onlyPending: true, readinessClass: '', readinessFilter: 'all', mxSort: 'current', mxDir: 1, overviewEntry: true, whatifEntry: false, drillSim: { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: true } });
+      this.dirty.add('bagrut');
       this.showTab('bagrut');
     },
     ovClass(el) {
@@ -1568,6 +1583,7 @@ const App = {
 
   chgs: {
     weaknessRiskRules(el) { return SadinView.weaknessRiskChange.call(this, el); },
+    submittedQuestionnaire(el) { return SadinView.submittedQuestionnaireChange.call(this, el); },
     async backupImport(el) {
       const f = el.files[0];
       el.value = '';
@@ -1579,8 +1595,13 @@ const App = {
       });
     },
     sim(el) {
-      if (this.state.bagrut.targets) { el.checked = !!this.state.sim[el.dataset.key]; return; }
-      this.state.sim[el.dataset.key] = el.checked; this.evals.clear(); ['overview', 'bagrut', 'profile', 'sadin'].forEach(t => this.dirty.add(t)); this.renderTab(this.state.tab);
+      const st = this.state.bagrut;
+      if (st.targets) { el.checked = !!(st.drillSim || this.state.sim)[el.dataset.key]; return; }
+      const base = this.state.filters.grade === 'יב'
+        ? { fullMode: true, ignoreInternals: false, plus5: false, useCurrent: false }
+        : this.state.sim;
+      st.drillSim = { ...base, ...st.drillSim, [el.dataset.key]: el.checked };
+      this.dirty.add('bagrut'); this.renderTab('bagrut');
     },
     bagrutOnlyPending(el) { return BagrutView.bagrutOnlyPending.call(this, el); },
     anSubject(el) { this.state.anomalySubject = el.value; this.dirty.add('groups'); this.renderTab('groups'); },
