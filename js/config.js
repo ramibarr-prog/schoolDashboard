@@ -382,10 +382,10 @@ const Config = {
     return this;
   },
 
-  save() {
+  save({ localOnly = false } = {}) {
     const denied = this.requireEdit(); if (denied) return denied;
     const result = this._write(this.KEYS.config, this.data);
-    if (result.ok) this.emit('config-changed');
+    if (result.ok) this.emit('config-changed', localOnly ? { localOnly: true } : undefined);
     return result;
   },
 
@@ -1026,7 +1026,7 @@ const Config = {
   getMapping(type) { return this.data.mappingProfiles[type] || null; },
   setMapping(type, mapping) {
     const denied = this.requireEdit(); if (denied) return denied;
-    this.data.mappingProfiles[type] = mapping; return this.save();
+    this.data.mappingProfiles[type] = mapping; return this.save({ localOnly: true });
   },
 
   /* ---------- כינויי כיתות ---------- */

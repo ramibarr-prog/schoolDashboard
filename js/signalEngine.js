@@ -30,7 +30,8 @@
     id, Object.freeze({ id, family: id.split('.')[0], severity, label, badgeClass: styles[severity], requires: Object.freeze(requires) })
   ])));
 
-  let cachedKey = null, cachedResult = null, sequence = 0;
+  let cachedKey = null, sequence = 0;
+  const cachedResults = new Map();
   const flag = (id, detail = '') => {
     const { family, severity, label } = CATALOG[id];
     return { id, family, severity, label, detail };
@@ -162,18 +163,21 @@
     const roster = Store.traineeList();
     const groups = [...Store.groups.values()].map(g => ({ ...g, members: [...g.members], gradeMembers: [...g.gradeMembers] }));
     const current = [...Store._current.entries()], bagrut = [...Store._bagrut.entries()].map(([tz, entries]) => [tz, [...entries.entries()]]);
-    const key = JSON.stringify([Store.loaded, Store.raw, roster, groups, current, bagrut, Store.missed, Config.data, Config._rulesOverride, opts]);
-    if (cachedKey === key && cachedResult) return cachedResult;
+    const key = JSON.stringify([Store.loaded, Store.raw, roster, groups, current, bagrut, Store.missed, Config.data, Config._rulesOverride]);
+    if (cachedKey !== key) { cachedKey = key; cachedResults.clear(); }
+    const optionsKey = JSON.stringify(opts);
+    if (cachedResults.has(optionsKey)) return cachedResults.get(optionsKey);
     const context = buildContext(roster), list = roster.map(t => compute(t.tz, opts, context));
     const counts = { total: list.length, ok: 0, watch: 0, risk: 0, unknown: 0, twelve: 0, dataQuality: 0 };
     list.forEach(result => {
       counts[result.overall]++;
       if (result.dataQuality.length) counts.dataQuality++;
     });
-    cachedKey = key;
-    cachedResult = { version: ++sequence, byTz: new Map(list.map(result => [result.tz, result])), list, counts };
-    return cachedResult;
+    const result = { version: ++sequence, byTz: new Map(list.map(result => [result.tz, result])), list, counts };
+    if (cachedResults.size >= 8) cachedResults.delete(cachedResults.keys().next().value);
+    cachedResults.set(optionsKey, result);
+    return result;
   }
-  function invalidate() { cachedKey = null; cachedResult = null; }
+  function invalidate() { cachedKey = null; cachedResults.clear(); }
   window.SignalEngine = Object.freeze({ CATALOG, prerequisitesFor, isPassingScore, computeForTrainee, computeAll, invalidate });
 })();

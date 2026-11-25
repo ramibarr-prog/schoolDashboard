@@ -177,10 +177,10 @@ const CloudSync = {
   _schedulePush() {
     if (!this._suppress && !this._wiping && this.configured() && this.hasUnpublished() && this.status.kind !== 'conflict') {
       clearTimeout(this._timer);
-      this._timer = setTimeout(() => this.pushCloudState().catch(e => {
+      this._timer = setTimeout(() => this.pushCloudState({ auto: true }).catch(e => {
         console.error('cloud push', e);
         window.dispatchEvent(new CustomEvent('sd:cloud-auto-error', { detail: { error: e && e.message } }));
-      }), 1000);
+      }), 3000);
     }
   },
   _enqueue(fn) {
@@ -333,8 +333,19 @@ const CloudSync = {
   },
 
   /* ---------- הצפנה (קוד בית-ספר) - מבוססת AES-GCM בלבד ---------- */
-  _b64(buf) { let s = ''; new Uint8Array(buf).forEach(b => { s += String.fromCharCode(b); }); return btoa(s); },
-  _unb64(str) { return Uint8Array.from(atob(str), c => c.charCodeAt(0)); },
+  _b64(buf) {
+    const bytes = new Uint8Array(buf), chunks = [];
+    for (let i = 0; i < bytes.length; i += 32768) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 32768)));
+    return btoa(chunks.join(''));
+  },
+  _unb64(str) {
+    const binary = atob(str), bytes = new Uint8Array(binary.length);
+    for (let start = 0; start < binary.length; start += 32768) {
+      const end = Math.min(start + 32768, binary.length);
+      for (let i = start; i < end; i++) bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  },
   async _key(pass, salt, iterations = 600000) {
     const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -419,6 +430,7 @@ const CloudSync = {
   pushCloudState(opts = {}) {
     return this._enqueue(async () => {
       await Config.ready;
+      if (opts.auto && (!this.configured() || !this.hasUnpublished())) return 'current';
       if (!opts.force && this.status.kind === 'conflict') return 'kept-local';
       if (!this._ready && !opts.force) {
         const result = await this._pullCloudState();
@@ -600,7 +612,9 @@ const CloudSync = {
     }
     const googleScript = document.getElementById('googleIdentityScript');
     if (googleScript) googleScript.addEventListener('load', () => window.dispatchEvent(new CustomEvent('sd:google-ready')));
-    ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, () => this.markDirty()));
+    ['config-changed', 'dataset-changed', 'roster-changed', 'rules-changed', 'exceptions-changed'].forEach(n => window.addEventListener(`sd:${n}`, e => {
+      if (n !== 'config-changed' || !e.detail || !e.detail.localOnly) this.markDirty();
+    }));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && this.configured()) this.checkCloudMeta().catch(e => console.error('cloud meta', e));
     });
