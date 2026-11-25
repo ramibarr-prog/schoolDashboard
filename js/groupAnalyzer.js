@@ -35,6 +35,7 @@ const Store = {
   missed: [],
   _groupsByTz: new Map(),
   _current: new Map(),
+  _groupGrades: new Set(),
   _bagrut: new Map(),
   _classes: [],
   _loadedCache: new Map(),
@@ -84,6 +85,12 @@ const Store = {
         gradeKey: r.grade, classKey: r.homeroom, classNum: Util.parseClass(r.grade, r.homeroom).num, track: r.track,
         inRoster: true, inGroups: false, inGrades: false, inBagrut: false, majorName: ''
       });
+    });
+    this._groupGrades = new Set();
+    this.raw.groups.forEach(r => {
+      const t = T.get(r.tz);
+      const grade = t ? t.gradeKey : Util.normGrade(r.gradeKey || r.grade || '');
+      if (grade) this._groupGrades.add(grade);
     });
 
     /* 1. קובץ קבוצות (שיבוץ מקצועי) */
@@ -167,7 +174,7 @@ const Store = {
       const um = Util.stripQuotes(`${g.subject} ${g.name}`).match(/(\d)\s*(?:יח|יל)/);
       g.units = um ? um[1] : null;
       g.reinforcement = /תגבור/.test(`${g.subject} ${g.name}`);
-      const mem = g.members.size ? g.members : g.gradeMembers;
+      const mem = g.inFile ? g.members : g.gradeMembers;
       const cnt = {};
       mem.forEach(tz => { const t = T.get(tz); if (t) cnt[t.gradeKey] = (cnt[t.gradeKey] || 0) + 1; });
       g.gradeKey = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || '';
@@ -205,9 +212,29 @@ const Store = {
       current.set(tz, entries);
     });
 
+    current.forEach((entries, tz) => {
+      const t = T.get(tz);
+      Config.withRulesForGrade(t.gradeKey, () => {
+        const subjectKey = name => Util.norm(GroupAnalyzer.sadinSubject(name));
+        const unavailable = subjectKey('ללא מקצוע');
+        const activeSubjects = new Set((gbt.get(tz) || [])
+          .filter(g => g.inFile && g.members.has(tz))
+          .map(g => subjectKey(g.subject)).filter(s => s && s !== unavailable));
+        entries.forEach(e => {
+          const g = G.get(e.groupId);
+          if (!this.hasGroupsForGrade(t.gradeKey) || !e.groupId || (g && g.inFile && g.members.has(tz))) {
+            e.enrollmentStatus = 'active';
+          } else {
+            const subject = subjectKey(e.subject);
+            e.enrollmentStatus = subject && subject !== unavailable && activeSubjects.has(subject) ? 'moved' : 'unassigned';
+          }
+        });
+      });
+    });
+
     G.forEach(g => {
       let s = 0, n = 0;
-      (g.members.size ? g.members : g.gradeMembers).forEach(tz => {
+      (g.inFile ? g.members : g.gradeMembers).forEach(tz => {
         const e = (current.get(tz) || []).find(x => x.groupId === g.groupId);
         if (e && e.avg != null) { s += e.avg; n++; }
       });
@@ -266,6 +293,13 @@ const Store = {
   },
   groupsOf(tz) { return this._groupsByTz.get(tz) || []; },
   currentOf(tz) { return this._current.get(tz) || []; },
+  hasGroupsForGrade(gradeKey) { return this._groupGrades.has(Util.normGrade(gradeKey)); },
+  activeCurrentOf(tz) { return this.currentOf(tz).filter(e => e.enrollmentStatus === 'active'); },
+  inactiveCurrentOf(tz) { return this.currentOf(tz).filter(e => e.enrollmentStatus === 'moved' || e.enrollmentStatus === 'unassigned'); },
+  isActiveMissed(m) {
+    const t = this.trainees.get(m.tz), g = this.groups.get(m.groupId);
+    return !!t && (!this.hasGroupsForGrade(t.gradeKey) || !m.groupId || !!(g && g.inFile && g.members.has(m.tz)));
+  },
   weightedAverage(events) {
     const scored = events.filter(ev => ev.score != null);
     const useWeights = scored.some(ev => ev.weight > 0);
@@ -284,7 +318,7 @@ const Store = {
 
   /** ציון שוטף למקצוע לפי מילות מפתח (הערך הראשון שנמצא) */
   currentGrade(tz, keywords) {
-    const e = this.currentOf(tz).filter(x => x.avg != null && Util.matchKeywords(x.subject, keywords));
+    const e = this.activeCurrentOf(tz).filter(x => x.avg != null && Util.matchKeywords(x.subject, keywords));
     return e.length ? e[0].avg : null;
   },
 
@@ -551,21 +585,21 @@ const GroupAnalyzer = {
     const pass = Config.rules().passGrade;
     const set = new Set(roster.map(t => t.tz));
     const entries = [];
-    roster.forEach(t => Store.currentOf(t.tz).forEach(e => {
+    roster.forEach(t => Store.activeCurrentOf(t.tz).forEach(e => {
       if (subject !== 'all' && e.subject !== subject) return;
       const low = e.avg != null && e.avg < pass;
       if (onlyFail && !low) return;
       const g = Store.groups.get(e.groupId);
       entries.push({ t, subject: e.subject, groupId: e.groupId, teacher: (g && g.teacher) || e.teacher || '', n: e.n, avg: e.avg, low, events: e.events });
     }));
-    const missed = Store.missed.filter(m => set.has(m.tz) && (subject === 'all' || m.subject === subject));
+    const missed = Store.missed.filter(m => set.has(m.tz) && Store.isActiveMissed(m) && (subject === 'all' || m.subject === subject));
     const avgs = entries.filter(e => e.avg != null);
     return {
       entries, missed,
       stats: {
         mean: avgs.length ? avgs.reduce((a, e) => a + e.avg, 0) / avgs.length : null,
         pairs: avgs.length,
-        belowCount: new Set(roster.filter(t => Store.currentOf(t.tz).some(e => e.avg != null && e.avg < pass)).map(t => t.tz)).size,
+        belowCount: new Set(roster.filter(t => Store.activeCurrentOf(t.tz).some(e => e.avg != null && e.avg < pass)).map(t => t.tz)).size,
         missedCount: missed.length,
         noGradesCount: roster.filter(t => !t.inGrades).length
       }
@@ -580,12 +614,13 @@ const GroupAnalyzer = {
     const matches = (s, t) => (subject === 'all' || subject === s) && (teacher === 'all' || teacher === t);
     const missedByTz = new Map();
     Store.missed.forEach(m => {
+      if (!Store.isActiveMissed(m)) return;
       if (!missedByTz.has(m.tz)) missedByTz.set(m.tz, []);
       missedByTz.get(m.tz).push(m);
     });
     const rows = [];
     roster.forEach(t => {
-      const entries = Store.currentOf(t.tz).map(e => ({ ...e, displaySubject: e.subject, teacher: teacherOf(e), subject: this.sadinSubject(e.subject) }));
+      const entries = Store.activeCurrentOf(t.tz).map(e => ({ ...e, displaySubject: e.subject, teacher: teacherOf(e), subject: this.sadinSubject(e.subject) }));
       const allSubjects = new Map();
       entries.forEach(e => {
         if (!allSubjects.has(e.subject)) allSubjects.set(e.subject, []);
@@ -828,10 +863,9 @@ const GroupAnalyzer = {
     const out = [];
     events.forEach(ev => {
       const g = Store.groups.get(ev.groupId);
-      /* חבר קבוצה = משובץ בקובץ הקבוצות, או בעל ציון באירוע אחר של אותה קבוצה. תא ריק אצל מי שאינו כזה אינו החמצה */
-      const members = new Set(g ? [...g.members, ...g.gradeMembers] : []);
-      ev.byTz.forEach((_, tz) => members.add(tz));
-      const valid = [...ev.byTz.values()].filter(recorded).length;
+      const members = new Set(g ? (g.inFile ? g.members : g.gradeMembers) : []);
+      if (!g || !g.inFile) ev.byTz.forEach((_, tz) => members.add(tz));
+      const valid = [...ev.byTz.entries()].filter(([tz, row]) => members.has(tz) && recorded(row)).length;
       if (valid < Math.max(1, Math.ceil(members.size * 0.5))) return;
       members.forEach(tz => {
         if (!Store.trainees.has(tz)) return;
@@ -870,14 +904,14 @@ const GroupAnalyzer = {
       return last ? `${first} ${last[0]}.` : first;
     };
 
-    roster.forEach(t => Store.currentOf(t.tz).forEach(e => {
+    roster.forEach(t => Store.activeCurrentOf(t.tz).forEach(e => {
       if (e.avg == null || e.avg >= pass) return;
       const teacher = teacherOf(e.groupId, e.teacher);
       add(byTeacher ? `מורה: ${teacher}` : `כיתה: ${Config.classLabel(t.classKey)}`,
         `• ${nameOf(t)} (${t.classKey}) – ${e.subject}: ממוצע ${Math.round(e.avg)}${byTeacher ? '' : ` | מורה: ${teacher}`}`);
     }));
 
-    Store.missed.filter(m => set.has(m.tz)).forEach(m => {
+    Store.missed.filter(m => set.has(m.tz) && Store.isActiveMissed(m)).forEach(m => {
       const t = Store.trainees.get(m.tz);
       const what = { 'no-row': 'חסר ציון', empty: 'חסר ציון', zero: 'ציון 0' }[m.kind];
       add(byTeacher ? `מורה: ${m.teacher || 'ללא מורה'}` : `כיתה: ${Config.classLabel(t.classKey)}`,

@@ -142,9 +142,8 @@
         if (sheet.missed) pedagogical.push(flag('sadin.missed_event', String(sheet.missed)));
       });
       if (prereqs.hasGroups) {
-        const ids = new Set(Store.groupsOf(tz).filter(g => g.inFile).map(g => String(g.groupId)));
         Store.currentOf(tz).forEach(entry => {
-          if (entry.groupId && !ids.has(String(entry.groupId)))
+          if (entry.enrollmentStatus === 'unassigned')
             dataQuality.push(flag('data.sadin_not_enrolled', `${entry.subject || ''} [${entry.groupId}]`));
         });
       }

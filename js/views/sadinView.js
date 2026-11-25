@@ -10,7 +10,7 @@
       Store.groupsOf(t.tz).forEach(g => {
         if (g.subject && GroupAnalyzer.sadinSubject(g.subject) === subject && g.teacher) teachers.add(g.teacher);
       });
-      Store.currentOf(t.tz).forEach(e => {
+      Store.activeCurrentOf(t.tz).forEach(e => {
         const teacher = (Store.groups.get(e.groupId) || {}).teacher || e.teacher;
         if (e.subject && GroupAnalyzer.sadinSubject(e.subject) === subject && teacher) teachers.add(teacher);
       });
@@ -512,7 +512,7 @@
       b.classList.toggle('hidden', early);
       b.setAttribute('aria-pressed', String(!early && b.dataset.sview === st.view));
     });
-    const entries = Store.traineeList().flatMap(t => Store.currentOf(t.tz));
+    const entries = Store.traineeList().flatMap(t => Store.activeCurrentOf(t.tz));
     const rawUnknown = Store.raw.grades.filter(r => !Store.trainees.has(r.tz));
     const subjects = [...new Set(entries.map(e => e.subject).concat(rawUnknown.map(r => r.subject)).filter(Boolean).map(s => GroupAnalyzer.sadinSubject(s)))].sort(natural);
     if (st.subject !== 'all' && !subjects.includes(st.subject)) st.subject = 'all';
@@ -720,7 +720,7 @@
     const body = rowsSorted.map(r => {
       const readiness = prereqs.get(r.t.gradeKey);
       const score = (value, missed, social) => Config.withRulesForGrade(r.t.gradeKey, () => this.sadinScore(value, missed, social));
-      const hasSocial = Store.currentOf(r.t.tz).some(e => e.avg != null && isSocial(e.subject));
+      const hasSocial = Store.activeCurrentOf(r.t.tz).some(e => e.avg != null && isSocial(e.subject));
       const overall = hasSocial && r.overall != null
         ? `<span class="sadin-score">${Util.fmt(r.overall, 0)}</span>` : score(r.overall, false, false);
       const cells = columns.map(col => {

@@ -547,6 +547,57 @@ window.fetch = (input, options) => {
        QA-9.2, QA-11.2..QA-11.8
        ==================================================================== */
     await group('Group B — current-grades sheet and group control: QA-9.2, QA-11.2..QA-11.8', async () => {
+      await part('Active enrollment aligns sheet, signals, profile, forecast and overview', async () => {
+        resetConfig();
+        const old = 'אנגלית יב1 מורה ותיק [8101]', next = 'אנגלית יב1 מורה חדש [8102]';
+        const nextEmpty = 'אנגלית יב1 מורה אחר [8103]', other = 'פיזיקה יב1 מורה [8104]';
+        const groups = groupRows([
+          { tz: T(1), grade: 'יב', cls: 'יב1', gid: next },
+          { tz: T(2), grade: 'יב', cls: 'יב1', gid: nextEmpty },
+          { tz: T(3), grade: 'יב', cls: 'יב1', gid: other },
+          { tz: T(5), grade: 'יב', cls: 'יב1', gid: old }
+        ]);
+        const sadin = sadinRows([
+          ...[[1, 25], [2, 35], [3, 20], [5, 90]].map(([n, sc]) =>
+            ({ tz: T(n), ev: '<img src=x> (100)', sc, grp: old, dt: '01/10/2026' })),
+          { tz: T(1), ev: 'מבחן חדש (100)', sc: 80, grp: next, dt: '08/10/2026' },
+          { tz: T(4), ev: 'מבחן (100)', sc: 50, grp: 'אנגלית יא1 מורה [8105]', dt: '01/10/2026' }
+        ]);
+        world({ roster: [1, 2, 3, 5].map(n => stu(n, 'יב', 'יב1')).concat(stu(4, 'יא', 'יא1')), groups, sadin });
+        const app = newApp();
+        const overview = app.overviewModel();
+        const sheet = new Map(overview.sheet.map(row => [row.t.tz, row]));
+        same([1, 2, 3, 4].map(n => sheet.get(T(n)).overall), [80, null, null, 50], 'Overview sheet uses active scores');
+        same([1, 2, 3].map(n => sheet.get(T(n)).failing), [0, 0, 0], 'Moved and unassigned scores do not fail');
+        same([1, 2, 3].map(n => sheet.get(T(n)).missed), [0, 0, 0], 'Moved and unassigned scores do not create missed events');
+        same(Store.groups.get('8101').avg, 90, 'Former members do not affect old group average');
+        same(BagrutFacts.currentInfo(T(1), ['אנגלית']).value, 80, 'Forecast uses the new group');
+        same(BagrutFacts.currentInfo(T(2), ['אנגלית']).value, null, 'Forecast excludes old group without a new score');
+        same(Store.currentGrade(T(3), ['אנגלית']), null, 'Current-grade helper excludes unassigned scores');
+        [1, 2, 3].forEach(n => {
+          const signal = SignalEngine.computeForTrainee(T(n));
+          check(!signal.pedagogical.some(f => f.id === 'sadin.fail' || f.id === 'sadin.missed_event'), 'No inactive risk signal for ' + n);
+          same(signal.dataQuality.some(f => f.id === 'data.sadin_not_enrolled'), n === 3, 'Unassigned quality signal for ' + n);
+          const t = Store.trainees.get(T(n));
+          const cur = Config.withRulesForGrade(t.gradeKey, () => app.profileCurrentModel(t, app.getEval(t.tz), Config.rules()));
+          const english = [...cur.core.values()].find(c => c.name === 'אנגלית');
+          same(english.value, n === 1 ? 80 : null, 'Profile current subject equals sheet for ' + n);
+          check(!cur.failing.some(c => c.name === 'אנגלית'), 'Profile excludes former failure for ' + n);
+        });
+        same(overview.sheet.find(r => r.t.tz === T(1)).overall, 80, 'Overview excludes former score');
+        check(!SadinView.earlyWarningRows(overview.list).some(r => [T(1), T(2), T(3)].includes(r.t.tz)), 'No historical-score early warning');
+        app.state.profileTz = T(1);
+        app.state.profTab = 'events';
+        app.renderTrainee360Panel();
+        const body = $id('profBody');
+        check(body.textContent.includes('ציונים מקבוצה קודמת (לא נכללים בממוצע)') && body.textContent.includes('[8101]') && body.textContent.includes('מורה ותיק'), 'Profile displays neutral previous group details');
+        const historical = [...body.querySelectorAll('tr')].find(row => row.textContent.includes('קבוצה קודמת'));
+        check(historical && historical.textContent.includes('25') && !historical.querySelector('.text-red-600, .score-alert, .text-amber-600'), 'Historical event is neutral');
+        check(!body.querySelector('img') && body.textContent.includes('<img src=x>'), 'Event text is escaped');
+        app.state.profileTz = T(3);
+        app.renderTrainee360Panel();
+        check($id('profBody').textContent.includes('ללא שיבוץ'), 'Unassigned event is labeled neutrally');
+      });
       await part('QA-9.2 sadin: below-threshold and real zero fail and count; an empty cell is neither a zero nor a failure', async () => {
         resetConfig();
         const g = 'אנגלית 4 יח"ל יב1 דוד בדיקה [7001]';
@@ -1383,6 +1434,7 @@ window.fetch = (input, options) => {
           if (grade !== 'יב') {
             for (const [i, subject] of ['מתמטיקה', 'אנגלית'].entries()) {
               const grp = `${subject} 4 יח"ל ${cls} דוד בדיקה [${id + 10 + i}]`;
+              fx.groups.push(...groupRows([{ tz: T(n), grade, cls, gid: grp }]));
               fx.sadin.push(...sadinRows([
                 { tz: T(n), ev: 'מבחן א (90)', sc: 80, grp, dt: '01/10/2026' },
                 { tz: T(n), ev: 'מבחן ב (10)', sc: 0, grp, dt: '08/10/2026' }
@@ -1395,6 +1447,9 @@ window.fetch = (input, options) => {
           return { tz: t.tz, grade: t.grade, cls: t.homeroom, gid: 'פיזיקה 5 יח"ל יב1 דוד בדיקה [9800]' };
         })));
         fx.sadin.push(...fx.sadin.filter(r => r.tz === T(1)).map(r => ({ ...r, tz: T(5) })));
+        fx.groups.push(...groupRows([1, 5].map(n => ({
+          tz: T(n), grade: 'יב', cls: n === 1 ? 'יב1' : 'יב2', gid: 'אנגלית 4 יח"ל יב1 מיכל בדיקה [9101]'
+        }))));
         return fx;
       };
       const build = () => { resetConfig(); world(fixture()); applySchoolConfig(); };
@@ -1890,23 +1945,23 @@ window.fetch = (input, options) => {
         const app = newApp({ grade: 'יב' });
         const model = app.subjectReadinessModel('core:history', app.filtered(), true);
         same(model.rows.map(r => [r.t.tz, r.readiness]).sort(), [
-          [T(1), 'ok'], [T(2), 'borderline'], [T(3), 'noGrade'], [T(4), 'noGrade'], [T(5), 'unreported'], [T(6), 'unreported'], [T(8), 'fail']
-        ], 'Reported group (2/4) -> noGrade; silent group -> unreported; ungrouped pupil only via own grade');
-        same([model.total, model.graded, model.assessed, model.unreported, model.notEnrolled, model.offTrack, model.offTrackPct, model.coveragePct], [7, 3, 5, 2, 0, 4, 80, 43], 'offTrack excludes unreported and percent uses assessed');
+          [T(1), 'ok'], [T(2), 'borderline'], [T(3), 'noGrade'], [T(4), 'noGrade'], [T(5), 'unreported'], [T(6), 'unreported']
+        ], 'Reported group (2/4) -> noGrade; silent group -> unreported; unassigned score excluded');
+        same([model.total, model.graded, model.assessed, model.unreported, model.notEnrolled, model.offTrack, model.offTrackPct, model.coveragePct], [6, 2, 4, 2, 0, 3, 75, 33], 'offTrack excludes unreported and percent uses assessed');
         same(model.offTrack, model.fail + model.borderline + model.noGrade, 'offTrack formula');
-        same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב2', false, 1, 1, 0], ['יב1', false, 4, 2, 2]], 'Classes ranked without homeroom fallback');
+        same(model.classes.map(c => [c.key, c.unreportedOnly, c.assessed, c.graded, c.unreported]), [['יב1', false, 4, 2, 2]], 'Classes ranked without homeroom fallback');
         const everyone = app.subjectReadinessModel('core:history', app.filtered(), false);
-        same([everyone.rows.length, everyone.total, everyone.notEnrolled, everyone.rows.find(r => r.t.tz === T(7)).readiness], [8, 7, 1, 'notEnrolled'], 'Ungrouped pupil without grade is notEnrolled, not homeroom no-grade');
+        same([everyone.rows.length, everyone.total, everyone.notEnrolled, everyone.rows.find(r => r.t.tz === T(7)).readiness, everyone.rows.find(r => r.t.tz === T(8)).readiness], [8, 6, 2, 'notEnrolled', 'notEnrolled'], 'Ungrouped pupils, including the unassigned score, are notEnrolled');
         Object.assign(app.state.bagrut, { drill: 'core:history', onlyPending: false, mxSort: 'current', mxDir: 1, readinessFilter: 'all', readinessClass: '' });
         app.state.sim.useCurrent = true;
         app.renderBagrutPanel();
         same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness),
-          ['fail', 'borderline', 'ok', 'noGrade', 'noGrade', 'unreported', 'unreported', 'notEnrolled'], 'Ascending current sort: numeric, no-grade, unreported, notEnrolled');
+          ['borderline', 'ok', 'noGrade', 'noGrade', 'unreported', 'unreported', 'notEnrolled', 'notEnrolled'], 'Ascending current sort: numeric, no-grade, unreported, notEnrolled');
         const dash = $id('bagrut-table').querySelector('[data-readiness="notEnrolled"] span');
         check(dash && dash.textContent.trim() === '—' && dash.title === 'לא משובץ לקבוצת לימוד במקצוע השנה', 'notEnrolled shows a gray dash with explanation');
         app.state.bagrut.mxDir = -1;
         app.renderBagrutPanel();
-        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness).slice(-3), ['unreported', 'unreported', 'notEnrolled'], 'Descending sort keeps notEnrolled last');
+        same([...$id('bagrut-table').querySelectorAll('[data-readiness]')].map(c => c.dataset.readiness).slice(-4), ['unreported', 'unreported', 'notEnrolled', 'notEnrolled'], 'Descending sort keeps notEnrolled last');
         same(errorsOf(app), [], 'No group-unit errors');
       });
 

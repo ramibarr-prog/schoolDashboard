@@ -228,7 +228,7 @@ const BagrutFacts = (() => {
    * הוא אינו נחשב לתחזית ומוצג כאזהרה בלבד. עם כמה אירועים מוערכים – הממוצע שלהם קובע.
    */
   function currentInfo(tz, keywords) {
-    const e = Store.currentOf(tz).find(x => x.avg != null && Util.matchKeywords(x.subject, keywords));
+    const e = Store.activeCurrentOf(tz).find(x => x.avg != null && Util.matchKeywords(x.subject, keywords));
     if (!e) return { value: null, warn: '', events: 0 };
     const graded = (e.events || []).filter(ev => ev.score != null);
     if (graded.length === 1 && graded[0].score === 0) {

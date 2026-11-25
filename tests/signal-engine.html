@@ -96,11 +96,13 @@
       const groups = normalize('groups', [
         { tz: T(11), grade: 'יב', cls: 'יב1', gid: "מג' פיזיקה 5 יח\"ל יב1 מורה [1111]" },
         { tz: T(12), grade: 'יב', cls: 'יב1', gid: "מג' פיזיקה 5 יח\"ל יב1 מורה [1111]" },
+        { tz: T(11), grade: 'יב', cls: 'יב1', gid: 'מקצוע פעיל יב1 מורה [2223]' },
         { tz: T(12), grade: 'יב', cls: 'יב1', gid: 'מקצוע בדיקה יב1 מורה [2222]' }
       ], groupMap);
       const bagrut = normalize('bagrut', [...profile(11, { '999999': 90 }), ...profile(12)], bagrutMap);
       const sadin = normalize('grades', [
         { tz: T(11), event: 'מבחן (100)', score: 58, group: 'מקצוע בדיקה יב1 מורה [2222]', date: '01/01/2026' },
+        { tz: T(11), event: 'מבחן (100)', score: 58, group: 'מקצוע פעיל יב1 מורה [2223]', date: '01/01/2026' },
         { tz: T(12), event: 'מבחן (100)', score: 85, group: 'מקצוע בדיקה יב1 מורה [2222]', date: '01/01/2026' }
       ], sadinMap);
       world({ roster, groups, bagrut, sadin });
@@ -134,7 +136,7 @@
       SignalEngine.invalidate();
       assert(SignalEngine.computeAll({ fullMode: true }) !== other, 'Explicit invalidate recomputes');
       const before = SignalEngine.computeAll();
-      Store.raw.grades[0].score = 20;
+      Store.raw.grades.find(row => row.tz === T(11) && row.groupId === '2223').score = 20;
       Store.rebuild();
       const after = SignalEngine.computeAll();
       assert(after !== before && after.version !== before.version, 'Data mutation and rebuild invalidate cache');
@@ -163,6 +165,63 @@
       checkParity(23, 'nomajor', 'placement.no_major');
       checkParity(24, 'grade', 'placement.wrong_grade');
       assert(Store.missed.some(row => row.tz === T(22)) && has(all.byTz.get(T(22)), 'sadin.missed_event'), 'Missed event follows Store');
+    });
+    await step('active enrollment separates moved, unassigned and missing grade files', () => {
+      reset();
+      const old = 'אנגלית יב1 מורה ותיק [4100]', next = 'אנגלית יב1 מורה חדש [4101]';
+      const nextWithoutGrade = 'אנגלית יב1 מורה נוסף [4102]', other = 'פיזיקה יב1 מורה [4103]';
+      const noGradeFile = 'אנגלית יא1 מורה [4104]';
+      const roster = [31, 32, 33, 34, 35, 36, 37].map(n => student(n, 'יב', 'יב1')).concat(student(39, 'יא', 'יא1'));
+      const groups = normalize('groups', [
+        ...[34, 35, 36, 37].map(n => ({ tz: T(n), grade: 'יב', cls: 'יב1', gid: old })),
+        { tz: T(31), grade: 'יב', cls: 'יב1', gid: next },
+        { tz: T(32), grade: 'יב', cls: 'יב1', gid: nextWithoutGrade },
+        { tz: T(33), grade: 'יב', cls: 'יב1', gid: other }
+      ], groupMap);
+      const sadin = normalize('grades', [
+        ...[[31, 30], [32, 25], [33, 20], [34, 80], [35, 80]].map(([n, score]) =>
+          ({ tz: T(n), event: 'מבחן א (100)', score, group: old, date: '01/01/2026' })),
+        ...[[31, 15], [33, 15], [34, 80]].map(([n, score]) =>
+          ({ tz: T(n), event: 'מבחן ב (100)', score, group: old, date: '02/01/2026' })),
+        { tz: T(31), event: 'מבחן חדש (100)', score: 80, group: next, date: '03/01/2026' },
+        { tz: T(39), event: 'מבחן (100)', score: 50, group: noGradeFile, date: '01/01/2026' }
+      ], sadinMap);
+      world({ roster, groups, sadin });
+      assert(Store.hasGroupsForGrade('יב') && !Store.hasGroupsForGrade('יא'), 'Groups availability follows grade');
+      same([31, 32, 33, 39].map(n => Store.currentOf(T(n))[0].enrollmentStatus),
+        ['moved', 'moved', 'unassigned', 'active'], 'Classification by actual subject enrollment');
+      const sheet = new Map(GroupAnalyzer.sadinSheet(Store.traineeList()).map(row => [row.t.tz, row]));
+      same([sheet.get(T(31)).overall, sheet.get(T(32)).overall, sheet.get(T(33)).overall, sheet.get(T(39)).overall],
+        [80, null, null, 50], 'Only active scores contribute to averages');
+      [31, 32, 33].forEach(n => {
+        const signal = SignalEngine.computeForTrainee(T(n));
+        assert(!has(signal, 'sadin.fail') && !has(signal, 'sadin.missed_event'), 'Inactive scores do not raise pedagogical signals: ' + n);
+        assert(has(signal, 'data.sadin_not_enrolled', 'dataQuality') === (n === 33), 'Only unassigned subject is a data-quality issue: ' + n);
+      });
+      assert(has(SignalEngine.computeForTrainee(T(39)), 'sadin.fail'), 'Grades remain active without a groups file for the grade');
+      assert(!Store.missed.some(m => [T(31), T(32), T(33)].includes(m.tz) && m.groupId === '4100'), 'Former members do not miss old group events');
+      assert(!Store.missed.some(m => m.groupId === '4100' && m.eventName === 'מבחן ב'), 'Former members do not inflate the 50% event threshold');
+      assert(sheet.get(T(31)).failing === 0 && sheet.get(T(31)).missed === 0, 'Moved records do not affect counts');
+    });
+    await step('aliases, missing group IDs and inferred-group missed events', () => {
+      reset();
+      const roster = [41, 42].map(n => student(n, 'יב', 'יב1'));
+      const groups = normalize('groups', [
+        { tz: T(41), grade: 'יב', cls: 'יב1', gid: 'מתמטיקה יב1 מורה [4201]' },
+        { tz: T(42), grade: 'יב', cls: 'יב1', gid: 'פיזיקה יב1 מורה [4202]' }
+      ], groupMap);
+      const sadin = normalize('grades', [
+        { tz: T(41), event: 'מבחן (100)', score: 40, group: 'חשבון יב1 מורה קודם [4203]', date: '01/01/2026' },
+        { tz: T(41), event: 'מבחן (100)', score: 0, group: 'כימיה יב1 מורה קודם [4204]', date: '01/01/2026' },
+        { tz: T(42), event: 'מבחן (100)', score: 80, group: 'כימיה יב1 מורה קודם [4204]', date: '01/01/2026' }
+      ], sadinMap);
+      sadin.push({ ...sadin[0], groupId: '', subject: 'מקצוע ללא קוד', score: 75 });
+      world({ roster, groups, sadin });
+      same(Store.currentOf(T(41)).map(e => e.enrollmentStatus), ['moved', 'unassigned', 'active'], 'Core aliases and an absent group ID are classified correctly');
+      assert(Store.missed.some(m => m.tz === T(41) && m.groupId === '4204'), 'Fixture produces a fallback inferred-group missed event');
+      const sheet = GroupAnalyzer.sadinSheet([Store.trainees.get(T(41))])[0];
+      same([sheet.overall, sheet.failing, sheet.missed], [75, 0, 0], 'Unassigned inferred-group event is excluded, while no-ID score remains active');
+      assert(!has(SignalEngine.computeForTrainee(T(41)), 'sadin.missed_event'), 'Inferred-group missed event does not reach signal');
     });
     document.title = 'PASS - Signal engine tests';
   } catch (e) {

@@ -306,12 +306,17 @@
     }).join('');
 
     const groupsRows = Store.groupsOf(t.tz).map(g => {
-      const e = Store.currentOf(t.tz).find(x => x.groupId === g.groupId);
+      const e = Store.activeCurrentOf(t.tz).find(x => x.groupId === g.groupId);
       return `<tr><td>[${E(g.groupId)}]</td><td class="font-medium">${E(g.subject)}</td><td>${E(g.teacher || '—')}</td><td class="${e && e.avg != null && !passingScore(e.avg, e.subject) ? 'text-red-600 font-semibold' : ''}">${e ? Util.fmt(e.avg, 1) : '—'}</td></tr>`;
     }).join('');
-    const events = Store.currentOf(t.tz).flatMap(e => e.events.map(x => ({ ...x, subj: e.subject }))).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    const eventsRows = events.map(x => `<tr><td>${E(x.date || '—')}</td><td>${E(x.subj)}</td><td>${E(x.eventName)}</td><td>${x.weight}</td>
-      <td class="${x.score == null || x.score === 0 ? 'text-amber-600' : !passingScore(x.score, x.subj) ? 'text-red-600 font-semibold' : ''}">${x.score == null ? 'חסר' : x.score}</td></tr>`).join('');
+    const inactive = Store.inactiveCurrentOf(t.tz);
+    const inactiveRows = inactive.map(e => {
+      const g = Store.groups.get(e.groupId);
+      return `<li>${E(e.subject || 'ללא מקצוע')} · [${E(e.groupId)}] · ${E((g && g.teacher) || e.teacher || 'ללא מורה')} · ממוצע ${E(Util.fmt(e.avg, 1))}${e.enrollmentStatus === 'unassigned' ? ' · ללא שיבוץ' : ''}</li>`;
+    }).join('');
+    const events = Store.currentOf(t.tz).flatMap(e => e.events.map(x => ({ ...x, subj: e.subject, enrollmentStatus: e.enrollmentStatus }))).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const eventsRows = events.map(x => `<tr><td>${E(x.date || '—')}</td><td>${E(x.subj)}${x.enrollmentStatus !== 'active' ? ` <span class="text-slate-500 text-xs">${x.enrollmentStatus === 'moved' ? 'קבוצה קודמת' : 'ללא שיבוץ'}</span>` : ''}</td><td>${E(x.eventName)}</td><td>${E(x.weight)}</td>
+      <td class="${x.enrollmentStatus !== 'active' ? 'text-slate-500' : x.score == null || x.score === 0 ? 'text-amber-600' : !passingScore(x.score, x.subj) ? 'text-red-600 font-semibold' : ''}">${x.score == null ? 'חסר' : E(x.score)}</td></tr>`).join('');
     const attRows = Store.attemptsOf(t.tz).sort((a, b) => natural(a.code, b.code) || natural(a.moed, b.moed)).map(a => {
       const exempt = a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt;
       const internalDef = rules.internals.find(i => i.codes.includes(a.code)), internal = !!internalDef;
@@ -394,6 +399,7 @@
               <tr class="room-divider"><td colspan="8">מקצועות ליבה (שער 1)</td></tr>${g1 || '<tr><td colspan="8" class="text-slate-500">אין מקצועות פעילים</td></tr>'}
               <tr class="room-divider"><td colspan="8">מגמות ומקצועות בחירה (שער 2)</td></tr>${g2}
             </tbody></table></div>
+            ${inactiveRows ? `<div class="text-slate-500 text-xs mt-3"><strong>ציונים מקבוצה קודמת (לא נכללים בממוצע)</strong><ul class="mt-1 space-y-1">${inactiveRows}</ul></div>` : ''}
           </section>
           <details id="profile-more" class="card profile-360-card" ${detailsOpen ? 'open' : ''}>
             <summary class="profile-360-more">נתונים נוספים: שאלונים, אירועים וקבוצות</summary>
@@ -458,7 +464,7 @@
       return null;
     };
     const status = (keywords, groups, subject) => {
-      const entries = Store.currentOf(t.tz).filter(e => Util.matchKeywords(e.subject, keywords));
+      const entries = Store.activeCurrentOf(t.tz).filter(e => Util.matchKeywords(e.subject, keywords));
       const avg = Store.weightedAverage(entries.flatMap(e => e.events)).avg;
       const result = classifyCurrent(avg, sheetSubjects.filter(s => Util.matchKeywords(s.name, keywords)), subject);
       if (result) return result;
@@ -483,7 +489,7 @@
       return extraMap.get(key);
     };
     Store.groupsOf(t.tz).filter(g => !g.reinforcement).forEach(g => { const x = extraOf(g.subject); if (x) x.groups.push(g); });
-    Store.currentOf(t.tz).forEach(e => { const x = extraOf(e.subject); if (x) { x.entries++; x.events.push(...e.events); } });
+    Store.activeCurrentOf(t.tz).forEach(e => { const x = extraOf(e.subject); if (x) { x.entries++; x.events.push(...e.events); } });
     const extras = [...extraMap.values()].map(x => {
       const avg = Store.weightedAverage(x.events).avg;
       const result = classifyCurrent(avg, sheetSubjects.filter(s => Util.norm(s.name) === Util.norm(x.name)), x.name);
@@ -493,7 +499,7 @@
       .filter(x => x.state !== 'none' && !(x.state === 'missing' && isRoutineDuplicateSubject(x.name)))
       .sort((a, b) => natural(a.name, b.name));
     const rows = [...core.values(), ...majors.values(), ...extras];
-    return { core, majors, extras, failing: rows.filter(r => r.state === 'fail'), missing: rows.filter(r => r.state === 'missing'), any: gradesOn && t.inGrades };
+    return { core, majors, extras, failing: rows.filter(r => r.state === 'fail'), missing: rows.filter(r => r.state === 'missing'), any: gradesOn && Store.activeCurrentOf(t.tz).length > 0 };
   },
 
   /** תא "ציון שוטף": נכשל בטרקוטה מודגשת, "חסר ציון" כתג חרדל, ומקף רק כשאין קבוצה ואין רשומת סדין */
