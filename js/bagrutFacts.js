@@ -210,6 +210,8 @@ const BagrutFacts = (() => {
       due: timing.due, pending: timing.pending, pendingCohort: timing.pendingCohort, future: timing.future, hasAttempt: timing.hasAttempt,
       takenByCohort: coh.taken, cohortPct: Math.round(coh.pct), internal
     };
+    if (ctx.sim100 && internal && (!b || b.kind === 'none') && !(b && b.block))
+      return { ...base, state: 'num', num: 100, simulated: true };
     if (b && b.kind === 'num') {
       const examOnly = ctx.useCurrent && cur != null && Store.attemptsOf(tz).find(a =>
         a.code === b.code && a.partial === 'exam' && a.cls.kind === 'num' && a.cls.num === b.num);
@@ -442,6 +444,7 @@ const BagrutFacts = (() => {
     return {
       mode, rules, ord: rank, rank, gradeKey: t.gradeKey, useCurrent: opts.useCurrent,
       plus5: opts.plus5, ignoreInternals: opts.ignoreInternals, hasGroups: Store.loaded.groups || Store.loaded.grades,
+      sim100: t.gradeKey === 'יב' && !!opts.fullMode && !!opts.sim100,
       /* fullMode = "מצב תעודה סופית": כל השאלונים נדרשים; אחרת צפי מותאם לשלב בשנה לפי מה שהשכבה כבר נבחנה בו */
       strict: !!opts.fullMode, adaptive: !opts.fullMode
     };

@@ -34,7 +34,7 @@ const App = {
     tab: 'overview',
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
     sim: { ignoreInternals: false, plus5: false, useCurrent: true, fullMode: false },
-    bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all' },
+    bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all', sim100: false },
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
     bagrutScopeSet: false,
@@ -1640,7 +1640,7 @@ const App = {
       else if (el.dataset.field === 'cls') { this.state.filters.cls = el.value; this.onFilterChange(); }
     },
     bagrutWorkOption(el) {
-      if (!['ignoreInternals', 'show30'].includes(el.dataset.key)) throw new Error('אפשרות זכאות לא מוכרת');
+      if (!['ignoreInternals', 'sim100'].includes(el.dataset.key)) throw new Error('אפשרות זכאות לא מוכרת');
       this.state.bagrut[el.dataset.key] = el.checked;
       this.dirty.add('bagrut'); this.renderTab('bagrut');
     },

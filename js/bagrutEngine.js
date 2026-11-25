@@ -31,7 +31,8 @@ const BagrutEngine = (() => {
       ignoreInternals: !!pick('ignoreInternals', 'ignoreInternal'),
       plus5: !!pick('plus5', 'boostBorderlinePlus5'),
       useCurrent: !!pick('useCurrent', 'useCurrentGradesAsForecast'),
-      fullMode: !!s.fullMode
+      fullMode: !!s.fullMode,
+      sim100: !!s.sim100
     };
   }
 

@@ -1999,7 +1999,7 @@ window.fetch = (input, options) => {
 
     await group('Eligibility controls, subject rows and deferred students', async () => {
       resetConfig();
-      const roster = [101, 102, 103, 104, 105, 106, 107, 108, 109].map(n => stu(n, 'יב', 'יב1')).concat(stu(121, 'יא', 'יא1'));
+      const roster = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112].map(n => stu(n, 'יב', 'יב1')).concat(stu(121, 'יא', 'יא1'));
       const bagrut = bagrutRows([
         ...profile(T(101)),
         ...profile(T(102), { '86083': null }),
@@ -2010,6 +2010,9 @@ window.fetch = (input, options) => {
         ...profile(T(107), { '22283': null, '22261': 30, '34221': null, '34225': 30 }),
         ...profile(T(108), { '11283': null, '11281': 30 }),
         ...profile(T(109), { '22283': null, '22261': 30, '34221': 20, '34225': 20 }),
+        ...profile(T(110), { '22283': null, '22261': 70 }),
+        ...profile(T(111), { '22283': null, '22261': null }),
+        ...profile(T(112), { '22283': 'חסם' }),
         ...partial(121, ELEVENTH)
       ]);
       world({ roster, bagrut });
@@ -2026,7 +2029,8 @@ window.fetch = (input, options) => {
       const option = key => controls().querySelector(`[data-chg="bagrutWorkOption"][data-key="${key}"]`);
       check(controls() && controls().parentElement === $id('localControls') && controls().previousElementSibling.id === 'fClear',
         'Export and local options are in the filter toolbar beside clear');
-      check(controls().querySelector('[data-act="exportTargets30"]') && option('ignoreInternals') && option('show30'),
+      check(controls().querySelector('[data-act="exportTargets30"]') && option('ignoreInternals') &&
+        option('sim100') && !option('sim100').checked && controls().textContent.includes('הוסף ציון 100 ב-30%'),
         'Export and both options are available');
       const choose = tz => app.acts.bagrutWorkSelect.call(app, $id('bagrut-table').querySelector(`[data-act="bagrutWorkSelect"][data-tz="${tz}"]`));
       const detail = () => $id('bagrut-table').querySelector('.bagrut-work-detail');
@@ -2038,10 +2042,45 @@ window.fetch = (input, options) => {
       check(history().children[3].querySelector('.tier-4') && history().children[3].textContent.includes('נכשל') &&
         historyDetails().textContent.includes('100'),
         'Impossible 30% target is prominently marked as failed');
-      toggle('show30', false);
-      check(history().children[3].textContent.trim() === '-' && !history().children[3].querySelector('.tier-4'),
-        'Switching off 30% targets removes target and red target badge');
-      toggle('show30', true);
+      const storeBefore = JSON.stringify([...Store._bagrut].map(([tz, entries]) => [tz, [...entries]]));
+      const realBefore = JSON.stringify(BagrutEngine.evaluate(T(110), FULL));
+      const eligibleCount = () => Number($id('bagrut-kpis').querySelector('[data-chip="eligible"] span:last-child').textContent);
+      const beforeCount = eligibleCount();
+      choose(T(110));
+      check(history().children[3].textContent.trim() === '19', 'Actual direct target is displayed before simulation');
+      toggle('sim100', true);
+      check(app.state.bagrut.sim100 && $id('bagrut-scope').textContent.includes('מצב סימולציה פעיל') &&
+        history().children[1].textContent.includes('100 (סימולציה)') &&
+        history().children[2].textContent.includes('עובר (סימולציה)') && history().children[3].textContent.trim() === '19',
+        'Simulation fills the missing internal component while preserving the actual direct target');
+      check(eligibleCount() > beforeCount && detail().querySelector('header .bagrut-subject-status').textContent.includes('סימולציה'),
+        'The worklist eligibility and chip counts use the simulated evaluation');
+      app.acts.bagrutChip.call(app, $id('bagrut-kpis').querySelector('[data-chip="eligible"]'));
+      check($id('bagrut-table').querySelector(`[data-act="bagrutWorkSelect"][data-tz="${T(110)}"]`),
+        'The eligible chip filters by simulated eligibility');
+      app.acts.bagrutChip.call(app, $id('bagrut-kpis').querySelector('[data-chip="eligible"]'));
+      same(JSON.stringify(app.overviewModel()), overviewBefore, 'Overview remains unchanged while simulation is active');
+      app.renderTrainee360Panel();
+      same($id('profBadges').textContent + $id('profBody').textContent, profileBefore, '360 remains unchanged while simulation is active');
+      choose(T(101));
+      check(history().children[1].textContent.includes('30%: 70') && !history().children[1].textContent.includes('סימולציה'),
+        'Simulation never replaces a reported internal grade');
+      choose(T(111));
+      check(history().children[1].textContent.includes('100 (סימולציה)') &&
+        history().children[1].textContent.includes('חיצוני: -') && history().children[3].textContent.trim() === '-',
+        'Simulation does not fill a missing external questionnaire or invent a target');
+      choose(T(112));
+      check(history().children[1].textContent.includes('חסום') && !history().children[1].textContent.includes('סימולציה'),
+        'Simulation does not replace a reported blocker');
+      choose(T(103));
+      check(history().children[3].querySelector('.tier-4') && history().children[2].textContent.includes('נכשל'),
+        'A subject that cannot pass with 100 remains failed and retains its real target');
+      same(JSON.stringify([...Store._bagrut].map(([tz, entries]) => [tz, [...entries]])), storeBefore, 'Simulation does not modify stored results');
+      same(JSON.stringify(BagrutEngine.evaluate(T(110), FULL)), realBefore, 'Normal engine evaluations are unchanged by local simulation');
+      toggle('sim100', false);
+      check(!app.state.bagrut.sim100 && !$id('bagrut-scope').textContent.includes('מצב סימולציה פעיל') &&
+        eligibleCount() === beforeCount && history().children[3].querySelector('.tier-4'),
+        'Turning simulation off restores actual counts and keeps the target visible');
       choose(T(106));
       const failedTarget = history().children[3].querySelector('.tier-4');
       check(failedTarget && failedTarget.textContent === 'נכשל' && failedTarget.title.includes('100 ב-30%') &&

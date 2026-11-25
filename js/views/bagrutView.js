@@ -375,12 +375,14 @@
       return;
     }
     const roster = this.filtered().filter(t => t.gradeKey === 'יב');
-    const options = { ...finalOptions, ignoreInternals: !!this.state.bagrut.ignoreInternals };
+    const st = this.state.bagrut;
+    const sim100 = !!st.sim100 && st.drill === 'all' && !st.targets;
+    const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals, ...(sim100 ? { sim100: true } : {}) };
     const signals = signalsFor(roster.map(t => ({ t })), options);
     const rows = roster.map(t => ({ t, ev: signals.get(t.tz).ev }));
-    const st = this.state.bagrut;
-    const source = st.overviewEntry && !st.targets ? roster.map(t => ({ t, ev: this.getEval(t.tz) })) : rows;
-    const selected = this.filterByChip(source, st.targets ? 'all' : st.chip, st.overviewEntry ? undefined : signals);
+    const overviewSource = st.overviewEntry && !st.targets && !sim100;
+    const source = overviewSource ? roster.map(t => ({ t, ev: this.getEval(t.tz) })) : rows;
+    const selected = this.filterByChip(source, st.targets ? 'all' : st.chip, overviewSource ? undefined : signals);
     const targets = BagrutView.target30Rows.call(this, selected);
     if (!targets.length) {
       this.toast('אין יעדי 30% לייצוא בסינון הנוכחי', 'warn');
@@ -536,7 +538,8 @@
   renderBagrutWorklist() {
     const st = this.state.bagrut, roster = this.filtered().filter(t => t.gradeKey === 'יב');
     const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals };
-    const signalMap = signalsFor(roster.map(t => ({ t })), options);
+    const actualSignals = signalsFor(roster.map(t => ({ t })), options);
+    const signalMap = st.sim100 ? signalsFor(roster.map(t => ({ t })), { ...options, sim100: true }) : actualSignals;
     const rows = roster.map(t => ({ t, ev: signalMap.get(t.tz).ev }));
     const known = rows.filter(r => !noBagrutData(signalMap.get(r.t.tz), options) && r.ev.tier !== 0 && r.ev.tier !== 5);
     const forecastOptions = { ...options, fullMode: false, useCurrent: true };
@@ -546,7 +549,7 @@
     const forecastCount = known.filter(r => eligible(forecast.get(r.t.tz).ev)).length;
     const metric = (count, label) => `<span><strong>${known.length ? `${Math.round(count / known.length * 100)}%` : '—'}</strong> ${label}: ${count} מתוך ${known.length}</span>`;
     const globalRows = roster.map(t => ({ t, ev: this.getEval(t.tz) }));
-    const overviewIds = st.overviewEntry ? new Set(this.filterByChip(globalRows, st.chip).map(r => r.t.tz)) : null;
+    const overviewIds = st.overviewEntry && !st.sim100 ? new Set(this.filterByChip(globalRows, st.chip).map(r => r.t.tz)) : null;
     const attention = st.overviewEntry && st.chip === 'attention' ? this.attentionModel(roster, globalRows) : null;
     const selected = rows.filter(r => overviewIds ? overviewIds.has(r.t.tz) : this.chipMatch(r, st.chip, signalMap.get(r.t.tz)));
     const order = r => r.ev.tier === 5 ? 0 : r.ev.tier === 0 || r.ev.manualReview.required || r.ev.tier >= 3 ? 2 : 1;
@@ -556,7 +559,7 @@
     if (!selected.some(r => r.t.tz === st.workTz)) st.workTz = active.length ? active[0].t.tz : '';
     const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => this.chipMatch(r, id, signalMap.get(r.t.tz))).length}</span></button>`;
     setHtml('bagrut-kpis', `<div class="card bagrut-work-summary">
-      <div class="bagrut-work-metrics">${metric(todayCount, 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
+      <div class="bagrut-work-metrics">${metric(todayCount, st.sim100 ? 'עומדים בתנאי סוף י״ב בסימולציה' : 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
       <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל חנ״מ והכרעות ידניות; ללא מסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי מותאם לשלב בשנה ומשלב ציונים שוטפים; רכיבי י״ב שטרם דווחו בהיקף הנדרש בשכבה אינם נחשבים חסרים. הצפי אינו הבטחה לזכאות.</p>
       ${st.overviewEntry ? '<p>הרשימה שומרת על החניכים שנבחרו בחדר הבקרה; מצב כל חניך נבדק כאן לפי סוף י״ב.</p>' : ''}
       ${attention ? `<p>במעקב: ${attention.tzSet.size} חניכים · ${attention.bagrutRisk.length} בסיכון בבגרות · ${attention.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both ? ` (${attention.both} בשניהם)` : ''}</p>` : ''}
@@ -573,15 +576,14 @@
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
     let detail = '<p>אין חניכים להצגה בסינון הנוכחי.</p>';
     if (selectedRow) {
-      const { t, ev } = selectedRow, noData = noBagrutData(signalMap.get(t.tz), options);
+      const { t, ev } = selectedRow, actualEv = actualSignals.get(t.tz).ev, noData = noBagrutData(signalMap.get(t.tz), options);
       const b = UI.buildBagrutBreakdown(t, ev, { noData });
       const index = this._bagrutWorkIds.indexOf(t.tz);
       const issues = ev.blockers.filter(x => !x.info);
-      const show30 = st.show30 !== false;
       const rules = Config.rulesForGrade('יב');
       const pointsRules = Config.withRules(rules, () => Config.pointsCompensation());
       const examTag = comp => {
-        const value = comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
+        const value = comp.simulated ? '100 (סימולציה)' : comp.state === 'num' ? Util.fmt(comp.reportedNum ?? comp.num, 1) :
           comp.state === 'pass' ? 'עבר' : comp.state === 'exempt' ? 'פטור' :
           comp.blocked ? 'חסום' : comp.failed ? 'נכשל' : '-';
         return `<span class="bagrut-exam"><bdi dir="ltr">${E(comp.code)}</bdi> – ${comp.internal ? '30%' : 'חיצוני'}: <bdi>${E(value)}</bdi></span>`;
@@ -591,7 +593,7 @@
       let detailIndex = 0;
       const subjectRow = (id, name, exams, target, status, notes) => {
         const unique = [...new Set(notes.filter(Boolean))], detailsId = `bagrut-subject-details-${detailIndex++}`;
-        const statusClass = status === 'עובר' ? 'pass' : status === 'נכשל' ? 'bad' : 'neutral';
+        const statusClass = status.startsWith('עובר') ? 'pass' : status === 'נכשל' ? 'bad' : 'neutral';
         const button = unique.length ? `<button type="button" class="bagrut-subject-toggle" data-bagrut-subject-details aria-expanded="false" aria-controls="${detailsId}" aria-label="${E(`פרטים: ${name}`)}">פרטים</button>` : '-';
         return `<tr data-subject="${E(id)}"><th scope="row"><strong>${E(name)}</strong></th>
           <td><div class="bagrut-exams">${exams.map(examTag).join('') || '-'}</div></td>
@@ -599,16 +601,19 @@
           ${unique.length ? `<tr id="${detailsId}" class="bagrut-subject-detail-row" hidden><td colspan="5">${unique.map(note => `<div>${E(note)}</div>`).join('')}</td></tr>` : ''}`;
       };
       const subjects = ev.subjects.map(s => {
+        const actual = actualEv.subjects.find(subject => subject.id === s.id);
+        if (!actual) throw new Error(`חסרים נתוני המקצוע המקורי: ${s.id}`);
         const blockers = issues.filter(x => x.gate === 1 && x.k !== 'units' && (x.subject === s.id || x.text.includes(s.name)));
-        const external = s.comps.filter(c => !c.internal && c.state === 'missing' && !c.failed && !c.blocked);
-        const target = show30 && !b.noData && !external.length && s.status !== 'pass' && !s.compApplied
-          ? target30(s, ev, rules, true) : null;
-        const impossible = target && s.reverse && s.reverse.required30 > 100 &&
-          s.unresolved.concat(s.pending).every(c => c.internal);
+        const external = actual.comps.filter(c => !c.internal && c.state === 'missing' && !c.failed && !c.blocked);
+        const target = !b.noData && !external.length && actual.status !== 'pass' && !actual.compApplied
+          ? target30(actual, actualEv, rules, true) : null;
+        const impossible = target && actual.reverse && actual.reverse.required30 > 100 &&
+          actual.unresolved.concat(actual.pending).every(c => c.internal);
         const tooltip = 'גם 100 ב-30% אינו מספיק למעבר ישיר. במקצוע שאינו עברית ואינו מוחרג ניתן לבחון קיזוז או קומפנסציה (פיצוי נקודות), בכפוף לכללי הזכאות.';
         const targetCell = impossible ? `<span class="badge tier-4" title="${E(tooltip)}">נכשל</span>` :
           target && target.directTarget != null ? E(target.directTarget) : '-';
-        const status = b.noData ? '-' : s.exempt ? 'פטור' : s.status === 'pass' ? 'עובר' : 'נכשל';
+        const status = b.noData ? '-' : s.exempt ? 'פטור' : s.status === 'pass'
+          ? s.comps.some(c => c.simulated) && actual.status !== 'pass' ? 'עובר (סימולציה)' : 'עובר' : 'נכשל';
         const notes = alternatives(s.comps);
         blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
           .forEach(x => notes.push(x.text));
@@ -620,13 +625,13 @@
           notes.push(target.note);
         }
         if (impossible) {
-          if (s.critical) notes.push('המקצוע מוחרג מקיזוז ומפיצוי נקודות.');
+          if (actual.critical) notes.push('המקצוע מוחרג מקיזוז ומפיצוי נקודות.');
           else {
-            if (target.compensationTarget != null) notes.push(`להגעה לציון ${s.reverse.compMin} במקצוע נדרש ${target.compensationTarget} ב-30%; ${rules.allowCompensationRule ? 'הקיזוז כפוף לכללים ולמכסה' : 'הקיזוז מושבת בכללי המחזור'}.`);
-            else notes.push(`גם 100 ב-30% אינו מספיק להגעה לציון ${s.reverse.compMin} הנדרש לקיזוז.`);
-            if (rules.allowCompensationRule) notes.push(`טווח הקיזוז הוא ${s.reverse.compMin}–${rules.compensationMax}; מספר המקצועות המקוזזים כפוף למכסה של ${rules.maxCompensations}.`);
+            if (target.compensationTarget != null) notes.push(`להגעה לציון ${actual.reverse.compMin} במקצוע נדרש ${target.compensationTarget} ב-30%; ${rules.allowCompensationRule ? 'הקיזוז כפוף לכללים ולמכסה' : 'הקיזוז מושבת בכללי המחזור'}.`);
+            else notes.push(`גם 100 ב-30% אינו מספיק להגעה לציון ${actual.reverse.compMin} הנדרש לקיזוז.`);
+            if (rules.allowCompensationRule) notes.push(`טווח הקיזוז הוא ${actual.reverse.compMin}–${rules.compensationMax}; מספר המקצועות המקוזזים כפוף למכסה של ${rules.maxCompensations}.`);
             notes.push(pointsRules.enabled
-              ? `פיצוי נקודות נבחן למקצוע אחד בציון ${pointsRules.minScore}–${s.reverse.compMin - 1}, מול שני מקצועות עוברים של ${pointsRules.minUnits} יח״ל ומעלה. סכום הציונים הנדרש לפי סך היח״ל: ${Object.entries(pointsRules.table).map(([units, score]) => `${units} יח״ל: ${score}`).join(', ')}.`
+              ? `פיצוי נקודות נבחן למקצוע אחד בציון ${pointsRules.minScore}–${actual.reverse.compMin - 1}, מול שני מקצועות עוברים של ${pointsRules.minUnits} יח״ל ומעלה. סכום הציונים הנדרש לפי סך היח״ל: ${Object.entries(pointsRules.table).map(([units, score]) => `${units} יח״ל: ${score}`).join(', ')}.`
               : 'פיצוי נקודות מושבת בכללי המחזור.');
           }
         }
@@ -650,15 +655,15 @@
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
-      const impossibleSubjects = ev.subjects.filter(s => s.reverse && s.reverse.required30 > 100 &&
-        s.unresolved.concat(s.pending).every(c => c.internal) && target30(s, ev, rules));
+      const impossibleSubjects = actualEv.subjects.filter(s => s.reverse && s.reverse.required30 > 100 &&
+        s.unresolved.concat(s.pending).every(c => c.internal) && target30(s, actualEv, rules));
       const singleImpossible = impossibleSubjects.length === 1 ? impossibleSubjects[0] : null;
-      const additionalFailure = singleImpossible && (ev.subjects.some(s => s !== singleImpossible &&
+      const additionalFailure = singleImpossible && (actualEv.subjects.some(s => s !== singleImpossible &&
         ((!s.compApplied || s.compApplied === 'points') && ['comp', 'severe', 'fail'].includes(s.status) ||
          s.comps.some(c => c.failed || c.blocked) || (s.reverse && s.reverse.required30 > 100))) ||
-        issues.some(x => x.gate === 2 && ['major-fail', 'bagrut-block'].includes(x.k)));
-      const usedCompensations = ev.subjects.filter(s => s.status === 'comp' && !s.critical).length;
-      const otherFailingSubject = singleImpossible && ev.subjects.some(s => s !== singleImpossible && ['comp', 'severe', 'fail'].includes(s.status));
+        actualEv.blockers.some(x => !x.info && x.gate === 2 && ['major-fail', 'bagrut-block'].includes(x.k)));
+      const usedCompensations = actualEv.subjects.filter(s => s.status === 'comp' && !s.critical).length;
+      const otherFailingSubject = singleImpossible && actualEv.subjects.some(s => s !== singleImpossible && ['comp', 'severe', 'fail'].includes(s.status));
       const alternativesForHint = singleImpossible ? [
         rules.allowCompensationRule && usedCompensations < rules.maxCompensations && singleImpossible.reverse.requiredFor45 <= 100 ? `קיזוז בציון ${rules.compensationMin} לפחות` : '',
         pointsRules.enabled && !otherFailingSubject && singleImpossible.reverse.max >= pointsRules.minScore ? 'קומפנסציה (פיצוי נקודות) מול מקצועות חזקים' : ''
@@ -678,7 +683,7 @@
       const eligibility = eligible(ev);
       detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}</h2>
         <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
-        <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}</span>
+        <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${st.sim100 ? ' (סימולציה)' : ''}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>
         <button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="1" ${index < 0 || index === active.length - 1 ? 'disabled' : ''}>חניך הבא</button>
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
@@ -864,7 +869,7 @@
       const disabled = this.state.filters.grade !== 'יב' ? ' disabled' : '';
       workControls.innerHTML = `<button type="button" class="btn btn-ghost btn-sm" data-act="exportTargets30"${disabled}>ייצוא ציוני 30% מינימליים</button>
         <label><input type="checkbox" data-chg="bagrutWorkOption" data-key="ignoreInternals" ${st.ignoreInternals ? 'checked' : ''}${disabled}> התעלם ממקצועות פנימיים</label>
-        <label><input type="checkbox" data-chg="bagrutWorkOption" data-key="show30" ${st.show30 !== false ? 'checked' : ''}${disabled}> הצג ציון נדרש ב־30%</label>`;
+        ${st.drill === 'all' && !st.targets ? `<label><input type="checkbox" data-chg="bagrutWorkOption" data-key="sim100" ${st.sim100 ? 'checked' : ''}${disabled}> הוסף ציון 100 ב-30%</label>` : ''}`;
     }
     if (st.drill === 'all' && !st.targets && !(st.overviewEntry && this.state.filters.grade !== 'יב')) {
       this.renderFreshnessBar('bagrut');
@@ -879,7 +884,7 @@
       if (previous) previous.remove();
       if (box) {
         box.classList.remove('hidden');
-        box.innerHTML = '<div class="bagrut-work-title"><h1>בדיקת זכאות לסוף י״ב</h1></div>';
+        box.innerHTML = `<div class="bagrut-work-title"><h1>בדיקת זכאות לסוף י״ב</h1>${st.sim100 ? '<p>מצב סימולציה פעיל: רכיבי 30% שטרם דווחו מחושבים כ-100.</p>' : ''}</div>`;
       }
       if (select) {
         select.disabled = this.state.filters.grade !== 'יב';
