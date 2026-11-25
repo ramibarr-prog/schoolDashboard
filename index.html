@@ -224,6 +224,22 @@
     /* מחזורי זכאות והערות מייעצות */
     .cohort-card { padding: .85rem 1.1rem; border-radius: 14px; background: var(--sage-tint); border: 1px solid var(--sage-soft); border-right: 5px solid var(--forest); }
     .cohort-bar { padding-bottom: .75rem; border-bottom: 1px solid var(--sage-tint); }
+    #panel-settings .sd-rules-nav { padding: .75rem; border: 1px solid var(--card-border); border-radius: .75rem; background: var(--cream-bg); }
+    #panel-settings .sd-rules-nav button[role="tab"] { display: flex; width: 100%; justify-content: space-between; gap: .5rem; padding: .5rem .65rem; border-radius: .5rem; color: var(--forest); text-align: right; }
+    #panel-settings .sd-rules-nav button[aria-selected="true"] { background: var(--forest); color: var(--cream-bg); }
+    #panel-settings .sd-rules-nav button[role="tab"]:focus-visible { outline: 2px solid var(--mustard); outline-offset: 2px; }
+    #panel-settings .sd-rules-divider { border-top: 1px solid var(--sage-soft); margin: .6rem 0; }
+    #panel-settings .sd-weight-bar { display: flex; overflow: hidden; min-height: 1.8rem; border-radius: .5rem; background: var(--sage-tint); }
+    #panel-settings .sd-weight-external, #panel-settings .sd-weight-internal { min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: .2rem; font-size: .75rem; white-space: nowrap; }
+    #panel-settings .sd-weight-external { background: var(--forest); color: var(--cream-bg); }
+    #panel-settings .sd-weight-internal { background: var(--mustard); color: var(--forest); }
+    #panel-settings .sd-weight-key { color: var(--muted); font-size: .75rem; }
+    #panel-settings .sd-weight-ok { color: var(--forest); font-weight: 700; }
+    #panel-settings .sd-weight-warning { color: var(--amber-dark); font-weight: 700; }
+    #panel-settings .sd-calib-table th { background: var(--sage-tint); color: var(--forest); }
+    #panel-settings .sd-calib-table td, #panel-settings .sd-calib-table th { padding: .55rem; border-bottom: 1px solid var(--card-border); text-align: right; }
+    #panel-settings .sd-calib-group td { background: var(--cream-bg); color: var(--forest); font-weight: 700; }
+    #panel-settings .sd-unmapped { border: 1px solid var(--mustard); border-radius: .75rem; background: rgba(232, 185, 95, .15); padding: .8rem; color: var(--forest); }
     .miss-grade { display: inline-block; padding: 0 .55rem; border-radius: 999px; background: rgba(232, 185, 95, .22); color: #7A5612; border: 1px solid var(--mustard); font-size: .72rem; font-weight: 700; white-space: nowrap; }
     /* כרטיס 360°: מרווח עליון וגלילה שמותירה את שם החניך וכפתורי הפעולה גלויים תמיד */
     #panel-profile { padding-top: .5rem; scroll-margin-top: 1rem; }
@@ -414,6 +430,8 @@
     .q-row .q-weight { width: 5rem; text-align: center; padding-inline: .4rem; }
     .q-row .q-grade { min-width: 76px; padding-inline-start: .6rem; padding-inline-end: 1.75rem; }
     .q-row .q-name { flex: 1.5 1 240px; min-width: 240px; padding-inline: .75rem; }
+    #panel-settings #rulesCore .q-row { display: flex; }
+    #panel-settings #rulesCore .q-codes, #panel-settings #rulesCore .q-name { flex: 1 1 12rem; min-width: 0; width: auto; }
     /* תתי-לשוניות הגדרות */
     [data-settings-pane][hidden] { display: none; }
     .settings-seg { display: inline-flex; flex-wrap: wrap; gap: .25rem; padding: .25rem; background: #fff; border: 1px solid var(--card-border); border-radius: 999px; box-shadow: 0 2px 8px -4px rgba(120, 92, 50, .2); }
@@ -423,6 +441,36 @@
     .seg-tab[aria-selected="true"] { background: #355747; color: #FAF7EF; }
     .seg-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.25rem; height: 1.25rem; padding: 0 .35rem; border-radius: 999px; background: #E8B95F; color: #355747; font-size: .72rem; font-weight: 800; }
     .seg-badge.hidden { display: none; }
+    #panel-settings #ribbonStatus { padding: .6rem .8rem; border: 1px solid var(--card-border); border-radius: .8rem; background: var(--card-bg); }
+    #panel-settings .settings-seg { max-width: 100%; background: var(--cream-bg); border-color: var(--card-border); box-shadow: none; }
+    #panel-settings .seg-tab[aria-selected="true"] { background: var(--forest); color: var(--cream-bg); }
+    #panel-settings #setBadgeOverrides, #panel-settings #setBadgeData { background: var(--sage-tint); color: var(--forest); }
+    #panel-settings #setBadgeRules { background: var(--mustard); color: var(--forest); }
+    #panel-settings #cloudConflict { background: rgba(232, 185, 95, .15); border-color: var(--mustard); }
+    #panel-settings .settings-danger { border-color: rgba(200, 100, 50, .4); }
+    #panel-settings .settings-danger h3 { color: var(--terracotta); }
+    #panel-settings .settings-danger-row + .settings-danger-row { border-top: 1px solid var(--card-border); }
+    #panel-settings #dataTools { display: contents; }
+    #panel-settings .sd-roster-drop { padding: .8rem 1rem; text-align: start; }
+    #panel-settings .sd-source-card { min-width: 0; display: flex; flex-direction: column; gap: .75rem; }
+    #panel-settings .sd-source-card .fresh-bar { padding: .35rem .5rem; font-size: .75rem; overflow-wrap: anywhere; }
+    #panel-settings .sd-source-card .sd-source-upload { margin-top: auto; }
+    #panel-settings .sd-kebab { position: relative; }
+    #panel-settings .sd-kebab summary { list-style: none; cursor: pointer; }
+    #panel-settings .sd-kebab summary::-webkit-details-marker { display: none; }
+    #panel-settings .sd-kebab-menu { position: absolute; inset-inline-end: 0; top: 100%; z-index: 20; min-width: 13rem; padding: .35rem; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: .7rem; box-shadow: 0 6px 18px rgba(53, 87, 71, .15); }
+    #panel-settings .sd-quality-row { border-top: 1px solid var(--card-border); padding-top: .5rem; }
+    #panel-settings .sd-quality-filter[aria-pressed="true"] { background: var(--forest); color: var(--cream-bg); }
+    #panel-settings .sd-class-chip { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .35rem .55rem; border: 1px solid var(--card-border); border-radius: .7rem; background: var(--cream-bg); }
+    #panel-settings .sd-class-chip.is-special { background: var(--sage-tint); border-color: var(--sage); }
+    #panel-settings .sd-class-chip > button { color: var(--forest); text-decoration: underline; text-underline-offset: 2px; }
+    #panel-settings #ovSidePanel { border-color: var(--sage-soft); background: var(--card-bg); }
+    #panel-settings #ovSidePanel[hidden] { display: none; }
+    #panel-settings .sd-ov-badge { display: inline-flex; padding: .2rem .55rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--cream-bg); color: var(--forest); border: 1px solid var(--card-border); }
+    #panel-settings .sd-ov-badge.is-adjusted { background: var(--sage-tint); border-color: var(--sage-soft); }
+    #panel-settings .sd-ov-badge.is-hidden { background: rgba(200, 100, 50, .1); color: var(--terracotta); border-color: rgba(200, 100, 50, .3); }
+    #panel-settings .sd-ov-edit { color: var(--forest); text-align: start; }
+    #panel-settings .sd-ov-edit:hover strong { text-decoration: underline; }
     /* מסך פתיחה */
     #appSplash { position: fixed; inset: 0; z-index: 9999; background: #FAF7EF; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity .45s ease, visibility .45s ease; }
     #appSplash.splash-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
@@ -713,89 +761,141 @@
         <span id="syncStatus" class="brand-pill" role="status" aria-live="polite"></span>
         <span id="statusLine" class="brand-pill" role="status" aria-live="polite">0 חניכים במצבת</span>
         <button type="button" id="overridesBanner" data-go-overrides class="hidden badge bg-amber-300 text-violet-950 border-amber-500 cursor-pointer"></button>
+        <span id="staleSourcesPill" class="hidden badge fresh-amber" role="status"></span>
+        <button type="button" id="qualityStatusPill" class="hidden badge fresh-amber" data-act="openDataQuality"></button>
       </div>
       <div id="settingsTabs" class="settings-seg" role="tablist" aria-label="תתי-לשוניות הגדרות">
-        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="roster" aria-selected="true">📋 מצבת וכיתות אם</button>
-        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="overrides" aria-selected="false">🔀 דריסות שיוך <span id="setBadgeOverrides" class="seg-badge hidden"></span></button>
-        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="rules" aria-selected="false">🎓 חוקי בגרות ושאלונים <span id="setBadgeRules" class="seg-badge hidden"></span></button>
-        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="system" aria-selected="false">☁️ ענן, גיבוי ותחזוקה</button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="roster" aria-selected="true">נתונים וקליטה <span id="setBadgeData" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="overrides" aria-selected="false">חריגים ודריסות <span id="setBadgeOverrides" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="rules" aria-selected="false">חוקי בגרות <span id="setBadgeRules" class="seg-badge hidden"></span></button>
+        <button type="button" class="seg-tab" role="tab" data-act="settingsView" data-view="system" aria-selected="false">ענן וגיבוי</button>
       </div>
       <div data-settings-pane="roster" class="grid xl:grid-cols-2 gap-4">
-        <div class="card p-4 space-y-3">
-          <div class="font-semibold flex items-center gap-2"><i data-lucide="clipboard-list" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>מצבת חניכים עליונה</div>
-          <p class="text-xs text-slate-500">המצבת קובעת מי חניך פעיל, באיזו שכבה ובאיזו כיתת אם. קובצי המשנה אינם יכולים לדרוס שדות אלה. המצבת נשמרת עד לטעינת מצבת חדשה.
-            עמודות נדרשות: ת.ז, שם פרטי, שם משפחה, שכבה, כיתת אם; אופציונלי: מסלול.</p>
-          <div class="dropzone" data-drop="masterRoster">
-            <i data-lucide="upload-cloud" class="w-8 h-8 mx-auto text-slate-400" aria-hidden="true"></i>
-            <div class="text-sm mt-1">גררו לכאן קובץ Excel (אפשר גיליון לכל שכבה)</div>
-            <button type="button" class="btn btn-primary mt-2" data-upload="masterRoster">טען קובץ מצבת חניכים עליון</button>
-            <button type="button" class="btn btn-ghost btn-sm mt-2" data-act="remap" data-key="masterRoster" title="מיפוי ידני מחדש של עמודות הקובץ האחרון">🔧 מיפוי עמודות</button>
+        <div class="dropzone sd-roster-drop xl:col-span-2" data-drop="masterRoster">
+          <div class="flex flex-wrap items-center gap-2 text-sm">
+            <span>גררו קובץ מצבת Excel לכאן או</span>
+            <button type="button" class="btn btn-primary btn-sm" data-upload="masterRoster">בחירת קובץ</button>
             <input type="file" class="hidden" id="file-masterRoster" data-file-input="masterRoster" accept=".xlsx,.xls,.csv" aria-label="קובץ מצבת חניכים">
           </div>
-          <div data-fresh-bar="masterRoster" role="status" aria-live="polite"></div>
-          <div id="rosterSummary" class="text-sm text-slate-600"></div>
+          <p class="text-xs text-slate-500 mt-1">לפני החלפת מצבת קיימת תוצג תצוגה מקדימה: כמה חניכים נוספו, הוסרו ושונו</p>
+          <p class="text-xs text-slate-500">המצבת קובעת חניכים פעילים, שכבה וכיתת אם ונשמרת עד להחלפתה. עמודות נדרשות: ת.ז, שם פרטי, שם משפחה, שכבה וכיתת אם; מסלול הוא אופציונלי.</p>
         </div>
-
-        <div class="card p-4 space-y-3 xl:col-span-2" id="nicknamesCard">
-          <div class="font-semibold">🏫 הגדרת כיתות חינוך מיוחד (חנ"מ)</div>
-          <p class="text-xs text-slate-500">שמות הכיתות נלקחים מהמצבת. סימון חנ"מ מגדיר את מסלול חניכי הכיתה, אלא אם הוגדר לחניך מסלול ידני בדריסת המצבת או בכרטיס שלו; הזיהוי אוטומטי כששם הכיתה כולל "חנמ" או "מרחב".</p>
-          <div id="nicknames" class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-4"></div>
+        <div class="xl:col-span-2 space-y-2">
+          <div id="dataToolsCard" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <section class="card p-4 sd-source-card">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-semibold">מצבת חניכים</h3>
+                <details class="sd-kebab">
+                  <summary class="btn btn-ghost btn-sm" aria-label="פעולות מצבת חניכים">⋯</summary>
+                  <div class="sd-kebab-menu">
+                    <button type="button" class="btn btn-ghost btn-sm w-full" data-act="remap" data-key="masterRoster">מיפוי עמודות</button>
+                    <button type="button" id="deleteRosterBtn" class="btn btn-danger btn-sm w-full" data-act="deleteRoster" disabled>מחיקת המצבת</button>
+                  </div>
+                </details>
+              </div>
+              <div data-fresh-bar="masterRoster" role="status" aria-live="polite"></div>
+              <div id="rosterSummary" class="text-sm text-slate-600"></div>
+              <button type="button" class="btn btn-primary w-full sd-source-upload" data-upload="masterRoster">טעינת קובץ</button>
+            </section>
+            <div id="dataTools"></div>
+          </div>
+          <p class="text-xs text-slate-500">בתפריט ⋯ בכל מקור: מיפוי עמודות, הסרת שכבה (בציונים שוטפים) וניקוי נתונים. כל פעולה הרסנית מבקשת אישור.</p>
         </div>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start xl:col-span-2">
+          <section id="qualityDetails" class="card p-4 space-y-3" aria-label="איכות נתונים"></section>
+          <section class="card p-4 space-y-3" id="nicknamesCard">
+            <h3 class="font-semibold">כיתות וחינוך מיוחד (חנ"מ) <span id="nicknamesCount" class="text-sm text-slate-500"></span></h3>
+            <p class="text-xs text-slate-500">סימון חנ"מ מגדיר את מסלול חניכי הכיתה, אלא אם הוגדר לחניך מסלול ידני; הזיהוי אוטומטי כששם הכיתה כולל "חנמ" או "מרחב".</p>
+            <div id="nicknames" class="space-y-3"></div>
+          </section>
+        </div>
+        <section id="quarantineReports" class="card p-4 space-y-3 xl:col-span-2"></section>
       </div>
 
       <div data-settings-pane="overrides" class="grid xl:grid-cols-2 gap-4" hidden>
-        <div class="card p-4 space-y-3 xl:col-span-2" id="rosterOverridesCard">
-          <div class="font-semibold flex items-center gap-2"><i data-lucide="shuffle" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>🔀 דריסת שיוך שכבה וכיתת אם (Roster Overrides)</div>
-          <p class="text-xs text-slate-500">תיקון שיוך חניך בלי לגעת בקובץ המצבת: הדריסה נשמרת בנפרד ומונחת מעל הנתונים שבקובץ, ואפשר לבטל אותה בכל עת. חניך מוסתר (עזב / לא פעיל) אינו מופיע בפאנלים אך נשמר כאן לשחזור.</p>
-
-          <form id="ovForm" class="grid grid-cols-1 md:grid-cols-6 gap-3 items-end text-sm" autocomplete="off">
-            <div class="relative flex flex-col gap-1 md:col-span-2" id="ovSearchWrap">
-              <label for="overrideTraineeSearch">חניך (חיפוש לפי שם או ת.ז)</label>
-              <input id="overrideTraineeSearch" class="inp" placeholder="התחילו להקליד שם או ת.ז" aria-label="בחירת חניך לדריסה" aria-controls="ovResults" aria-expanded="false" autocomplete="off">
-              <div id="ovResults" class="hidden absolute top-full inset-x-0 max-h-60 overflow-y-auto bg-white border border-slate-300 rounded-lg shadow-xl z-50" aria-label="תוצאות חיפוש חניכים"></div>
+        <div id="rosterOverridesCard" class="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start xl:col-span-2">
+          <section id="ovTableCard" class="card p-4 space-y-3 xl:col-span-8">
+            <div id="ovTableSection" tabindex="-1" class="space-y-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <input id="ovTableSearch" class="inp flex-1" placeholder="חיפוש חניך בשם, ת.ז או הערה" aria-label="חיפוש דריסות">
+                <select id="ovTableFilter" class="inp" aria-label="סינון דריסות">
+                  <option value="all">הכול</option>
+                  <option value="placement">שינוי שכבה או כיתה</option>
+                  <option value="track">שינוי מסלול</option>
+                  <option value="hidden">מוסתרים או עזבו</option>
+                  <option value="added">נוספו ידנית</option>
+                </select>
+                <button type="button" class="btn btn-primary" id="ovNewBtn">+ דריסה חדשה</button>
+                <details class="sd-kebab">
+                  <summary class="btn btn-ghost btn-sm" aria-label="פעולות דריסות">⋯</summary>
+                  <div class="sd-kebab-menu"><button type="button" id="ovClearAll" class="btn btn-danger btn-sm w-full" data-act="ovClearAll"></button></div>
+                </details>
+              </div>
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="font-semibold">דריסות פעילות <span id="ovCount" class="text-slate-600 font-normal"></span></h3>
+                <span class="text-xs text-slate-500">ממוינות לפי תאריך עדכון</span>
+              </div>
+              <p id="ovExceptionsHint" class="text-xs text-slate-500"></p>
+              <div id="ovTable" class="tbl-wrap"></div>
+              <div id="ovTableFooter" class="flex flex-wrap items-center gap-2 text-xs text-slate-500"></div>
             </div>
-            <div id="ovInfo" class="md:col-span-4 text-xs text-slate-600 pb-2" role="status">בחרו חניך כדי לראות את השיוך המקורי בקובץ.</div>
-            <label class="flex flex-col gap-1">שכבה חדשה
-              <select id="ovGrade" class="inp"><option value="">ללא שינוי</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option></select></label>
-            <label class="flex flex-col gap-1">כיתת אם חדשה
-              <select id="ovHomeroom" class="inp" aria-label="כיתת אם חדשה"></select>
-              <input id="ovOtherHomeroom" class="inp hidden" placeholder="למשל יא3" aria-label="כיתת אם אחרת"></label>
-            <label class="flex flex-col gap-1">מסלול
-              <select id="ovTrack" class="inp"><option value="">ללא שינוי</option></select></label>
-            <label class="flex flex-col gap-1 md:col-span-2">הערה
-              <input id="ovNote" class="inp" maxlength="200" placeholder="אופציונלי"></label>
-            <label id="ovNameWrap" class="flex flex-col gap-1 hidden">שם החניך (לחניך שאינו במצבת)
-              <input id="ovName" class="inp" maxlength="80"></label>
-            <label class="flex items-center gap-2 md:col-span-3 cursor-pointer"><input type="checkbox" id="ovHidden" class="w-4 h-4">הסתר חניך מהמערכת (עזב / לא פעיל)</label>
-            <div class="md:col-span-3 flex justify-end"><button type="button" class="btn btn-primary" data-act="ovSave">שמור דריסה</button></div>
-          </form>
-
-          <div id="ovTableSection" tabindex="-1">
-            <div class="flex flex-wrap items-center justify-between gap-2 mb-1"><div class="text-sm font-medium">דריסות פעילות <span id="ovCount" class="text-slate-600 font-normal"></span></div>
-              <button type="button" id="ovClearAll" class="btn btn-danger btn-sm" data-act="ovClearAll"></button></div>
-            <div id="ovTable" class="tbl-wrap"></div>
-          </div>
+          </section>
+          <aside id="ovSidePanel" class="card p-4 space-y-3 xl:col-span-4">
+            <div class="text-xs text-slate-500">חלונית צד</div>
+            <h3 id="ovFormTitle" class="font-semibold">דריסה חדשה</h3>
+            <form id="ovForm" class="space-y-3 text-sm" autocomplete="off">
+              <div class="relative flex flex-col gap-1" id="ovSearchWrap">
+                <label for="overrideTraineeSearch">חניך (חיפוש לפי שם או ת.ז)</label>
+                <input id="overrideTraineeSearch" class="inp" placeholder="התחילו להקליד שם או ת.ז" aria-label="בחירת חניך לדריסה" aria-controls="ovResults" aria-expanded="false" autocomplete="off">
+                <div id="ovResults" class="hidden absolute top-full inset-x-0 max-h-60 overflow-y-auto bg-white border border-slate-300 rounded-lg shadow-xl z-50" aria-label="תוצאות חיפוש חניכים"></div>
+              </div>
+              <div id="ovInfo" class="text-xs text-slate-600" role="status">בחרו חניך כדי לראות את השיוך המקורי בקובץ.</div>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="flex flex-col gap-1">שכבה חדשה
+                  <select id="ovGrade" class="inp"><option value="">ללא שינוי</option><option value="י">י'</option><option value="יא">י"א</option><option value="יב">י"ב</option></select></label>
+                <label class="flex flex-col gap-1">כיתת אם חדשה
+                  <select id="ovHomeroom" class="inp" aria-label="כיתת אם חדשה"></select>
+                  <input id="ovOtherHomeroom" class="inp hidden" placeholder="למשל יא3" aria-label="כיתת אם אחרת"></label>
+              </div>
+              <label class="flex flex-col gap-1">מסלול
+                <select id="ovTrack" class="inp"><option value="">ללא שינוי</option></select></label>
+              <label class="flex flex-col gap-1">הערה
+                <input id="ovNote" class="inp" maxlength="200" placeholder="אופציונלי"></label>
+              <label id="ovNameWrap" class="flex flex-col gap-1 hidden">שם החניך (לחניך שאינו במצבת)
+                <input id="ovName" class="inp" maxlength="80"></label>
+              <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" id="ovHidden" class="w-4 h-4">הסתר חניך מהמערכת (עזב / לא פעיל)</label>
+              <div class="flex gap-2"><button type="button" class="btn btn-primary flex-1" data-act="ovSave">שמור דריסה</button><button type="button" class="btn btn-ghost" id="ovClosePanel">סגירה</button></div>
+            </form>
+          </aside>
         </div>
       </div>
 
       <div data-settings-pane="rules" class="space-y-4" hidden>
-        <div id="cohortAssign"></div>
         <div id="qUnmapped"></div>
 
         <!-- עריכת כללי זכאות ומשקלים (מקור יחיד לכללים) -->
-        <div id="rulesDrawer" class="card p-4" aria-label="עריכת כללי זכאות ומשקלים">
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div class="font-semibold flex items-center gap-2"><i data-lucide="scale" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>כללי זכאות ומשקלים</div>
-            <button type="button" class="btn btn-ghost btn-sm" id="rulesReset">שחזור ברירות מחדל</button>
+        <div id="rulesDrawer" class="card p-4 space-y-4" aria-label="עריכת כללי זכאות ומשקלים">
+          <div id="cohortBar" class="cohort-bar">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div id="cohortBarList"></div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-ghost btn-sm" data-act="cohortAdd">+ מחזור חדש</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="cohortCopy">העתק חוקים ממחזור אחר</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="rulesReset">שחזור ברירות מחדל</button>
+              </div>
+            </div>
+            <details class="mt-3">
+              <summary class="btn btn-ghost btn-sm">שיוך שכבות למחזורים</summary>
+              <div id="cohortAssign" class="mt-2"></div>
+            </details>
           </div>
-          <div id="cohortBar" class="cohort-bar mb-3"></div>
-          <div id="rulesWarnings" class="text-sm text-amber-700 mb-3" role="status" aria-live="polite"></div>
+          <div id="rulesWarnings" class="text-sm text-amber-700" role="status" aria-live="polite"></div>
 
-          <div id="rulesTabs" class="flex flex-wrap gap-2 mb-3" role="tablist" aria-label="לשוניות כללי זכאות"></div>
-
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          <nav id="rulesTabs" class="sd-rules-nav lg:col-span-3" role="tablist" aria-label="לשוניות כללי זכאות"></nav>
+          <div class="lg:col-span-9">
           <div data-rules-pane="core">
             <div id="rulesCore" class="grid grid-cols-1 gap-3"></div>
-            <button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
           </div>
           <div data-rules-pane="major" hidden>
             <div id="rulesMajor" class="grid grid-cols-1 gap-2"></div>
@@ -834,47 +934,66 @@
               </div>
             </div>
           </div>
+          </div>
+          </div>
         </div>
 
         <div class="card p-4 space-y-3" id="qCalibCard">
-          <div class="font-semibold">🎯 ניהול וכיול סמלי שאלונים</div>
+          <div><h2 class="font-semibold">קטלוג שאלונים</h2><p class="text-xs text-slate-500">כל שינוי נשמר מיד ומחשב מחדש את זכאות הבגרות</p></div>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="qCalibSearch" class="inp flex-1" type="search" placeholder="חיפוש לפי סמל, שם או מקצוע" aria-label="חיפוש לפי סמל, שם או מקצוע">
+            <span id="qCalibCount" class="text-xs text-slate-500" role="status"></span>
+            <button type="button" class="btn btn-primary btn-sm" data-act="calibAdd">+ סמל שאלון</button>
+          </div>
           <div id="qCalib" class="space-y-3 text-sm"></div>
         </div>
       </div>
 
       <div data-settings-pane="system" class="grid xl:grid-cols-2 gap-4" hidden>
-        <section id="qualityDetails" class="card p-4 space-y-2 xl:col-span-2" aria-label="איכות נתונים"></section>
-        <div class="card p-4 space-y-3 xl:col-span-2" id="cloudCard">
-          <div class="font-semibold">☁️ סנכרון ענן וגיבוי מלא</div>
-          <div id="cloudBody" class="space-y-3 text-sm"></div>
-          <button type="button" class="btn btn-danger btn-sm" data-act="cloudWipeLocal">התנתק ומחק נתונים מקומיים (מחשב משותף)</button>
-          <div id="cloudConflict" class="space-y-2 text-sm text-amber-800" role="alert" hidden>
-            <p>נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:</p>
-            <div class="flex flex-wrap gap-2">
-              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull" title="יחליף את מה שפתוח כרגע במסך">קבלת השינויים מהמחשב האחר</button>
-              <button type="button" class="btn btn-ghost btn-sm" data-act="cloudForcePush" title="ידרוס את השינויים שנשמרו במחשב האחר">שמירת השינויים שלי בלבד</button>
-              <button type="button" class="btn btn-primary btn-sm" data-act="backupExport">שמירת עותק גיבוי למחשב קודם</button>
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start xl:col-span-2">
+          <div id="cloudCard" class="space-y-4">
+            <div id="cloudConflict" class="card p-4 space-y-2 text-sm text-amber-800 border-amber-300 bg-amber-50" role="alert" hidden>
+              <p>נשמרו שינויים ממחשב אחר (או מלשונית אחרת). כדי לא למחוק עבודה של אף אחד, השמירה האוטומטית נעצרה — בחרו כיצד להמשיך:</p>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull" title="יחליף את מה שפתוח כרגע במסך">קבלת השינויים מהמחשב האחר</button>
+                <button type="button" class="btn btn-ghost btn-sm" data-act="cloudForcePush" title="ידרוס את השינויים שנשמרו במחשב האחר">שמירת השינויים שלי בלבד</button>
+                <button type="button" class="btn btn-primary btn-sm" data-act="backupExport">שמירת עותק גיבוי למחשב קודם</button>
+              </div>
             </div>
+            <div id="cloudBody" class="space-y-4 text-sm"></div>
           </div>
-        </div>
-
-        <div class="card p-4 space-y-3 xl:col-span-2">
-          <div class="font-semibold flex items-center gap-2"><i data-lucide="save" class="w-5 h-5 text-sky-600" aria-hidden="true"></i>גיבוי, שחזור ותחזוקת נתונים</div>
-          <p class="text-xs text-slate-500">גיבוי מלא של כל נתוני המערכת לקובץ אחד (מצבת, קובצי בגרות/קבוצות/סדין, דריסות שיוך, חריגים וכללי זכאות). אם הוגדר קוד בית-ספר, גם קובץ הגיבוי מוצפן ודורש את אותו קוד לשחזור.</p>
-          <div class="flex flex-wrap gap-2">
-            <button type="button" class="btn btn-primary" data-act="backupExport">📥 ייצוא גיבוי מלא (.json)</button>
-            <label class="btn btn-ghost cursor-pointer">📤 שחזור מגיבוי (.json)
-              <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
-            <button type="button" id="btnClearData" class="btn btn-danger"><i data-lucide="trash-2" class="w-4 h-4" aria-hidden="true"></i>ניקוי קובצי משנה</button>
-            <button type="button" id="btnResetConfig" class="btn btn-danger"><i data-lucide="rotate-ccw" class="w-4 h-4" aria-hidden="true"></i>איפוס הגדרות</button>
+          <div class="space-y-4">
+            <section class="card p-4 space-y-3">
+              <h3 class="font-semibold">גיבוי ושחזור</h3>
+              <p class="text-xs text-slate-500">הגיבוי כולל את נתוני המערכת. אם הוגדר קוד בית-ספר, הגיבוי מוצפן ודורש את אותו קוד לשחזור.</p>
+              <div id="configSummary" class="text-xs text-slate-400"></div>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="btn btn-primary" data-act="backupExport">ייצוא גיבוי מלא (.json)</button>
+                <label class="btn btn-ghost cursor-pointer">שחזור מגיבוי (.json)
+                  <input type="file" id="backupImportFile" class="hidden" accept=".json,application/json" data-chg="backupImport"></label>
+              </div>
+            </section>
+            <section class="card p-4 space-y-3">
+              <h3 class="font-semibold">יומן סנכרון</h3>
+              <div id="syncLogList" class="text-sm" aria-live="polite"></div>
+            </section>
+            <section class="card settings-danger p-4 space-y-3">
+              <h3 class="font-semibold">אזור מסוכן</h3>
+              <div class="settings-danger-row flex flex-wrap items-center justify-between gap-2 py-2">
+                <div><div class="font-medium">התנתקות ומחיקת נתונים מקומיים</div><p class="text-xs text-slate-500">למחשב משותף — הנתונים בענן נשמרים.</p></div>
+                <button type="button" class="btn btn-danger btn-sm" data-act="cloudWipeLocal">התנתק ומחק נתונים מקומיים</button>
+              </div>
+              <div class="settings-danger-row flex flex-wrap items-center justify-between gap-2 py-2">
+                <div class="font-medium">ניקוי קובצי משנה</div>
+                <button type="button" id="btnClearData" class="btn btn-danger btn-sm">ניקוי קובצי משנה</button>
+              </div>
+              <div class="settings-danger-row flex flex-wrap items-center justify-between gap-2 py-2">
+                <div class="font-medium">איפוס הגדרות</div>
+                <button type="button" id="btnResetConfig" class="btn btn-danger btn-sm">איפוס הגדרות</button>
+              </div>
+              <p class="text-xs text-slate-500">כל פעולה דורשת אישור לפני ביצוע.</p>
+            </section>
           </div>
-          <div id="configSummary" class="text-xs text-slate-400"></div>
-        </div>
-
-        <div class="card p-4 space-y-3 xl:col-span-2" id="dataToolsCard">
-          <div class="font-semibold">🛠️ כלים טכניים לקובצי נתונים</div>
-          <p class="text-xs text-slate-500">טעינת קובצי נתונים, מיפוי עמודות ידני מחדש וניקוי נתוני קבצים (כל הקובץ או לפי שכבה). טעינת מצבת נמצאת בלשונית מצבת וכיתות אם.</p>
-          <div id="dataTools" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
         </div>
       </div>
     </section>
@@ -979,8 +1098,8 @@
   <script src="js/views/groupsView.js"></script>
   <script src="js/views/sadinView.js"></script>
   <script src="js/views/bagrutView.js"></script>
-  <script src="js/views/rulesView.js?v=20261124_1"></script>
+  <script src="js/views/rulesView.js?v=20261125_4"></script>
   <script src="js/importQuarantine.js"></script>
-  <script src="js/app.js?v=20261124_1"></script>
+  <script src="js/app.js?v=20261125_2"></script>
 </body>
 </html>

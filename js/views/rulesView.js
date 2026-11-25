@@ -8,6 +8,77 @@
   const setChecked = (id, value) => { const el = $(id); if (el) el.checked = !!value; };
   const on = (id, event, fn) => { const el = $(id); if (el) el.addEventListener(event, fn); };
   const natural = (a, b) => String(a).localeCompare(String(b), 'he', { numeric: true });
+  const qualityRecords = signals => {
+    const records = [];
+    signals.forEach(signal => signal.dataQuality.forEach(flag => {
+      const add = (type, name) => records.push({ type, name, signal, flag });
+      if (flag.id === 'data.sadin_not_enrolled') {
+        const entry = Store.currentOf(signal.tz).find(e => `${e.subject || ''} [${e.groupId}]` === flag.detail);
+        add('groups', entry && entry.subject ? entry.subject : flag.detail || 'קבוצה ללא מקצוע');
+      } else if (flag.id === 'data.manual_review') {
+        const ev = signal.ev, review = ev && ev.manualReview;
+        const codes = review ? review.foreignCodes : [], reasons = review ? review.reasons : [];
+        codes.forEach(code => add('questionnaires', code.subject || `שאלון ${code.code}`));
+        reasons.forEach(reason => {
+          const core = (ev.subjects || []).find(s => s.exempt && reason === `פטור במקצוע חובה (${s.name}) — דורש החלטת רכזת`);
+          const major = ((ev.major && ev.major.cands) || []).find(s => s.exempt && reason === `פטור במגמה (${s.name}) — דורש החלטת רכזת`);
+          add('questionnaires', core ? core.name : major ? major.name : 'בדיקת שאלונים ופטורים');
+        });
+        if (!codes.length && !reasons.length) add('questionnaires', 'בדיקת שאלונים ופטורים');
+      } else add('other', flag.label || 'איכות נתונים');
+    }));
+    return records;
+  };
+  const cloudLogActions = { pull: 'משיכה מהענן', sync: 'סנכרון לענן', force: 'דחיפה כפויה' };
+  const cloudLogStatuses = { ok: 'הושלם', conflict: 'נשמר מקומית — התנגשות', error: 'נכשל' };
+  const readCloudLog = () => {
+    try {
+      const entries = JSON.parse(localStorage.getItem('sd.cloud.log') || '[]');
+      if (!Array.isArray(entries)) throw new Error('Invalid sync log');
+      return entries.filter(e => e && Object.prototype.hasOwnProperty.call(cloudLogActions, e.action) &&
+        Object.prototype.hasOwnProperty.call(cloudLogStatuses, e.status) &&
+        Number.isFinite(e.at) && Number.isFinite(new Date(e.at).getTime()) &&
+        Number.isSafeInteger(e.rev) && e.rev >= 0)
+        .slice(-8).map(({ at, action, status, rev }) => ({ at, action, status, rev }));
+    } catch (e) {
+      console.warn('קריאת יומן הסנכרון המקומי נכשלה');
+      return [];
+    }
+  };
+  const renderCloudLog = () => {
+    const host = $('syncLogList');
+    if (!host) return;
+    const entries = readCloudLog().reverse();
+    host.innerHTML = entries.length ? `<ul class="space-y-2">${entries.map(entry =>
+      `<li class="flex flex-wrap justify-between gap-2 border-b border-slate-100 pb-2"><span>${E(cloudLogActions[entry.action])} · ${E(cloudLogStatuses[entry.status])}${entry.rev ? ` · rev ${entry.rev}` : ''}</span><time class="text-xs text-slate-500">${E(new Date(entry.at).toLocaleString('he-IL'))}</time></li>`).join('')}</ul>`
+      : '<p class="text-xs text-slate-500">אין פעולות סנכרון ביומן המקומי.</p>';
+  };
+  const recordCloudLog = (cloud, action, status) => {
+    if (cloud._wiping) return;
+    try {
+      const entries = readCloudLog();
+      const rev = cloud.meta().rev;
+      entries.push({ at: Date.now(), action, status, rev: Number.isSafeInteger(rev) && rev >= 0 ? rev : 0 });
+      localStorage.setItem('sd.cloud.log', JSON.stringify(entries.slice(-8)));
+    } catch (e) {
+      console.warn('שמירת יומן הסנכרון המקומי נכשלה');
+    }
+    renderCloudLog();
+  };
+  const renderCloudSummary = cloud => {
+    const badge = $('cloudConnectionStatus'), last = $('cloudLastSync');
+    if (!badge && !last) return;
+    const configured = cloud.configured(), meta = cloud.meta();
+    if (badge) {
+      badge.textContent = !cloud.url() ? 'מקומי' : configured ? 'מחובר' : 'נדרשת התחברות';
+      badge.className = `badge ${configured ? 'fresh-emerald' : cloud.url() ? 'fresh-amber' : 'fresh-slate'}`;
+    }
+    if (last) {
+      const when = meta.syncedAt && Number.isFinite(new Date(meta.syncedAt).getTime())
+        ? new Date(meta.syncedAt).toLocaleString('he-IL') : '';
+      last.textContent = `${when ? `סנכרון אחרון: ${when}` : 'טרם בוצע סנכרון'}${meta.rev ? ` · rev ${meta.rev}` : ''}`;
+    }
+  };
 
   window.RulesView = {
   applyRule(res) {
@@ -27,16 +98,11 @@
           <select class="inp" data-chg="gradeCohort" data-grade="${n}" aria-label="${E(`מחזור לשכבת ${Util.gl(key)}`)}">${cohorts.map(c => `<option value="${E(c.id)}" ${map[n] === c.id ? 'selected' : ''}>${E(c.name)}</option>`).join('')}</select></label>`).join('')}
       </div></div>`);
     const gradesOf = id => GRADES.filter(([n]) => map[n] === id).map(([, key]) => `שכבת ${Util.gl(key)}`).join(', ');
-    setHtml('cohortBar', `<div class="flex flex-wrap items-center justify-between gap-2">
-      <div><div class="text-xs font-semibold text-[#75977D] mb-1">בחירת מחזור לעריכת חוקי בגרות ושאלונים</div>
+    setHtml('cohortBarList', `<div><div class="text-xs font-semibold text-[#75977D] mb-1">בחירת מחזור לעריכת חוקי בגרות ושאלונים</div>
         <div class="flex flex-wrap gap-1.5" role="tablist" aria-label="מחזורים">${cohorts.map(c => {
           const g = gradesOf(c.id);
           return `<button type="button" role="tab" class="chip cohort-tab" data-act="cohortEdit" data-id="${E(c.id)}" aria-selected="${c.id === active}" aria-pressed="${c.id === active}">${E(c.name)}${g ? ` <span class="text-[11px] opacity-80">[${E(g)}]</span>` : ''}</button>`;
-        }).join('')}</div></div>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-ghost btn-sm" data-act="cohortCopy">📋 העתק חוקים ממחזור אחר...</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="cohortAdd">➕ הוסף מחזור חדש</button>
-      </div></div>`);
+        }).join('')}</div></div>`);
   },
 
   cohortName(id) { const c = Config.getCohortProfiles()[id]; return c ? c.name : ''; },
@@ -44,6 +110,8 @@
   renderRulesDrawer() {
     this.renderCohortUi();
     const r = Config.rules();
+    if (!r.coreSubjects.some(s => s.id === this.state.selectedCoreSubjectId))
+      this.state.selectedCoreSubjectId = r.coreSubjects.length ? r.coreSubjects[0].id : '';
     const warnings = Config.rulesWarnings(r);
     setHtml('rulesWarnings', warnings.map(w => `<div>${E(w)}</div>`).join(''));
     setChecked('ruleCompEnabled', r.allowCompensationRule !== false);
@@ -80,11 +148,21 @@
         <button type="button" class="btn btn-danger btn-sm" aria-label="הסרת שאלון" data-act="compRemove" ${attrs('core', s.id, level, i)}>✕</button></div>`;
     };
     const compBlock = (s, level, label, comps) => {
-      const sum = comps.filter(c => c.enabled !== false).reduce((a, c) => a + (Number(c.weight) || 0), 0);
-      return `<div class="mt-1">${label ? `<div class="text-xs font-medium text-slate-600">${E(label)}</div>` : ''}
+      const active = comps.filter(c => c.enabled !== false);
+      const internal = active.filter(c => BagrutFacts.isInternalComp(c, comps)).reduce((a, c) => a + (Number(c.weight) || 0), 0);
+      const external = active.filter(c => !BagrutFacts.isInternalComp(c, comps)).reduce((a, c) => a + (Number(c.weight) || 0), 0);
+      const sum = internal + external;
+      const grades = [...new Set(active.map(c => c.expectedGrade || ((r.questionnaires[c.codes[0]] || {}).expectedGrade) || 'יב'))];
+      return `<div class="mt-3 space-y-2">${label ? `<div class="text-sm font-semibold">${E(label)}</div>` : ''}
+        <div class="sd-weight-bar" aria-label="${E(`בחינה חיצונית ${external}% · הערכה פנימית ${internal}%`)}">
+          ${external > 0 ? `<div class="sd-weight-external" style="flex:${external}"></div>` : ''}
+          ${internal > 0 ? `<div class="sd-weight-internal" style="flex:${internal}"></div>` : ''}
+        </div>
+        <div class="sd-weight-key">בחינה חיצונית ${E(external)}% · הערכה פנימית ${E(internal)}%</div>
+        <div class="text-xs ${Math.round(sum) === 100 ? 'sd-weight-ok' : 'sd-weight-warning'}">סה"כ ${E(Math.round(sum))}% ${Math.round(sum) === 100 ? '✓' : '— סכום המשקלים אינו 100%'}</div>
+        <div class="text-xs text-slate-500">שכבות יעד: ${grades.length ? grades.map(g => E(Util.gl(g))).join(', ') : 'אין רכיבים פעילים'}</div>
         ${comps.map((c, i) => compRow(s, level, c, i)).join('')}
-        <div class="flex items-center gap-2 text-xs mt-1"><button type="button" class="btn btn-ghost btn-sm" data-act="compAdd" ${attrs('core', s.id, level, '')}>+ שאלון</button>
-          <span class="${comps.length && Math.round(sum) !== 100 ? 'text-amber-700 font-medium' : 'text-slate-400'}">סה"כ ${Math.round(sum)}%</span></div></div>`;
+        <button type="button" class="btn btn-ghost btn-sm" data-act="compAdd" ${attrs('core', s.id, level, '')}>+ שאלון</button></div>`;
     };
     /* שאלונים בקטלוג שאין להם שימוש בשום מקצוע, יחידה או מגמה: ניתנים להסרה */
     const used = new Set([
@@ -92,19 +170,20 @@
       ...r.internals.flatMap(i => i.codes || []), ...r.majors.flatMap(m => m.codes || [])
     ].map(String));
     const orphans = Object.keys(r.questionnaires || {}).filter(code => !used.has(code));
-    const orphanHtml = orphans.length ? `<div class="border border-dashed border-slate-300 rounded-lg p-2 bg-white text-xs">
-      <div class="font-medium text-slate-600 mb-1">שאלונים בקטלוג ללא שימוש</div>
+    const orphanHtml = orphans.length ? `<details class="border border-dashed border-slate-300 rounded-lg p-2 bg-white text-xs">
+      <summary class="font-medium text-slate-600 mb-1 cursor-pointer">שאלונים בקטלוג ללא שימוש (${orphans.length})</summary>
       ${orphans.map(code => `<div class="flex items-center gap-2 py-0.5"><span class="tz-col">${E(code)}</span><span class="text-slate-500 truncate">${E(r.questionnaires[code].name || '')}</span>
-        <button type="button" class="btn btn-danger btn-sm mr-auto" aria-label="הסרת שאלון ${E(code)} מהקטלוג" data-act="qRemove" data-code="${E(code)}">הסרה</button></div>`).join('')}</div>` : '';
-    setHtml('rulesCore', r.coreSubjects.map(s => `
+        <button type="button" class="btn btn-danger btn-sm mr-auto" aria-label="הסרת שאלון ${E(code)} מהקטלוג" data-act="qRemove" data-code="${E(code)}">הסרה</button></div>`).join('')}</details>` : '';
+    const selected = r.coreSubjects.find(s => s.id === this.state.selectedCoreSubjectId);
+    setHtml('rulesCore', (selected ? (s => `
       <div class="border border-slate-200 rounded-lg p-2 bg-white ${s.enabled === false ? 'opacity-60' : ''}">
         <div class="flex items-center gap-2">
           <label class="flex items-center gap-2 font-medium"><input type="checkbox" class="w-4 h-4" data-chg="ruleToggle" data-kind="core" data-id="${E(s.id)}" ${s.enabled === false ? '' : 'checked'}>${E(s.name)}</label>
-          <span class="text-xs text-slate-400">${s.variableUnits ? 'יח"ל משתנה' : `${s.units} יח"ל`}</span>
-          <button type="button" class="btn btn-danger btn-sm mr-auto" data-act="ruleRemove" data-kind="core" data-id="${E(s.id)}">הסרה</button>
+          <span class="text-xs text-slate-400">${s.variableUnits ? 'יח"ל משתנה' : `${E(s.units)} יח"ל`}</span>
+          <button type="button" class="btn btn-danger btn-sm mr-auto" data-act="ruleRemove" data-kind="core" data-id="${E(s.id)}">הסרת מקצוע</button>
         </div>
         ${s.variableUnits ? Object.keys(s.levels || {}).sort().map(l => compBlock(s, l, `${l} יח"ל`, s.levels[l])).join('') : compBlock(s, '', '', s.components || [])}
-      </div>`).join('') + orphanHtml);
+      </div>`)(selected) : '<p class="text-sm text-slate-500">אין מקצועות ליבה. אפשר להוסיף מקצוע בסרגל הצד.</p>') + orphanHtml);
 
     setHtml('rulesMajor', r.majors.map(m => `
       <div class="flex flex-wrap items-center gap-2 border border-slate-200 rounded-lg p-2 bg-white text-sm ${m.enabled === false ? 'opacity-60' : ''}">
@@ -146,9 +225,17 @@
         </div>`).join('') : '<p class="text-xs text-slate-400">אין רכיבים לשכבה זו</p>'}</section>`;
     }).join(''));
 
-    const RULE_TABS = [['core', 'שער 1 – מקצועות ליבה'], ['major', 'שער 2 – מגמות'], ['internal', 'מקצועות פנימיים'], ['params', 'חוק קיזוז ופרמטרים'], ['plan', 'תוכנית היבחנות']];
-    const tab = RULE_TABS.some(x => x[0] === this.state.rulesTab) ? this.state.rulesTab : 'core';
-    setHtml('rulesTabs', RULE_TABS.map(([id, label]) => `<button type="button" role="tab" class="chip" data-act="rulesTab" data-sub="${id}" aria-selected="${tab === id}" aria-pressed="${tab === id}">${label}</button>`).join(''));
+    const RULE_TABS = [['major', 'שער 2 – מגמות'], ['internal', 'מקצועות פנימיים'], ['params', 'קיזוז ופרמטרים'], ['plan', 'תוכנית היבחנות']];
+    const tab = this.state.rulesTab === 'core' || RULE_TABS.some(x => x[0] === this.state.rulesTab) ? this.state.rulesTab : 'core';
+    const coreButtons = r.coreSubjects.map(s => {
+      const lists = s.variableUnits ? Object.values(s.levels || {}) : [s.components || []];
+      const bad = lists.some(comps => Math.round(comps.filter(c => c.enabled !== false).reduce((sum, c) => sum + (Number(c.weight) || 0), 0)) !== 100);
+      const status = [s.enabled === false ? 'כבוי' : '', bad ? 'משקלים לבדיקה' : ''].filter(Boolean).join(' · ');
+      return `<button type="button" role="tab" data-core-select="${E(s.id)}" aria-selected="${tab === 'core' && selected === s}"><span>${E(s.name)}</span>${status ? `<span class="text-xs">${E(status)}</span>` : ''}</button>`;
+    }).join('');
+    setHtml('rulesTabs', `<button type="button" class="font-semibold" data-act="rulesTab" data-sub="core">שער 1 – ליבה</button>
+      ${coreButtons}<button type="button" class="btn btn-ghost btn-sm mt-2" data-rule-add="core">+ הוספת מקצוע ליבה</button>
+      <div class="sd-rules-divider"></div>${RULE_TABS.map(([id, label]) => `<button type="button" role="tab" data-act="rulesTab" data-sub="${id}" aria-selected="${tab === id}" aria-pressed="${tab === id}">${E(label)}</button>`).join('')}`);
     document.querySelectorAll('[data-rules-pane]').forEach(p => { p.hidden = p.dataset.rulesPane !== tab; });
   },
 
@@ -197,6 +284,60 @@
     badge('setBadgeOverrides', overrides, `${overrides} דריסות שיוך פעילות`);
     const unmapped = this.unrecognizedCodes().length;
     badge('setBadgeRules', unmapped, `${unmapped} שאלונים שטרם שויכו`);
+    RulesView.renderDataStatus.call(this);
+  },
+
+  renderDataStatus(records) {
+    if (!$('setBadgeData') && !$('staleSourcesPill') && !$('qualityStatusPill')) return;
+    const stale = Config.DATASET_KEYS.map(key => ({ key, info: Config.getFreshnessInfo(key) }))
+      .filter(source => ['aging', 'stale'].includes(source.info.status));
+    const quality = records || qualityRecords(SignalEngine.computeAll(this.state.sim).list);
+    const badge = $('setBadgeData'), stalePill = $('staleSourcesPill'), qualityPill = $('qualityStatusPill');
+    const total = stale.length + (quality.length ? 1 : 0);
+    if (badge) {
+      badge.classList.toggle('hidden', !total);
+      badge.textContent = total;
+      const sources = stale.map(({ key, info }) => `${info.fileName || key}: ${info.ageDays} ימים`).join(' · ');
+      badge.title = `${stale.length} מקורות דורשים עדכון${sources ? ` (${sources})` : ''} · ${quality.length} רשומות איכות לבדיקה`;
+    }
+    if (stalePill) {
+      stalePill.classList.toggle('hidden', !stale.length);
+      stalePill.textContent = `${stale.length} מקורות דורשים עדכון`;
+    }
+    if (qualityPill) {
+      qualityPill.classList.toggle('hidden', !quality.length);
+      qualityPill.textContent = `איכות קליטה: ${quality.length} לבדיקה`;
+    }
+  },
+
+  renderQualityCard(DATASETS) {
+    const host = $('qualityDetails');
+    if (!host) return;
+    const records = qualityRecords(SignalEngine.computeAll(this.state.sim).list);
+    RulesView.renderDataStatus.call(this, records);
+    const filter = ['all', 'groups', 'questionnaires'].includes(this.state.qualityFilter) ? this.state.qualityFilter : 'all';
+    this.state.qualityFilter = filter;
+    const groups = new Map();
+    records.filter(record => filter === 'all' || record.type === filter).forEach(record => {
+      if (!groups.has(record.name)) groups.set(record.name, []);
+      groups.get(record.name).push(record);
+    });
+    this._qualityGroups = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || natural(a[0], b[0]));
+    const visible = this.state.qualityExpanded ? this._qualityGroups : this._qualityGroups.slice(0, 5);
+    const filters = [['all', 'הכול', records.length], ['groups', 'קבוצות', records.filter(r => r.type === 'groups').length],
+      ['questionnaires', 'שאלונים', records.filter(r => r.type === 'questionnaires').length]];
+    const outside = Object.keys(DATASETS).map(key => {
+      const count = Config.reconcile(key).unknown.length;
+      return count ? `<button type="button" class="btn btn-ghost btn-sm" data-act="showUnknown" data-key="${E(key)}">${E(DATASETS[key].title)}: חניכים מחוץ למצבת (${count})</button>` : '';
+    }).join('');
+    host.innerHTML = `<h3 class="font-semibold">איכות הקליטה · ${records.length} רשומות לבדיקה</h3>
+      <p class="text-xs text-slate-500">קיבוץ ממצאי איכות לפי מקצוע או שאלון; חניך עשוי להופיע ביותר מקבוצה אחת.</p>
+      <div class="flex flex-wrap gap-2">${filters.map(([key, label, count]) =>
+        `<button type="button" class="btn btn-ghost btn-sm sd-quality-filter" data-quality-filter="${E(key)}" aria-pressed="${String(filter === key)}">${E(label)} (${count})</button>`).join('')}</div>
+      ${visible.length ? `<div class="space-y-2">${visible.map(([name, rows], i) => `<div class="sd-quality-row flex flex-wrap items-center justify-between gap-2 text-sm"><span><strong>${E(name)}</strong> · ${rows.length} רשומות</span><button type="button" class="btn btn-ghost btn-sm" data-quality-open="${i}">פתח</button></div>`).join('')}</div>`
+        : '<p class="text-sm text-slate-500">לא נמצאו רשומות לבדיקה בסינון הנבחר.</p>'}
+      ${!this.state.qualityExpanded && this._qualityGroups.length > 5 ? `<button type="button" class="btn btn-ghost btn-sm" data-quality-more>עוד ${this._qualityGroups.length - 5} קבוצות</button>` : ''}
+      ${outside ? `<div class="flex flex-wrap gap-2">${outside}</div>` : ''}`;
   },
 
   renderSettingsPanel() {
@@ -211,26 +352,36 @@
       const classes = [...byClass.keys()].sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || natural(a, b));
       const rep = this.rosterReport;
       html = `<div class="font-medium mb-1">${roster.length} חניכים פעילים · ${classes.length} כיתות אם</div>
-        <div class="flex flex-wrap gap-1 mb-2">${classes.map(c => `<button type="button" class="class-pill" data-act="classRoster" data-class="${E(c)}" title="הצגת חניכי הכיתה ושיוך מהיר" aria-haspopup="dialog">${E(Config.classLabel(c))}: ${byClass.get(c)}</button>`).join('')}</div>
         ${rep ? `<div class="text-xs text-slate-500">נקלטו ${rep.sheets.length} גיליונות${rep.skipped ? ` · ${rep.skipped} שורות דולגו` : ''}${rep.duplicates ? ` · ${rep.duplicates} כפילויות אוחדו` : ''}${rep.ignored ? ` · ${rep.ignored} חניכי ז'-ט' לא נקלטו` : ''}</div>
-          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">${E(w)}</div>`).join('')}` : ''}
-        <div class="flex gap-2 mt-3"><button type="button" class="btn btn-danger btn-sm" data-act="deleteRoster">מחיקת המצבת</button></div>`;
+          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">${E(w)}</div>`).join('')}` : ''}`;
     }
     setHtml('rosterSummary', html);
+    const deleteRoster = $('deleteRosterBtn');
+    if (deleteRoster) deleteRoster.disabled = !Config.getRosterEntry();
 
     const rawRows = Config.getRosterEntry() ? Config.getRosterEntry().data : [];
     const counts = new Map();
-    rawRows.forEach(r => counts.set(r.homeroom, (counts.get(r.homeroom) || 0) + 1));
-    const classes = [...counts.keys()].sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || natural(a, b));
-    const classRow = c => `
-      <label class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-300 bg-slate-50 p-2 text-sm cursor-pointer">
-        <span><strong>${E(Config.classLabel(c))}</strong> <span class="text-xs text-slate-600">(${counts.get(c)} חניכים)</span></span>
-        <span class="flex items-center gap-1 text-xs font-bold whitespace-nowrap">
-          <input type="checkbox" class="w-4 h-4" data-chg="specialEd" data-class="${E(c)}" ${Config.isSpecialEdClass(c) ? 'checked' : ''}>כיתת חנ"מ</span>
-      </label>`;
+    rawRows.forEach(r => counts.set(r.homeroom, 0));
+    roster.forEach(r => counts.set(r.homeroom, (counts.get(r.homeroom) || 0) + 1));
+    const gradeOrder = c => {
+      const index = Util.GRADE_KEYS.indexOf(Util.parseClass('', c).gradeKey);
+      return index < 0 ? Util.GRADE_KEYS.length : index;
+    };
+    const classes = [...counts.keys()].sort((a, b) => gradeOrder(a) - gradeOrder(b) || natural(a, b));
+    const grades = new Map();
+    classes.forEach(c => {
+      const grade = Util.parseClass('', c).gradeKey || '';
+      if (!grades.has(grade)) grades.set(grade, []);
+      grades.get(grade).push(c);
+    });
+    const classRow = c => `<div class="sd-class-chip${Config.isSpecialEdClass(c) ? ' is-special' : ''}">
+      <button type="button" data-act="classRoster" data-class="${E(c)}" aria-haspopup="dialog">${E(Config.classLabel(c))} (${counts.get(c)})</button>
+      <label class="flex items-center gap-1 text-xs font-bold"><input type="checkbox" data-chg="specialEd" data-class="${E(c)}" ${Config.isSpecialEdClass(c) ? 'checked' : ''}>חנ"מ</label>
+    </div>`;
     setHtml('nicknames', classes.length
-      ? classes.map(classRow).join('')
-      : '<div class="text-sm text-slate-400 md:col-span-3">הכיתות יוצגו לאחר טעינת המצבת.</div>');
+      ? [...grades.entries()].map(([grade, items]) => `<div><div class="text-xs font-bold text-slate-500 mb-1">${grade ? `שכבה ${E(Util.gl(grade))}` : 'כיתות נוספות'}</div><div class="flex flex-wrap gap-2">${items.map(classRow).join('')}</div></div>`).join('')
+      : '<div class="text-sm text-slate-400">הכיתות יוצגו לאחר טעינת המצבת.</div>');
+    setText('nicknamesCount', `${classes.filter(c => Config.isSpecialEdClass(c)).length} מתוך ${classes.length}`);
     setText('configSummary', `${Object.keys(Config.data.traineeExceptions).length} רשומות חריג/מסלול שמורות · ${Object.keys(Config.getRosterOverrides()).length} דריסות שיוך`);
     this.renderRosterOverrides();
     this.renderDataTools();
@@ -238,14 +389,15 @@
     this.renderCalibration();
     this.renderRulesDrawer();
     this.renderSettingsNav();
+    this.renderQualityCard();
     RulesView.renderQuarantineReports.call(this);
   },
 
   renderQuarantineReports() {
-    const pane = document.querySelector('[data-settings-pane="system"]');
-    if (!pane) return;
     let host = $('quarantineReports');
     if (!host) {
+      const pane = document.querySelector('[data-settings-pane="roster"]') || document.querySelector('[data-settings-pane="system"]');
+      if (!pane) return;
       host = document.createElement('section');
       host.id = 'quarantineReports';
       host.className = 'card p-4 space-y-3 xl:col-span-2';
@@ -297,7 +449,12 @@
   ovCandidates() {
     const out = Config.getRosterAll().map(r => ({ tz: r.tz, name: `${r.firstName} ${r.lastName}`.trim() || r.tz, rec: r }));
     const known = new Set(out.map(c => c.tz));
-    GroupAnalyzer.unmatchedIds().forEach(u => { if (!known.has(u.tz)) out.push({ tz: u.tz, name: u.name || u.tz, rec: null }); });
+    GroupAnalyzer.unmatchedIds().forEach(u => {
+      if (!known.has(u.tz)) { out.push({ tz: u.tz, name: u.name || u.tz, rec: null }); known.add(u.tz); }
+    });
+    Object.values(Config.getRosterOverrides()).forEach(o => {
+      if (!known.has(o.tz)) out.push({ tz: o.tz, name: o.name || o.tz, rec: null });
+    });
     return out;
   },
 
@@ -350,25 +507,66 @@
     }).join('') + '<option value="other">אחר (הקלד כיתה חדשה)...</option>');
     const track = $('ovTrack');
     if (track && track.options.length < 2) track.innerHTML += Config.TRACKS.map(t => `<option value="${E(t)}">${E(t)}</option>`).join('');
+    const exceptions = Object.keys(Config.data.traineeExceptions).length;
+    setText('ovExceptionsHint', `כאן מנוהלות דריסות שיוך, כיתה, מסלול והסתרת חניכים. חריגי בגרות אישיים נערכים בכרטיס החניך${exceptions ? ` (${exceptions} רשומות חריג)` : ''}.`);
+    setVal('ovTableSearch', this.state.ovSearch || '');
+    setVal('ovTableFilter', this.state.ovFilter || 'all');
+    RulesView.setOvPanelOpen.call(this, this.state.ovDrawerOpen !== false);
+    RulesView.renderOverridesTable.call(this);
+    this.ovSelect(this.ovTz);
+  },
 
+  setOvPanelOpen(open) {
+    this.state.ovDrawerOpen = open;
+    const panel = $('ovSidePanel'), card = $('ovTableCard');
+    if (panel) panel.hidden = !open;
+    if (card) {
+      card.classList.toggle('xl:col-span-8', open);
+      card.classList.toggle('xl:col-span-12', !open);
+    }
+  },
+
+  renderOverridesTable() {
+    if (!$('ovTable')) return;
     const byTz = new Map(Config.getRosterAll().map(r => [r.tz, r]));
-    const ovs = Object.values(Config.getRosterOverrides()).sort((a, b) => b.updatedAt - a.updatedAt);
+    const entry = Config.getRosterEntry();
+    const rawIds = new Set((entry ? entry.data : []).filter(r => !Util.isJunior(r.grade)).map(r => r.tz));
+    const ovs = Object.values(Config.getRosterOverrides()).sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0));
     setText('ovCount', `(${ovs.length})`);
     setText('ovClearAll', `🧹 בטל את כל הדריסות (${ovs.length})`);
-    $('ovClearAll').disabled = !ovs.length;
-    const rows = ovs.map(o => {
+    const clear = $('ovClearAll');
+    if (clear) clear.disabled = !ovs.length;
+    const q = Util.norm(this.state.ovSearch || '').toLocaleLowerCase();
+    const filter = this.state.ovFilter || 'all';
+    const matches = ovs.filter(o => {
       const r = byTz.get(o.tz);
       const name = r ? `${r.firstName} ${r.lastName}`.trim() : (o.name || o.tz);
-      const eff = o.homeroom && r ? this.effLabel(r) : (o.homeroom || 'ללא שינוי');
-      const status = [o.hidden ? '🚫 עזב / לא פעיל' : '', o.track ? `מסלול: ${o.track}` : '', o.note].filter(Boolean).map(E).join(' · ') || '—';
-      return `<tr class="${o.hidden ? 'opacity-60' : ''}"><td class="tz-col text-right">${E(o.tz)}</td><td class="text-right font-medium">${E(name)}</td>
-        <td class="text-right whitespace-nowrap">${E(r ? this.rawLabel(r) : '— (לא במצבת)')}</td><td class="text-right whitespace-nowrap">${E(eff)}</td>
-        <td class="text-right">${status}</td>
-        <td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${E(o.tz)}">בטל דריסה</button></td></tr>`;
+      const searchable = [name, o.tz, o.note].some(value => Util.norm(value).toLocaleLowerCase().includes(q));
+      const category = filter === 'all' || (filter === 'placement' && (o.grade || o.homeroom)) ||
+        (filter === 'track' && o.track) || (filter === 'hidden' && o.hidden) ||
+        (filter === 'added' && !rawIds.has(o.tz));
+      return searchable && category;
+    });
+    const limited = !q && filter === 'all' && ovs.length > 15;
+    const shown = limited && !this.state.ovShowAll ? matches.slice(0, 15) : matches;
+    const rows = shown.map(o => {
+      const r = byTz.get(o.tz);
+      const name = (r ? `${r.firstName} ${r.lastName}`.trim() : o.name) || o.tz;
+      const original = r ? this.rawLabel(r) : '— (לא במצבת)';
+      const changed = o.homeroom ? (r ? this.effLabel(r) : o.homeroom) : o.grade ? `שכבה ${Util.gl(o.grade)}` : '';
+      const placement = `${E(original)}${changed ? ` ← ${E(changed)}` : o.hidden ? '' : ' ← ללא שינוי'}${o.hidden ? ' ← מוסתר' : ''}`;
+      const track = r ? Config.trackFor(o.tz, r.rawTrack || r.track, r.homeroom) : o.track || '—';
+      const tone = o.hidden ? 'is-hidden' : track !== 'רגילה' && track !== '—' ? 'is-adjusted' : '';
+      const status = o.hidden ? 'עזב / מוסתר' : track;
+      return `<tr><td class="text-right"><button type="button" class="sd-ov-edit" data-ov-edit="${E(o.tz)}"><strong>${E(name)}</strong><span class="block font-mono text-xs" dir="ltr">${E(o.tz)}</span></button></td>
+        <td class="text-right">${placement}</td><td class="text-right"><span class="sd-ov-badge ${tone}">${E(status)}</span></td>
+        <td class="text-right">${E(o.note || '—')}</td><td class="text-right"><button type="button" class="btn btn-ghost btn-sm" data-act="ovRemove" data-tz="${E(o.tz)}">בטל דריסה</button></td></tr>`;
     }).join('');
-    setHtml('ovTable', `<table class="grid w-full"><thead><tr><th class="tz-col text-right">ת.ז</th><th class="text-right">שם חניך</th><th class="text-right">שיוך מקורי בקובץ</th><th class="text-right">שיוך דורס פעיל</th><th class="text-right">סטטוס / מסלול</th><th class="text-right">פעולה</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="6" class="text-center text-slate-400 py-6">אין דריסות פעילות</td></tr>'}</tbody></table>`);
-    this.ovSelect(this.ovTz);
+    setHtml('ovTable', `<table class="grid w-full"><thead><tr><th class="text-right">חניך</th><th class="text-right">שיוך מקורי ← שיוך חדש</th><th class="text-right">מסלול</th><th class="text-right">הערה</th><th class="text-right">פעולה</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5" class="text-center text-slate-400 py-6">אין דריסות להצגה</td></tr>'}</tbody></table>`);
+    setHtml('ovTableFooter', `<span>מציג ${shown.length} מתוך ${ovs.length}${q || filter !== 'all' ? ` · ${matches.length} תוצאות תואמות` : ''}</span>
+      ${limited ? `<button type="button" class="btn btn-ghost btn-sm" data-ov-show-all>${this.state.ovShowAll ? 'צמצום' : 'הצגת כולן'}</button>` : ''}
+      <span>בטל את כל הדריסות נמצא רק בתפריט ⋯ ומבקש אישור</span>`);
   },
 
   /** בחירת חניך בטופס: מציג את השיוך המקורי ומטעין דריסה קיימת */
@@ -377,6 +575,8 @@
     if (!search) return;
     const c = (this._ovCands || []).find(x => x.tz === tz);
     this.ovTz = c ? tz : '';
+    const o = c && Config.getRosterOverrides()[tz];
+    setText('ovFormTitle', !c ? 'דריסה חדשה' : o ? 'עריכת דריסה' : 'דריסה לחניך נבחר');
     const info = $('ovInfo'), nameWrap = $('ovNameWrap');
     ['rounded-lg', 'border', 'border-indigo-300', 'bg-indigo-50', 'text-indigo-900', 'px-3', 'py-2', 'font-semibold'].forEach(cls => info.classList.toggle(cls, !!c));
     if (nameWrap) nameWrap.classList.add('hidden');
@@ -387,7 +587,6 @@
       setChecked('ovHidden', false);
       return;
     }
-    const o = Config.getRosterOverrides()[tz];
     this.ovTrackEdited = false;
     search.value = `${c.name} • ${c.tz}`;
     if (c && c.rec && !c.rec.added) {
@@ -397,9 +596,9 @@
       if (nameWrap) nameWrap.classList.remove('hidden');
       setVal('ovName', (o && o.name) || (c && c.name) || '');
     }
-    setVal('ovGrade', c.rec ? c.rec.grade : '');
-    this.ovSetHomeroom(c.rec ? c.rec.homeroom : '');
-    setVal('ovTrack', c.rec ? ((o && o.track) || Config.defaultTrack(c.rec.rawTrack || c.rec.track, c.rec.homeroom)) : '');
+    setVal('ovGrade', c.rec ? c.rec.grade : (o && o.grade) || '');
+    this.ovSetHomeroom(c.rec ? c.rec.homeroom : (o && o.homeroom) || '');
+    setVal('ovTrack', c.rec ? ((o && o.track) || Config.defaultTrack(c.rec.rawTrack || c.rec.track, c.rec.homeroom)) : (o && o.track) || '');
     setChecked('ovHidden', o && o.hidden);
     setVal('ovNote', (o && o.note) || '');
   },
@@ -451,6 +650,8 @@
      סנכרון ענן
      ================================================================== */
   renderSync() {
+    renderCloudLog();
+    renderCloudSummary(this.cloudService());
     const el = $('syncStatus');
     if (!el) return;
     const s = this.cloudService().status, url = this.cloudService().url();
@@ -472,24 +673,37 @@
     if (!body) return;
     const cloud = this.cloudService();
     body.innerHTML = `
-      <p class="text-xs text-slate-500">הסנכרון דורש כתובת שרת, התחברות אישית עם Google וקוד בית-ספר להצפנה. יש להשתמש באותו קוד בכל מחשבי הצוות.</p>
-      ${cloud._onboarding ? '<p class="text-xs text-amber-700">כדי להצטרף יש להתחבר עם Google ולהזין ולשמור את קוד ההצפנה של בית הספר.</p>' : ''}
-      <div class="grid md:grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1">כתובת Web App של Google Apps Script
-          <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(cloud.url())}"></label>
-        <label class="flex flex-col gap-1">Google Client ID
-          <input id="cloudClientId" class="inp" dir="ltr" value="${E(cloud.clientId())}"></label>
-        <label class="flex flex-col gap-1">קוד בית-ספר (חובה להצפנה בענן)
-          <input id="cloudPass" type="password" class="inp" autocomplete="off" value="${E(cloud.passcode())}"></label>
-      </div>
-      <div id="cloudGoogleAuth"></div>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-primary btn-sm" data-act="cloudSave">שמירת הגדרות</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">⬇️ משיכה מהענן</button>
-        <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">☁️ סנכרן לענן כעת</button>
+      <section class="card p-4 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2"><h3 class="font-semibold">חיבור ענן</h3><span id="cloudConnectionStatus" class="badge"></span></div>
+        <p id="cloudLastSync" class="text-xs text-slate-500"></p>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-primary btn-sm" data-act="cloudSync">סנכרן לענן כעת</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="cloudPull">משיכה מהענן</button>
+        </div>
+        <div id="cloudGoogleAuth"></div>
+        ${cloud._onboarding ? '<p class="text-xs text-amber-700">כדי להצטרף יש להתחבר עם Google ולהזין ולשמור את קוד ההצפנה של בית הספר.</p>' : ''}
+        <details ${!cloud.configured() || cloud._onboarding ? 'open' : ''}>
+          <summary class="cursor-pointer font-medium">הגדרות חיבור</summary>
+          <div class="grid gap-3 mt-3">
+            <label class="flex flex-col gap-1">כתובת Web App של Google Apps Script
+              <input id="cloudUrl" class="inp" dir="ltr" placeholder="https://script.google.com/macros/s/…/exec" value="${E(cloud.url())}"></label>
+            <label class="flex flex-col gap-1">Google Client ID
+              <input id="cloudClientId" class="inp" dir="ltr" value="${E(cloud.clientId())}"></label>
+            <label class="flex flex-col gap-1" for="cloudPass">קוד בית-ספר (חובה להצפנה בענן)</label>
+            <div class="flex gap-2"><input id="cloudPass" class="inp flex-1" type="password" autocomplete="off" value="${E(cloud.passcode())}">
+              <button type="button" class="btn btn-ghost btn-sm" data-toggle-pass aria-controls="cloudPass" aria-pressed="false">הצג</button></div>
+            <div><button type="button" class="btn btn-ghost btn-sm" data-act="cloudSave">שמירת הגדרות</button></div>
+          </div>
+        </details>
+      </section>
+      <section class="card p-4 space-y-3">
+        <h3 class="font-semibold">שיתוף עם הצוות</h3>
+        <p class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">הקישור מכיל את כתובת השרת בלבד ללא סודות, ומזהה לקוח Google אם הוגדר מזהה שונה מברירת המחדל. להצטרפות נדרשים חשבון Google מורשה ברשימת הצוות וקוד בית-הספר בנפרד.</p>
         <button type="button" class="btn btn-ghost btn-sm" data-act="cloudJoinLink">העתקת קישור הצטרפות לצוות</button>
-      </div>`;
+      </section>`;
     this.renderCloudAuth();
+    renderCloudSummary(cloud);
+    renderCloudLog();
   },
 
   renderCloudAuth() {
@@ -500,6 +714,8 @@
       <span>${identity ? `מחובר עם Google: ${E(identity.email)}` : 'נדרשת התחברות עם Google כדי לסנכרן'}</span>
       ${identity ? '<button type="button" class="btn btn-ghost btn-sm" data-act="cloudGoogleSignOut">התנתקות מחשבון Google</button>' : '<div id="googleSignIn"></div>'}</div>
       ${!identity && !(window.google && window.google.accounts && window.google.accounts.id) ? '<p class="text-xs text-slate-500">כפתור Google יופיע כשהשירות יהיה זמין; ניתן להמשיך לעבוד מקומית.</p>' : ''}`;
+    const details = container.closest('.card')?.querySelector('details');
+    if (details && (!cloud.configured() || cloud._onboarding)) details.open = true;
     if (!identity) cloud.renderGoogleButton($('googleSignIn'));
   },
 
@@ -575,28 +791,39 @@
     this._calibRows = rows;
     const unk = this.unrecognizedCodes(rows);
     this._calibUnk = unk;
-    const banner = unk.length ? `<div class="rounded-lg border border-amber-400 bg-amber-50 p-3" role="alert">
-      <div class="font-semibold text-amber-900">זוהו ${unk.length} שאלונים בקובץ הבגרויות שטרם שויכו למקצוע</div>
+    const banner = unk.length ? `<div class="sd-unmapped" role="alert">
+      <div class="font-semibold">זוהו ${unk.length} שאלונים בקובץ הבגרויות שטרם שויכו למקצוע</div>
       <div class="flex flex-wrap gap-2 mt-2">${unk.map((u, i) => `<span class="inline-flex items-center gap-1 rounded border border-amber-300 bg-white px-2 py-1 text-xs">
         <span class="font-mono font-bold">${E(u.code)}</span><span class="text-slate-500">${E(u.subject)} · ${u.count} רשומות</span>
         <button type="button" class="btn btn-primary btn-sm" data-act="calibAssign" data-i="${i}">+ שייך כעת</button></span>`).join('')}</div></div>` : '';
     setHtml('qUnmapped', banner);
+    const search = $('qCalibSearch');
+    if (search && search.value !== (this.state.calibSearch || '')) search.value = this.state.calibSearch || '';
+    RulesView.renderCalibrationTable.call(this);
+  },
+
+  renderCalibrationTable() {
+    const host = $('qCalib');
+    if (!host) return;
+    const rows = this._calibRows || [];
+    const query = String(this.state.calibSearch || '').trim().toLocaleLowerCase();
+    const filtered = rows.map((row, idx) => ({ row, idx })).filter(({ row }) =>
+      [row.code, row.name, row.group].some(value => String(value || '').toLocaleLowerCase().includes(query)));
+    setText('qCalibCount', `${filtered.length} מתוך ${rows.length} שאלונים`);
     let last = null;
-    const body = rows.map((r, i) => {
-      const head = r.group !== last ? `<tr class="bg-slate-100"><td colspan="7" class="font-bold text-slate-700 py-1">${E(r.group)}</td></tr>` : '';
+    const body = filtered.map(({ row: r, idx }) => {
+      const head = r.group !== last ? `<tr class="sd-calib-group"><td colspan="7">${E(r.group)}</td></tr>` : '';
       last = r.group;
       return `${head}<tr class="${r.off ? 'opacity-50' : ''}">
         <td class="font-mono font-bold">${E(r.code)}</td><td>${E(r.name || '—')}</td><td>${E(r.group)}</td><td>${E(r.kind)}</td>
         <td>${r.weight == null ? '—' : `${r.weight}%`}</td><td>${r.sub ? `<span class="badge fresh-slate border">תחליף ל-${E(r.sub)}</span>` : '—'}</td>
-        <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="calibEdit" data-i="${i}" title="עריכה">✏️</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-act="calibDelete" data-i="${i}" title="מחיקה">🗑️</button></td></tr>`;
+        <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="calibEdit" data-i="${idx}" title="עריכה">עריכה</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="calibDelete" data-i="${idx}" title="מחיקה">מחיקה</button></td></tr>`;
     }).join('');
     host.innerHTML = `
-      <div class="flex flex-wrap items-center justify-between gap-2"><p class="text-xs text-slate-500">שינוי נשמר מיד, מחשב מחדש את זכאות הבגרות ומסומן לפרסום לצוות.</p>
-        <button type="button" class="btn btn-primary btn-sm" data-act="calibAdd">+ הוספת סמל שאלון</button></div>
-      <div class="tbl-wrap" style="max-height:480px"><table class="w-full text-sm">
+      <div class="tbl-wrap" style="max-height:480px"><table class="w-full text-sm sd-calib-table">
         <thead><tr><th>סמל שאלון</th><th>שם שאלון</th><th>מקצוע ורמה</th><th>רכיב</th><th>משקל (%)</th><th>תחליף לשאלון (עולים/מותאם)</th><th>פעולות</th></tr></thead>
-        <tbody>${body}</tbody></table></div>`;
+        <tbody>${body || '<tr><td colspan="7">לא נמצאו שאלונים.</td></tr>'}</tbody></table></div>`;
   },
 
   /** טופס הוספה / עריכה. row = שורה קיימת לעריכה, preset = ערכים התחלתיים להוספה */
@@ -707,24 +934,33 @@
     if (!this.cloudService().url()) return this.toast('לא הוגדרה כתובת סנכרון ענן', 'warn');
     if (this.cloudService().hasUnpublished() && !this.confirmAction('יש שינויים שלא סונכרנו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
     const r = await this.cloudRefresh(() => this.cloudService().pullCloudState({ force: true }));
+    recordCloudLog(this.cloudService(), 'pull', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
     if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
     else if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
   },
   async cloudSync() {
+    let attempted = false, outcome = 'error';
     try {
       this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
       if (!this.cloudService().url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
+      attempted = true;
       const r = await this.cloudRefresh(() => this.cloudService().pullCloudState());
-      if (!r || r === 'kept-local') return;
+      if (!r) return;
+      if (r === 'kept-local') { outcome = 'conflict'; return; }
       const pushed = await this.cloudService().pushCloudState();
-      if (pushed === 'kept-local') return;
+      if (pushed === 'kept-local') { outcome = 'conflict'; return; }
+      outcome = 'ok';
       this.toast('הנתונים סונכרנו לענן', 'ok');
     } catch (e) { this.toast(`הסנכרון נכשל: ${e.message}`, 'error'); }
-    this.renderSync();
+    finally {
+      if (attempted) recordCloudLog(this.cloudService(), 'sync', outcome);
+      this.renderSync();
+    }
   },
   async cloudForcePush() {
     if (!this.confirmAction('דחיפה כפויה תחליף את נתוני הענן בנתונים המקומיים ותשפיע על כל הצוות. מומלץ לייצא גיבוי מקומי קודם. להמשיך?')) return;
     const r = await this.cloudRefresh(() => this.cloudService().pushCloudState({ force: true }));
+    recordCloudLog(this.cloudService(), 'force', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
     if (r && r !== 'kept-local') this.toast('הנתונים המקומיים נשלחו לענן', 'ok');
   },
   async cloudJoinLink() {
@@ -906,20 +1142,27 @@
       if (r.tz) sadinGrades.get(grade).add(r.tz);
     });
     const card = key => {
-      const loaded = !!Config.getDataset(key);
+      const dataset = Config.getDataset(key), loaded = !!dataset;
+      const files = dataset && dataset.files ? dataset.files.length : loaded && dataset.fileName ? 1 : 0;
       const perGrade = key === 'sadinData'
         ? Util.GRADE_KEYS.filter(g => sadinGrades.has(g)).map(g =>
           `<button type="button" class="btn btn-ghost btn-sm w-full justify-between" data-act="clearSadinGrade" data-grade="${E(g)}" title="הסרת שורות סדין של שכבה ${E(Util.gl(g))}">הסרת שכבה ${E(Util.gl(g))} (${sadinGrades.get(g).size}) ×</button>`).join('')
         : '';
-      return `<div class="rounded-lg border border-slate-300 bg-slate-50 p-3 space-y-2">
-        <div class="text-sm font-bold">${E(DATASETS[key].title)}</div>
+      return `<section class="card p-4 sd-source-card">
+        <div class="flex items-center justify-between gap-2"><h3 class="font-semibold">${E(DATASETS[key].title)}</h3>
+          <details class="sd-kebab"><summary class="btn btn-ghost btn-sm" aria-label="${E(`פעולות ${DATASETS[key].title}`)}">⋯</summary>
+            <div class="sd-kebab-menu">
+              <button type="button" class="btn btn-ghost btn-sm w-full" data-act="remap" data-key="${E(key)}">מיפוי עמודות</button>
+              ${perGrade}
+              <button type="button" class="btn btn-danger btn-sm w-full" data-act="clearPanel" data-key="${E(key)}" ${loaded ? '' : 'disabled'}>ניקוי נתונים</button>
+            </div>
+          </details>
+        </div>
         <div data-fresh-bar="${key}" role="status"></div>
-        <div class="flex flex-col gap-1.5">
-          <button type="button" class="btn btn-primary btn-sm w-full justify-between" data-upload="${key}" title="טעינת קובץ ${E(DATASETS[key].title)}">📂 טעינת קובץ</button>
-          <button type="button" class="btn btn-ghost btn-sm w-full justify-between" data-act="remap" data-key="${key}" title="מיפוי ידני מחדש של עמודות הקובץ">🔧 מיפוי עמודות</button>
-          ${perGrade}
-          <button type="button" class="btn btn-danger btn-sm w-full justify-between" data-act="clearPanel" data-key="${key}" ${loaded ? '' : 'disabled'}>🧹 נקה את כל הנתונים</button>
-        </div></div>`;
+        <div class="text-xs text-slate-500">${loaded ? `${Config.getRows(key).length} שורות · ${files} קבצים` : 'טרם נטענו נתונים'}</div>
+        <div class="flex flex-wrap gap-1">${this.coverageHtml(key)}</div>
+        <button type="button" class="btn btn-primary w-full sd-source-upload" data-upload="${E(key)}">טעינת קובץ</button>
+      </section>`;
     };
     setHtml('dataTools', Object.keys(DATASETS).map(card).join(''));
     Object.keys(DATASETS).forEach(key => {
@@ -947,6 +1190,56 @@
   },
   remap(el) { this.remapColumns(el.dataset.key); },
   bindRulesEvents() {
+    on('rulesDrawer', 'click', e => {
+      const button = e.target.closest('[data-core-select]');
+      if (!button) return;
+      this.state.rulesTab = 'core';
+      this.state.selectedCoreSubjectId = button.dataset.coreSelect;
+      this.renderRulesDrawer();
+    });
+    on('qCalibSearch', 'input', e => {
+      this.state.calibSearch = e.target.value;
+      RulesView.renderCalibrationTable.call(this);
+    });
+    document.addEventListener('click', e => {
+      const target = e.target.closest && e.target.closest('details.sd-kebab');
+      document.querySelectorAll('#panel-settings details.sd-kebab[open]').forEach(menu => {
+        if (menu !== target || e.target.closest('[data-act]')) menu.open = false;
+      });
+    }, true);
+    on('qualityDetails', 'click', e => {
+      const filter = e.target.closest('[data-quality-filter]');
+      if (filter) {
+        this.state.qualityFilter = filter.dataset.qualityFilter;
+        this.state.qualityExpanded = false;
+        this.renderQualityCard();
+        return;
+      }
+      if (e.target.closest('[data-quality-more]')) {
+        this.state.qualityExpanded = true;
+        this.renderQualityCard();
+        return;
+      }
+      const button = e.target.closest('[data-quality-open]');
+      const group = button && this._qualityGroups && this._qualityGroups[Number(button.dataset.qualityOpen)];
+      if (!group) return;
+      const students = new Map();
+      group[1].forEach(({ signal }) => students.set(signal.tz, signal));
+      const rows = [...students.values()].map(signal => {
+        const trainee = Store.trainees.get(signal.tz);
+        return `<li><button type="button" class="underline" data-act="openProfile" data-tz="${E(signal.tz)}">${E(trainee ? trainee.name : signal.tz)}</button><ul>${signal.dataQuality.map(flag => `<li>${E(flag.label)}${flag.detail ? `: ${E(flag.detail)}` : ''}</li>`).join('')}</ul></li>`;
+      }).join('');
+      this.openModal(`<div class="flex items-center justify-between gap-2"><h3 class="text-lg font-semibold">${E(group[0])} · ${group[1].length} רשומות</h3><button type="button" class="btn btn-ghost btn-sm" data-act="closeModal">סגירה</button></div><ul class="text-sm space-y-3 mt-3">${rows}</ul>`, true);
+    });
+    on('cloudBody', 'click', e => {
+      const button = e.target.closest('[data-toggle-pass]');
+      const input = $('cloudPass');
+      if (!button || !input) return;
+      const visible = input.type === 'password';
+      input.type = visible ? 'text' : 'password';
+      button.textContent = visible ? 'הסתר' : 'הצג';
+      button.setAttribute('aria-pressed', String(visible));
+    });
     const num = (id, fn) => on(id, 'change', e => (e.target.value === '' ? this.renderRulesDrawer() : this.applyRule(fn(Number(e.target.value)))));
     on('ruleCompEnabled', 'change', e => this.applyRule(Config.setCompensation({ enabled: e.target.checked })));
     on('ruleCompPoints', 'change', e => this.applyRule(Config.setCompensation({ pointsEnabled: e.target.checked })));
@@ -971,6 +1264,33 @@
       this.applyRule(res);
     });
 
+    on('ovTableSearch', 'input', e => {
+      this.state.ovSearch = e.target.value;
+      RulesView.renderOverridesTable.call(this);
+    });
+    on('ovTableFilter', 'change', e => {
+      this.state.ovFilter = e.target.value;
+      RulesView.renderOverridesTable.call(this);
+    });
+    on('ovNewBtn', 'click', () => {
+      RulesView.setOvPanelOpen.call(this, true);
+      setVal('overrideTraineeSearch', '');
+      this.ovSelect('');
+      const search = $('overrideTraineeSearch');
+      if (search) search.focus();
+    });
+    on('ovClosePanel', 'click', () => RulesView.setOvPanelOpen.call(this, false));
+    on('ovTableSection', 'click', e => {
+      const edit = e.target.closest('[data-ov-edit]');
+      if (edit) {
+        RulesView.setOvPanelOpen.call(this, true);
+        this.ovSelect(edit.dataset.ovEdit);
+        this.ovCloseResults();
+      } else if (e.target.closest('[data-ov-show-all]')) {
+        this.state.ovShowAll = !this.state.ovShowAll;
+        RulesView.renderOverridesTable.call(this);
+      }
+    });
     on('overrideTraineeSearch', 'focus', () => this.ovSearchResults());
     on('overrideTraineeSearch', 'input', () => { this.ovSelect(''); this.ovSearchResults(); });
     on('overrideTraineeSearch', 'keydown', e => {
