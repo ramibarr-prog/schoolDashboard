@@ -314,9 +314,27 @@
       const g = Store.groups.get(e.groupId);
       return `<li>${E(e.subject || 'ללא מקצוע')} · [${E(e.groupId)}] · ${E((g && g.teacher) || e.teacher || 'ללא מורה')} · ממוצע ${E(Util.fmt(e.avg, 1))}${e.enrollmentStatus === 'unassigned' ? ' · ללא שיבוץ' : ''}</li>`;
     }).join('');
-    const events = Store.currentOf(t.tz).flatMap(e => e.events.map(x => ({ ...x, subj: e.subject, enrollmentStatus: e.enrollmentStatus }))).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    const eventsRows = events.map(x => `<tr><td>${E(x.date || '—')}</td><td>${E(x.subj)}${x.enrollmentStatus !== 'active' ? ` <span class="text-slate-500 text-xs">${x.enrollmentStatus === 'moved' ? 'קבוצה קודמת' : 'ללא שיבוץ'}</span>` : ''}</td><td>${E(x.eventName)}</td><td>${E(x.weight)}</td>
-      <td class="${x.enrollmentStatus !== 'active' ? 'text-slate-500' : x.score == null || x.score === 0 ? 'text-amber-600' : !passingScore(x.score, x.subj) ? 'text-red-600 font-semibold' : ''}">${x.score == null ? 'חסר' : E(x.score)}</td></tr>`).join('');
+    const events = Store.currentOf(t.tz).flatMap(e => e.events.map(x => ({ ...x, subj: e.subject, enrollmentStatus: e.enrollmentStatus })));
+    const eventId = e => JSON.stringify([e.groupId || '', e.eventName || '', e.date || '', e.weight]);
+    const missedEvents = new Map();
+    if (cur.sheet) cur.sheet.subjects.forEach(subject => {
+      subject.missed.forEach(m => {
+        const group = Store.groups.get(m.groupId);
+        const confirmed = signal.prereqs.hasGroups && group && group.inFile && group.members.has(t.tz);
+        missedEvents.set(eventId(m), !!confirmed);
+        if (subject.events.some(e => e.key === m.key)) return;
+        events.push({ ...m, subj: subject.name, enrollmentStatus: 'active', inferred: true, confirmed });
+      });
+    });
+    events.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const eventsRows = events.map(x => {
+      const active = x.enrollmentStatus === 'active', missed = active && missedEvents.get(eventId(x));
+      const value = x.inferred ? (x.confirmed ? 'חסר (הוסק משיבוץ)' : 'לא ניתן לאמת שיבוץ') :
+        x.score != null ? `${x.score}${x.score === 0 && missed ? ' · הוחמץ' : ''}` :
+          x.scoreRaw || (!active || missed ? 'חסר' : missedEvents.has(eventId(x)) ? 'לא ניתן לאמת שיבוץ' : '—');
+      return `<tr><td>${E(x.date || '—')}</td><td>${E(x.subj)}${!active ? ` <span class="text-slate-500 text-xs">${x.enrollmentStatus === 'moved' ? 'קבוצה קודמת' : 'ללא שיבוץ'}</span>` : ''}</td><td>${E(x.eventName)}</td><td>${E(x.weight)}</td>
+        <td class="${!active || (x.inferred && !x.confirmed) ? 'text-slate-500' : x.score == null || x.score === 0 ? 'text-amber-600' : !passingScore(x.score, x.subj) ? 'text-red-600 font-semibold' : ''}">${E(value)}</td></tr>`;
+    }).join('');
     const attRows = Store.attemptsOf(t.tz).sort((a, b) => natural(a.code, b.code) || natural(a.moed, b.moed)).map(a => {
       const exempt = a.cls.exempt || Parser.classify(a.shown || a.final || a.scoreRaw).exempt;
       const internalDef = rules.internals.find(i => i.codes.includes(a.code)), internal = !!internalDef;
@@ -455,12 +473,12 @@
       };
       const onlyMissedZeros = avg === 0 && counted.length && counted.every(e =>
         e.score === 0 && subjects.some(s => s.missed.has(e.key)));
-      const confirmedMissed = missed.some(confirmed);
+      const confirmedMissed = missed.filter(confirmed).length;
       const hasActualFail = counted.some(e => !passingScore(e.score, subject) &&
         !(e.score === 0 && missed.some(m => m.key === e.key)));
       if (onlyMissedZeros) return { state: counted.every(e => missed.some(m => m.key === e.key && confirmed(m))) ? 'missed' : 'unverified', value: avg, missed: confirmedMissed };
       if (avg != null) return { state: passingScore(avg, subject) ? 'ok' : 'fail', value: avg, missed: confirmedMissed, hasActualFail };
-      if (missed.length) return { state: missed.some(confirmed) ? 'missed' : 'unverified', value: null };
+      if (missed.length) return { state: confirmedMissed ? 'missed' : 'unverified', value: null, missed: confirmedMissed };
       return null;
     };
     const status = (keywords, groups, subject) => {
@@ -499,17 +517,17 @@
       .filter(x => x.state !== 'none' && !(x.state === 'missing' && isRoutineDuplicateSubject(x.name)))
       .sort((a, b) => natural(a.name, b.name));
     const rows = [...core.values(), ...majors.values(), ...extras];
-    return { core, majors, extras, failing: rows.filter(r => r.state === 'fail'), missing: rows.filter(r => r.state === 'missing'), any: gradesOn && Store.activeCurrentOf(t.tz).length > 0 };
+    return { core, majors, extras, sheet, failing: rows.filter(r => r.state === 'fail'), missing: rows.filter(r => r.state === 'missing'), any: gradesOn && Store.activeCurrentOf(t.tz).length > 0 };
   },
 
   /** תא "ציון שוטף": נכשל בטרקוטה מודגשת, "חסר ציון" כתג חרדל, ומקף רק כשאין קבוצה ואין רשומת סדין */
   currentCell(c) {
     if (!c || c.state === 'none') return '<span class="text-slate-400">–</span>';
     if (c.state === 'missing') return '<span class="miss-grade" title="רשום בקבוצה / יש רשומה בסדין ציונים, אך אין ציון שוטף">חסר ציון</span>';
-    if (c.state === 'missed') return '<span class="miss-grade">הוחמץ</span>';
+    if (c.state === 'missed') return `<span class="miss-grade">${c.missed > 1 ? `${c.missed} הוחמצו` : 'הוחמץ'}</span>`;
     if (c.state === 'unverified') return '<span class="text-slate-500" title="לא ניתן לאמת החמצה ללא שיבוץ מאומת">לא ניתן לאמת</span>';
     const text = E(Util.fmt(c.value, 0));
-    return `${c.state === 'fail' ? `<span class="score-alert font-bold">${text} • נכשל</span>` : `<span class="text-slate-800 font-normal">${text}</span>`}${c.missed ? ' <span class="miss-grade">הוחמץ</span>' : ''}`;
+    return `${c.state === 'fail' ? `<span class="score-alert font-bold">${text} • נכשל</span>` : `<span class="text-slate-800 font-normal">${text}</span>`}${c.missed ? ` <span class="miss-grade">${c.missed > 1 ? `${c.missed} הוחמצו` : 'הוחמץ'}</span>` : ''}`;
   },
 
   /** תיבות KPI בראש כרטיס החניך: ממוצע החניך מול ממוצע הכיתה, מקצועות נכשלים/חסרים וסטטוס שיבוץ */
