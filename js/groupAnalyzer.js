@@ -171,8 +171,11 @@ const Store = {
         const nm = g.name || '';
         g.subject = nm.includes('[') ? Parser.parseGroupString(nm).subject || nm : nm;
       }
-      const um = Util.stripQuotes(`${g.subject} ${g.name}`).match(/(\d)\s*(?:יח|יל)/);
-      g.units = um ? um[1] : null;
+      const subject = Util.stripQuotes(g.subject);
+      const um = subject.match(/(?:^|[^\d+])([1-5])\s*(?:יחל|יחידות)(?![א-ת])/);
+      const unitIndex = um ? um.index + um[0].indexOf(um[1]) : -1;
+      g.units = um && !/\+\s*$/.test(subject.slice(0, unitIndex)) ? um[1] :
+        /(?:^|\s)(?:רמה\s*5|מצטיינים|הקבצה\s*א)(?=$|[\s,./-])/.test(subject) ? '5' : null;
       g.reinforcement = /תגבור/.test(`${g.subject} ${g.name}`);
       const mem = g.inFile ? g.members : g.gradeMembers;
       const cnt = {};

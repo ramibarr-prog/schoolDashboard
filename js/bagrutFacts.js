@@ -217,7 +217,7 @@ const BagrutFacts = (() => {
         a.code === b.code && a.partial === 'exam' && a.cls.kind === 'num' && a.cls.num === b.num);
       if (examOnly) {
         const mw = Config.magenWeight(b.code || (comp.codes && comp.codes[0]), ctx.rules) / 100;
-        return { ...base, state: 'num', num: Math.round(cur * mw + b.num * (1 - mw)), reportedNum: b.num, magenForecast: true };
+        return { ...base, state: 'num', num: Parser.roundWeightedScore(cur, b.num, mw), reportedNum: b.num, magenForecast: true };
       }
       return { ...base, state: 'num', num: b.num };
     }
@@ -247,9 +247,10 @@ const BagrutFacts = (() => {
 
   /* שני מקצועות מדעיים מורחבים (פיזיקה, ביולוגיה, כימיה, מדעי המחשב) פוטרים ממבוא למדעים */
   const SCIENCE_IDS = ['physics', 'biology', 'chemistry', 'cs'];
-  function scienceMajorCount(rules, majorCands) {
+  function scienceMajorCount(rules, majorCands, adaptive = false) {
     const isScience = id => { const m = rules.majors.find(x => x.id === id); return !!(m && (m.science ?? SCIENCE_IDS.includes(id))); };
-    return (majorCands || []).filter(c => isScience(c.id)).length;
+    return (majorCands || []).filter(c => isScience(c.id) && !c.failed && !c.blocked && !c.exempt &&
+      (c.status === 'pass' || (adaptive && c.status === 'pending'))).length;
   }
 
   /** יחידות לימוד נצברות מול צפויות, מתוך תוצאות המקצועות והמגמות (עובדה טהורה בנתוני הקלט) */

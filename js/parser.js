@@ -456,11 +456,12 @@ const Parser = (() => {
       const rules = Config.rules();
       [...rules.coreSubjects, ...rules.majors].forEach(s => (s.keywords || []).forEach(k => { if (/\s/.test(k.trim())) known.add(k.trim()); }));
     } catch (e) { /* ללא כללים – רשימת ברירת המחדל בלבד */ }
-    for (const k of [...known].sort((a, b) => b.length - a.length)) {
-      if (body.startsWith(k + ' ')) return { subject: k, teacher: body.slice(k.length).trim() };
-    }
-    const m = body.match(/^(\S+)\s+(.*)$/);
-    return m ? { subject: m[1], teacher: m[2].trim() } : { subject: body, teacher: '' };
+    const knownSubject = [...known].sort((a, b) => b.length - a.length).find(k => body.startsWith(k + ' '));
+    const base = knownSubject || (body.match(/^\S+/) || [''])[0];
+    let subject = base, rest = body.slice(base.length).trim();
+    const level = rest.match(/^(?:[1-5]\s*(?:יח["״'׳]?ל|יחידות)|רמה\s*[1-5]|מצטיינים|הקבצה\s*א["״'׳]?)(?=\s|$)/);
+    if (level) { subject += ' ' + level[0]; rest = rest.slice(level[0].length).trim(); }
+    return { subject, teacher: rest };
   }
 
   function parseGroupString(str) {
@@ -510,13 +511,17 @@ const Parser = (() => {
    *     במחזור (Config.magenWeight(code, rules): דריסה ברכיב / בקטלוג, אחרת ברירת המחדל של המחזור – 30%), derived = true;
    *  ג. אחרת ציון בודד (בחינה או הגשה) – מסומן partial, כדי שהמנוע יוכל להשלים מגן חסר מציון שוטף.
    */
+  function roundWeightedScore(submission, exam, weight) {
+    return Math.round(+(submission * weight + exam * (1 - weight)).toFixed(6));
+  }
+
   function resolveAttempt(fin, exam, sub, code, rules) {
     const f = classify(fin);
     if (f.kind !== 'none') return { cls: f, shown: String(fin).trim(), derived: false, partial: '' };
     const e = Util.parseScore(exam), s = Util.parseScore(sub);
     if (e !== null && s !== null) {
       const w = Config.magenWeight(code, rules) / 100;
-      const num = Math.round(s * w + e * (1 - w));
+      const num = roundWeightedScore(s, e, w);
       return { cls: { kind: 'num', num }, shown: String(num), derived: true, partial: '' };
     }
     for (const [v, partial] of [[exam, 'exam'], [sub, 'submission']]) {
@@ -568,7 +573,7 @@ const Parser = (() => {
       } else if (type === 'bagrut') {
         /* שורה שטוחה: חניך × שאלון × מועד. כל הניסיונות נשמרים; הציון הגבוה ביותר לכל סמל נבחר ב-Store.bestOf */
         const tz = normalizeTz(get(r, 'tz'));
-        const code = Util.normQuestionnaireCode(String(get(r, 'questionnaireCode')).replace(/\D/g, ''));
+        const code = Util.normQuestionnaireCode(String(get(r, 'questionnaireCode')).trim().replace(/\.0+$/, '').replace(/\D/g, ''));
         if (!tz || !code) { skipped++; return; }
         const submission = get(r, 'submissionGrade'), exam = get(r, 'examGrade'), fin = get(r, 'finalGrade');
         const res = resolveAttempt(fin, exam, submission, code);
@@ -862,7 +867,7 @@ const Parser = (() => {
   return {
     SCHEMA, readFile, readRosterFile, sniffHeader, buildTable, autoMap, missingRequired, normalize, classify,
     parseGroupString, parseEventString, parseEvent: parseEventString, normalizeTz, slimRows, validateAgainstRoster,
-    resolveAttempt, openMappingModal, parseExcelFile, detectWide, canonSubject
+    resolveAttempt, roundWeightedScore, openMappingModal, parseExcelFile, detectWide, canonSubject
   };
 })();
 
