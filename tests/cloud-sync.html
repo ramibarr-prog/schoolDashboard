@@ -424,6 +424,10 @@ window.fetch = (url, options) => {
     syncUi.appendChild(indexDocument.getElementById('headerCloudSync').parentElement.cloneNode(true));
     syncUi.appendChild(indexDocument.getElementById('cloudAccessDialog').cloneNode(true));
     syncUi.appendChild(indexDocument.querySelector('style').cloneNode(true));
+    syncUi.appendChild(indexDocument.getElementById('syncLogList').cloneNode(true));
+    const overviewSync = document.createElement('span');
+    overviewSync.id = 'ovSyncPill';
+    syncUi.appendChild(overviewSync);
     document.body.appendChild(syncUi);
     const syncListeners = [];
     let authDone;
@@ -439,8 +443,18 @@ window.fetch = (url, options) => {
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
+    let syncGuard;
+    const syncDocument = new Proxy(testDocument, { get(target, key) {
+      if (key === 'addEventListener') return (type, listener, options) => {
+        if (type === 'click' && options === true && !syncGuard) {
+          syncGuard = listener;
+          document.addEventListener(type, listener, options);
+        }
+      };
+      return Reflect.get(target, key);
+    } });
     const syncApp = new Function('Util', 'Config', 'CloudSync', 'document', 'Store', 'window', 'SignalEngine', 'RULES_VERSION', appSource + '\nreturn App;')(
-      Util, Config, CloudSync, testDocument, { ...testStore, refresh() {} }, syncWindow, { invalidate() {} }, 0
+      Util, Config, CloudSync, syncDocument, { ...testStore, refresh() {} }, syncWindow, { invalidate() {} }, 0
     );
     let refreshed = 0;
     const syncErrors = [];
@@ -455,11 +469,14 @@ window.fetch = (url, options) => {
       assert(getComputedStyle(document.getElementById('cloudReadOnly')).display === 'none', label + ': read-only banner still visible');
       assert(document.getElementById('headerCloudStatus').textContent === 'מסונכרן', label + ': stale top-bar status');
       assert(document.getElementById('syncStatus').textContent === '☁️ מסונכרן', label + ': stale ribbon sync status');
+      assert(overviewSync.textContent === '☁️ מסונכרן', label + ': stale overview sync status');
       assert(CloudSync.status.kind === 'ok' && !CloudSync.hasUnpublished(), label + ': cloud not settled');
     };
     CloudSync.acceptGoogleCredential(token);
     await authDone;
     synced('Google sign-in event');
+    CloudSync.emitStatus({ kind: 'ok', text: '☁️ מסנכרן...' });
+    synced('successful status overrides stale busy text');
     refreshed = 0;
     // Test the actual header handler without mounting the settings form.
     document.getElementById('cloudBody').innerHTML = '';
@@ -470,30 +487,63 @@ window.fetch = (url, options) => {
     CloudSync.emitStatus({ kind: 'busy', text: '☁️ מסנכרן...' });
     assert(document.getElementById('headerCloudStatus').textContent === 'מסנכרן...', 'Top-bar busy state not exercised');
     const syncAccess = syncApp.syncCloudAccess.bind(syncApp);
+    const logEntries = () => JSON.parse(localStorage.getItem('sd.cloud.log') || '[]');
+    const logged = (action, label) => {
+      const last = logEntries().at(-1);
+      assert(last.action === action && last.status === 'ok' && last.rev === remote.rev, label + ': wrong log outcome or revision');
+      assert(document.getElementById('syncLogList').textContent.includes('rev ' + remote.rev), label + ': log view not refreshed');
+    };
+    localStorage.removeItem('sd.cloud.log');
+    const logStarted = Date.now();
+    let editChecks = 0;
+    const requireSyncEdit = syncApp.requireEdit;
+    syncApp.requireEdit = () => { editChecks++; return false; };
+    const header = document.getElementById('headerCloudSync');
+    const headerChild = document.createElement('span');
+    headerChild.dataset.upload = 'masterRoster';
+    headerChild.textContent = header.textContent;
+    header.textContent = '';
+    header.appendChild(headerChild);
     const headerDone = new Promise(resolve => {
       syncApp.syncCloudAccess = async (...args) => { const result = await syncAccess(...args); resolve(result); return result; };
     });
-    document.getElementById('headerCloudSync').click();
+    headerChild.click();
     assert((await headerDone).ok, 'Header did not complete the pull/push flow');
+    syncApp.requireEdit = requireSyncEdit;
+    assert(editChecks === 0, 'Header sync was subjected to the read-only edit guard');
     syncApp.syncCloudAccess = syncAccess;
     synced('header pull');
     assert(refreshed === 1 && !syncErrors.length, 'Header refresh failed or reported a false error');
-    Config.setException(tz, { note: 'Pending header upload' }); stopTimer();
+    const headerLog = logEntries();
+    assert(headerLog.length === 2 && headerLog[0].action === 'pull' && headerLog[1].action === 'sync',
+      'Header pull/push were not logged exactly once each');
+    assert(headerLog[0].rev === remote.rev - 1 && headerLog[1].rev === remote.rev &&
+      headerLog.every(entry => entry.at >= logStarted && entry.at <= Date.now()), 'Header log lost operation revisions or timestamps');
+    logged('sync', 'header sync');
+    assert(Config.setException(tz, { note: 'Pending header upload' }).ok, 'Could not create pending header edit'); stopTimer();
     syncApp.renderSync();
     assert(!document.getElementById('syncStatus').textContent.includes('מסנכרן...'), 'Idle dirty state shown as busy');
     await syncApp.syncCloudAccess();
     synced('header dirty upload');
+    logged('sync', 'header dirty upload');
     assert((await CloudSync.open(remote.payload)).studentMeta[tz].note === 'Pending header upload', 'Header lost pending edits');
+    assert(Config.setException(tz, { note: 'Pending settings upload' }).ok, 'Could not create pending settings edit'); stopTimer();
     syncApp._cloudWriteReady = false;
-    Config.setException(tz, { note: 'Pending settings upload' }); stopTimer();
+    const beforeSettingsSync = logEntries().length;
     await syncApp.acts.cloudSync.call(syncApp);
     synced('settings sync');
+    assert(logEntries().length === beforeSettingsSync + 1, 'Settings dirty upload logged twice or not at all');
+    logged('sync', 'settings sync');
     syncApp._cloudWriteReady = false;
+    const beforeSettingsPull = logEntries().length;
     await syncApp.acts.cloudPull.call(syncApp);
     synced('settings pull');
+    assert(logEntries().length === beforeSettingsPull + 1, 'Settings pull logged twice or not at all');
+    logged('pull', 'settings pull');
     failPull = true;
     await syncApp.syncCloudAccess();
     assert(!syncApp.canEdit() && syncErrors.at(-1).includes('Test offline'), 'Real pull failure did not retain read-only/error');
+    assert(logEntries().at(-1).action === 'pull' && logEntries().at(-1).status === 'error', 'Failed pull missing from shared log');
     failPull = false;
     await syncApp.syncCloudAccess();
     synced('retry after failure');
@@ -514,6 +564,7 @@ window.fetch = (url, options) => {
       assert(CloudSync.status.kind !== 'busy', 'Cancelled upload left busy status');
     } finally { CloudSync.seal = realSeal; stopTimer(); }
     for (const [type, handler] of syncListeners) window.removeEventListener(type, handler);
+    document.removeEventListener('click', syncGuard, true);
     clearTimeout(syncApp._timer);
     await CloudSync.pullCloudState();
     assert(app.completeCloudAccess('current'), 'Original fixture did not resume after the sign-in revision changed');

@@ -86,8 +86,8 @@ const App = {
       status.textContent = !identity ? 'לא מחובר' : cloud.status.kind === 'conflict' ? 'נדרשת החלטה על התנגשות' :
         !cloud.url() ? 'חסרה כתובת ענן' : !cloud.passcode() ? 'חסר קוד בית ספר' :
         cloud.status.kind === 'error' ? (cloud.status.error || cloud.status.text) :
-        cloud.hasUnpublished() ? 'שינויים מקומיים טרם סונכרנו' :
-        cloud.status.kind === 'busy' ? 'מסנכרן...' : this.canEdit() ? 'מסונכרן' : 'טרם נבדקה עדכניות';
+        cloud.status.kind === 'busy' ? 'מסנכרן...' :
+        cloud.hasUnpublished() ? 'שינויים מקומיים טרם סונכרנו' : this.canEdit() ? 'מסונכרן' : 'טרם נבדקה עדכניות';
     }
     const banner = $('cloudReadOnly');
     if (banner) banner.hidden = this.canEdit();
@@ -133,9 +133,10 @@ const App = {
       return 'kept-local';
     }
     const dirty = cloud.hasUnpublished();
-    let result = await this.cloudRefresh(() => dirty ? cloud.pushCloudState() : cloud.pullCloudState(), { cloudAccess: true });
+    let result = await this.cloudRefresh(() => dirty ? cloud.pushCloudState() : cloud.pullCloudState(),
+      { cloudAccess: true, action: dirty ? 'sync' : 'pull' });
     if (result && result !== 'kept-local' && push && !dirty) {
-      result = await this.cloudRefresh(() => cloud.pushCloudState(), { cloudAccess: true });
+      result = await this.cloudRefresh(() => cloud.pushCloudState(), { cloudAccess: true, action: 'sync' });
     }
     if (!result || result === 'kept-local') this.openCloudAccess();
     this.renderCloudAccess();
@@ -1206,6 +1207,7 @@ const App = {
       if (e.target.id === 'ovForm' && !this.requireEdit()) { e.preventDefault(); e.stopImmediatePropagation(); }
     }, true);
     document.addEventListener('click', e => {
+      if (e.target.closest && e.target.closest('#headerCloudSync')) return;
       const el = e.target.closest && e.target.closest('[data-act], [data-upload], [data-rule-add], #rulesReset, #btnClearData, #btnResetConfig');
       if (!el) return;
       if (!(el.dataset.upload || el.dataset.ruleAdd || editActions.has(el.dataset.act) ||

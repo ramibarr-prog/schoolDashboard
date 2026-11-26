@@ -60,11 +60,10 @@
       `<li class="flex flex-wrap justify-between gap-2 border-b border-slate-100 pb-2"><span>${E(cloudLogActions[entry.action])} · ${E(cloudLogStatuses[entry.status])}${entry.rev ? ` · rev ${entry.rev}` : ''}</span><time class="text-xs text-slate-500">${E(new Date(entry.at).toLocaleString('he-IL'))}</time></li>`).join('')}</ul>`
       : '<p class="text-xs text-slate-500">אין פעולות סנכרון ביומן המקומי.</p>';
   };
-  const recordCloudLog = (cloud, action, status) => {
+  const recordCloudLog = (cloud, action, status, rev = cloud.meta().rev) => {
     if (cloud._wiping) return;
     try {
       const entries = readCloudLog();
-      const rev = cloud.meta().rev;
       entries.push({ at: Date.now(), action, status, rev: Number.isSafeInteger(rev) && rev >= 0 ? rev : 0 });
       localStorage.setItem('sd.cloud.log', JSON.stringify(entries.slice(-8)));
     } catch (e) {
@@ -666,10 +665,12 @@
     let t;
     if (!url) t = '💾 נתונים מקומיים (ללא סנכרון ענן)';
     else if (!this.cloudService().configured() && s.kind !== 'conflict') t = '☁️ נדרשת התחברות עם Google · הנתונים נשמרו מקומית';
-    else if (s.text) t = s.text;
     else if (s.kind === 'busy') t = '☁️ מסנכרן...';
+    else if (s.kind === 'error' || s.kind === 'conflict') t = s.text || s.error ||
+      (s.kind === 'error' ? '☁️ הסנכרון נכשל' : '☁️ נדרשת החלטה על התנגשות');
     else if (this.cloudService().hasUnpublished()) t = '☁️ שינויים מקומיים טרם סונכרנו';
-    else t = (s.kind === 'ok' || s.updatedAt || this.cloudService().meta().syncedAt) ? '☁️ מסונכרן' : '☁️ טרם סונכרן';
+    else if (s.kind === 'ok') t = '☁️ מסונכרן';
+    else t = s.text || ((s.updatedAt || this.cloudService().meta().syncedAt) ? '☁️ מסונכרן' : '☁️ טרם סונכרן');
     if (el) {
       el.textContent = t;
       el.title = s.kind === 'error' ? s.error || t : '';
@@ -738,29 +739,32 @@
   },
 
   /** מחילה תמונת מצב חדשה על כל התצוגות */
-  async cloudRefresh(fn, { cloudAccess = false } = {}) {
+  async cloudRefresh(fn, { cloudAccess = false, action } = {}) {
     const cloud = this.cloudService(), identity = cloud.identity(), settingsRevision = cloud._settingsRevision;
     let r;
     try {
       r = await fn();
     } catch (e) {
       console.warn('cloud sync', e);
+      if (action) recordCloudLog(cloud, action, 'error');
       this.renderSync();
       this.renderCloudAccess();
       this.toast(e.message || 'הפעולה נכשלה', 'error');
       return null;
     }
+    if (action) recordCloudLog(cloud, action, !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok',
+      r && typeof r === 'object' ? r.rev : cloud.meta().rev);
     if (cloudAccess && identity === cloud.identity() && settingsRevision === cloud._settingsRevision) this.completeCloudAccess(r);
     try {
       this.rosterReport = null;
       if (r === 'applied') this.afterDataChange();
-      this.renderSync();
-      this.renderCloudAccess();
       this.renderCloudCard();
     } catch (e) {
       console.error('cloud view refresh', e);
       this.toast(`רענון התצוגה נכשל: ${e.message}`, 'error');
     }
+    this.renderSync();
+    this.renderCloudAccess();
     return r;
   },
 
@@ -966,32 +970,26 @@
   async cloudPull() {
     if (!this.cloudService().url()) return this.toast('לא הוגדרה כתובת סנכרון ענן', 'warn');
     if (this.cloudService().hasUnpublished() && !this.confirmAction('יש שינויים שלא סונכרנו. משיכה מהענן תדרוס אותם. להמשיך?')) return;
-    const r = await this.cloudRefresh(() => this.cloudService().pullCloudState({ force: true }), { cloudAccess: true });
-    recordCloudLog(this.cloudService(), 'pull', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
+    const r = await this.cloudRefresh(() => this.cloudService().pullCloudState({ force: true }), { cloudAccess: true, action: 'pull' });
     if (r === 'kept-local') this.toast('בוצעו שינויים בזמן המשיכה; הם נשמרו. יש לפתור את ההתנגשות לפני סנכרון.', 'warn');
     else if (r) this.toast(r === 'applied' ? 'הנתונים נטענו מהענן' : 'אין עדיין נתונים בענן', r === 'applied' ? 'ok' : 'info');
   },
   async cloudSync() {
-    let attempted = false, outcome = 'error';
     try {
       saveCloudForm(this.cloudService());
       if (!this.cloudService().url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
-      attempted = true;
       const r = await this.syncCloudAccess({ push: true });
       if (!r) return;
-      if (r === 'kept-local') { outcome = 'conflict'; return; }
-      outcome = 'ok';
+      if (r === 'kept-local') return;
       this.toast('הנתונים סונכרנו לענן', 'ok');
     } catch (e) { this.toast(`הסנכרון נכשל: ${e.message}`, 'error'); }
     finally {
-      if (attempted) recordCloudLog(this.cloudService(), 'sync', outcome);
       this.renderSync();
     }
   },
   async cloudForcePush() {
     if (!this.confirmAction('דחיפה כפויה תחליף את נתוני הענן בנתונים המקומיים ותשפיע על כל הצוות. מומלץ לייצא גיבוי מקומי קודם. להמשיך?')) return;
-    const r = await this.cloudRefresh(() => this.cloudService().pushCloudState({ force: true }), { cloudAccess: true });
-    recordCloudLog(this.cloudService(), 'force', !r ? 'error' : r === 'kept-local' ? 'conflict' : 'ok');
+    const r = await this.cloudRefresh(() => this.cloudService().pushCloudState({ force: true }), { cloudAccess: true, action: 'force' });
     if (r && r !== 'kept-local') this.toast('הנתונים המקומיים נשלחו לענן', 'ok');
   },
   async cloudJoinLink() {
