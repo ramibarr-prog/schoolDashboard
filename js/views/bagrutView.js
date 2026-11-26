@@ -768,7 +768,7 @@
       const offset = offsetInfo(ev);
       const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
         !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
-      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}" aria-pressed="${t.tz === st.workTz}">${E(t.name)}</button></td>
+      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);

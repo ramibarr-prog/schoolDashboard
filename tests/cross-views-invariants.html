@@ -1212,7 +1212,7 @@ window.fetch = (input, options) => {
         same(injected, [], 'No element or event-handler attribute may be created from data');
         check($id('profName').textContent === name, 'The 360 header must show the hostile name as plain text');
         app.renderBagrutPanel();
-        const button = [...$id('bagrut-table').querySelectorAll('button[data-act="bagrutWorkSelect"]')].find(b => b.dataset.tz === T(1));
+        const button = [...$id('bagrut-table').querySelectorAll('button.bagrut-name[data-act="openProfile"]')].find(b => b.dataset.tz === T(1));
         check(button && button.textContent === name && button.getAttribute('title') === `ת.ז ${T(1)}`, 'The table name button must keep its text, ID and title intact');
         app.state.sadin.mode = 'full';
         app.renderSadinPanel();
@@ -2010,7 +2010,7 @@ window.fetch = (input, options) => {
 
     await group('Worklist row selection and splitter', async () => {
       resetConfig();
-      const roster = [1, 2, 3].map(n => stu(n, 'יב', 'יב1'));
+      const roster = [1, 2, 3].map(n => stu(n, 'יב', 'יב1')).concat(stu(21, 'יא', 'יא1'));
       world({ roster, bagrut: bagrutRows(roster.flatMap(t => profile(t.tz))) });
       const listeners = [], app = newApp({ grade: 'יב' }, listeners);
       app.state.tab = 'bagrut';
@@ -2026,7 +2026,7 @@ window.fetch = (input, options) => {
       click.fn({ target: row(T(2)).children[1] });
       same(app.state.bagrut.workTz, T(2), 'Clicking a cell selects its student');
       check(row(T(2)).classList.contains('is-selected') &&
-        row(T(2)).querySelector('button.bagrut-name[aria-pressed="true"]'), 'Selected row and keyboard button are marked');
+        row(T(2)).querySelector('button.bagrut-name[data-act="openProfile"]:not([aria-pressed])'), 'Selected row and profile button are present');
       click.fn({ target: row(T(3)).querySelector('[data-act="bagrutPin"]') });
       same(app.state.bagrut.workTz, T(2), 'Deferring another student does not select that row');
       check(JSON.parse(window.localStorage.getItem('sd.bagrut.deferred.v1')).includes(T(3)), 'Row pin action still defers its student');
@@ -2061,6 +2061,20 @@ window.fetch = (input, options) => {
       same(JSON.parse(window.localStorage.getItem(key)), 24, 'Drag is limited to the minimum');
       splitter().dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
       window.localStorage.removeItem(key);
+      const visibleOrder = [...$id('bagrut-table').querySelectorAll('.bagrut-work-students button.bagrut-name')].map(button => button.dataset.tz);
+      const oldScrollTo = window.scrollTo;
+      window.scrollTo = () => {};
+      try {
+        click.fn({ target: row(T(3)).querySelector('button.bagrut-name') });
+        same([app.state.tab, app.state.profileTz, app.state.bagrut.workTz], ['profile', T(3), T(2)],
+          'Clicking a name opens its profile without selecting its row');
+        same([app.state.navOrigin.tab, app.state.navOrigin.tz, app.state.navOrigin.orderedTzList],
+          ['bagrut', T(3), visibleOrder], 'Profile navigation captures the visible worklist order');
+        app.returnToOrigin();
+        same([app.state.tab, app.state.navOrigin, app.state.bagrut.workTz], ['bagrut', null, T(2)],
+          'Returning restores the worklist without changing its selection');
+        await tick(50);
+      } finally { window.scrollTo = oldScrollTo; }
       windowListeners.forEach(args => window.removeEventListener(...args));
     });
 
