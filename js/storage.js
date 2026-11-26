@@ -308,6 +308,7 @@ const CloudSync = {
         return 'applied';
       } catch (e) {
         Config.data = previous;
+        Config.rev++;
         Config._activeCohort = activeCohort;
         Config._cache.masterRoster = previousRoster;
         savedKeys.forEach((key, i) => {

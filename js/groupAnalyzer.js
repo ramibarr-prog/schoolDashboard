@@ -17,6 +17,7 @@ function sadinPass() { return Number(Config.rules().passGrade) || SADIN_PASS; }
 const ROUTINE_DUPLICATE_SUBJECTS = ['חינוך', 'מגדר', 'מפגש בוקר'];
 /* מקצועות שמכילים "חינוך" אך אינם שגרתיים: חינוך גופני ותעבורתי לעולם לא מוסתרים */
 const NON_ROUTINE_SUBJECTS = ['חינוך גופני', 'חנ"ג', 'חנג', 'תעבורתי'];
+const traineeNameCollator = new Intl.Collator('he');
 /** האם שם המקצוע זהה לאחד המקצועות השגרתיים או מכיל אותו (מנורמל מגרשיים) */
 function isRoutineDuplicateSubject(subjectName) {
   const s = Util.norm(subjectName);
@@ -25,6 +26,7 @@ function isRoutineDuplicateSubject(subjectName) {
 }
 
 const Store = {
+  version: 0,
   raw: { groups: [], grades: [], bagrut: [], roster: [] },
   loaded: { groups: false, grades: false, bagrut: false, roster: false },
   fileInfo: {},
@@ -38,6 +40,8 @@ const Store = {
   _groupGrades: new Set(),
   _bagrut: new Map(),
   _classes: [],
+  _sortedTrainees: [],
+  prerequisiteSets: { bagrut: new Set(), groups: new Set(), sadin: new Set() },
   _loadedCache: new Map(),
   _cohortCache: new Map(),
   latestEventDate: '',
@@ -62,6 +66,7 @@ const Store = {
   hasData() { return this.trainees.size > 0; },
 
   rebuild() {
+    this.version++;
     this._loadedCache = new Map();
     this._cohortCache = new Map();
     const T = new Map(), G = new Map();
@@ -80,8 +85,9 @@ const Store = {
     this.classNames = Config.rosterClassNames();
     const ignored = new Set([...Config.ignoredIds(), ...Config.hiddenIds()]), juniorGroups = new Set();
     this.raw.roster.forEach(r => {
+      const name = `${r.firstName} ${r.lastName}`.trim() || r.tz;
       T.set(r.tz, {
-        tz: r.tz, firstName: r.firstName, lastName: r.lastName, name: `${r.firstName} ${r.lastName}`.trim() || r.tz,
+        tz: r.tz, firstName: r.firstName, lastName: r.lastName, name, nameKey: Util.norm(name).toLocaleLowerCase(),
         gradeKey: r.grade, classKey: r.homeroom, classNum: Util.parseClass(r.grade, r.homeroom).num, track: r.track,
         inRoster: true, inGroups: false, inGrades: false, inBagrut: false, majorName: ''
       });
@@ -245,6 +251,17 @@ const Store = {
     });
 
     this.trainees = T;
+    this._sortedTrainees = [...T.values()].sort((a, b) =>
+      Util.ord(a.gradeKey) - Util.ord(b.gradeKey) || natural(a.classKey, b.classKey) || traineeNameCollator.compare(a.name, b.name));
+    this.prerequisiteSets = { bagrut: new Set(), groups: new Set(), sadin: new Set() };
+    [['bagrut', 'bagrut', 'bagrut'], ['groups', 'groups', 'groups'], ['grades', 'grades', 'sadin']].forEach(([type, loaded, key]) => {
+      if (!this.loaded[loaded]) return;
+      this.raw[type].forEach(row => {
+        const trainee = T.get(row.tz);
+        const grade = trainee ? trainee.gradeKey : Util.normGrade(row.gradeKey || row.grade || '');
+        if (grade) this.prerequisiteSets[key].add(grade);
+      });
+    });
     this.latestEventDate = latestEvent;
     this.groups = G;
     this.unknown = { groups: [...unknown.groups], grades: [...unknown.grades], bagrut: [...unknown.bagrut] };
@@ -292,6 +309,7 @@ const Store = {
   },
 
   traineeList() { return [...this.trainees.values()]; },
+  sortedTrainees() { return this._sortedTrainees.slice(); },
   classes() { return this._classes; },
   gradeKeys() {
     const set = new Set([...this.trainees.values()].map(t => t.gradeKey));
@@ -349,6 +367,7 @@ const Store = {
 /* ---------------------------------------------------------------------
    ניתוחים
    --------------------------------------------------------------------- */
+let sadinSheetVersion = '', sadinSheetCache = [];
 const GroupAnalyzer = {
   coreSubjects() { return Config.rules().coreSubjects.filter(s => s.enabled !== false); },
 
@@ -617,6 +636,17 @@ const GroupAnalyzer = {
   /** גיליון רוחבי: ממוצע משוקלל לאירועים בכל מקצוע, וממוצע כללי שווה-משקל למקצועות. */
   sadinSheet(roster, filters = {}) {
     const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = sadinPass();
+    const version = `${Store.version}|${Config.rev}`;
+    if (version !== sadinSheetVersion) { sadinSheetVersion = version; sadinSheetCache = []; }
+    const cacheable = roster.every(t => Store.trainees.get(t.tz) === t);
+    const key = cacheable ? JSON.stringify([subject, teacher, roster.map(t => t.tz)]) : '';
+    const rules = Config.rules();
+    const index = cacheable ? sadinSheetCache.findIndex(entry => entry.key === key && entry.rules === rules) : -1;
+    if (index >= 0) {
+      const entry = sadinSheetCache.splice(index, 1)[0];
+      sadinSheetCache.push(entry);
+      return entry.rows.slice();
+    }
     const teacherOf = e => (Store.groups.get(e.groupId) || {}).teacher || e.teacher || '';
     const eventKey = (groupId, subjectName, teacherName, name, date, weight) => JSON.stringify([groupId || '', subjectName, teacherName, name || '', date || '', weight]);
     const matches = (s, t) => (subject === 'all' || subject === s) && (teacher === 'all' || teacher === t);
@@ -666,7 +696,11 @@ const GroupAnalyzer = {
       const missed = [...subjects.values()].reduce((n, s) => n + s.missed.size, 0);
       rows.push({ t, subjects, overall, failing, missed });
     });
-    return rows;
+    if (cacheable) {
+      if (sadinSheetCache.length >= 4) sadinSheetCache.shift();
+      sadinSheetCache.push({ key, rules, rows });
+    }
+    return rows.slice();
   },
 
   /** מקצוע בסדין נחשב חוסם לחניך: ממוצע מתחת לציון עובר או אירוע הערכה שהוחמץ */

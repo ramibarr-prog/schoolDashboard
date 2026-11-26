@@ -288,6 +288,8 @@ const App = {
      חישוב, מטמון ורינדור
      ------------------------------------------------------------------ */
   getEval(tz) {
+    const key = JSON.stringify([Store.version, Config.rev, this.state.sim, BagrutEngine.decoratorVersion]);
+    if (this._evalsKey !== key) { this._evalsKey = key; this.evals.clear(); }
     let e = this.evals.get(tz);
     if (!e) {
       /* מצב תעודה סופית חל על שכבת י"ב בלבד; י' ו-י"א נשפטות תמיד לפי צפי מותאם / תקינות צבירה */
@@ -334,16 +336,20 @@ const App = {
    * נמדד לפי מיקום הטבלה בפועל, כך שהוא מתעדכן כשסרגל הסינון נהיה גבוה יותר (שורה נוספת) או כשנוספים רכיבים מעליה.
    */
   fitTables() {
-    const main = $('mainContent');
-    if (!main || window.innerWidth < 1024) return;
-    const mr = main.getBoundingClientRect(), pad = parseFloat(getComputedStyle(main).paddingBottom) || 16;
-    const sadin = $('sadin-table');
-    if (sadin && !sadin.classList.contains('sticky-scroll')) sadin.style.maxHeight = '';
-    document.querySelectorAll('#bagrut-table, #sadin-table.sticky-scroll, #sadin-table .sticky-scroll').forEach(el => {
-      if (el.offsetParent === null) return;
-      el.style.maxHeight = 'none';
-      const top = el.getBoundingClientRect().top - mr.top + main.scrollTop;
-      el.style.maxHeight = `${Math.max(240, Math.floor(main.clientHeight - top - pad - 4))}px`;
+    if (this._fitFrame != null) return;
+    this._fitFrame = window.requestAnimationFrame(() => {
+      this._fitFrame = null;
+      const main = $('mainContent');
+      if (!main || window.innerWidth < 1024) return;
+      const mr = main.getBoundingClientRect(), pad = parseFloat(getComputedStyle(main).paddingBottom) || 16;
+      const sadin = $('sadin-table');
+      if (sadin && !sadin.classList.contains('sticky-scroll')) sadin.style.maxHeight = '';
+      document.querySelectorAll('#bagrut-table, #sadin-table.sticky-scroll, #sadin-table .sticky-scroll').forEach(el => {
+        if (el.offsetParent === null) return;
+        el.style.maxHeight = 'none';
+        const top = el.getBoundingClientRect().top - mr.top + main.scrollTop;
+        el.style.maxHeight = `${Math.max(240, Math.floor(main.clientHeight - top - pad - 4))}px`;
+      });
     });
   },
 
@@ -420,23 +426,23 @@ const App = {
   lockedTrainee() { return this.state.selectedSearchTz ? Store.trainees.get(this.state.selectedSearchTz) || null : null; },
 
   /** התאמת חניך לטקסט: השם והשאילתה מנורמלים (גרשיים וגרשיים כפולים), בלי תלות בסדר שם פרטי/משפחה; ת.ז לפי ספרות */
-  matchTrainee(t, query) {
-    const q = Util.norm(query).toLocaleLowerCase();
+  matchTrainee(t, query, normalized = false) {
+    const q = normalized ? query : Util.norm(query).toLocaleLowerCase();
     if (!q) return true;
     const digits = q.replace(/\D/g, '');
     if (digits.length >= 3 && t.tz.includes(digits)) return true;
-    const name = Util.norm(t.name).toLocaleLowerCase();
+    const name = t.nameKey !== undefined ? t.nameKey : Util.norm(t.name).toLocaleLowerCase();
     return q.split(' ').every(token => name.includes(token));
   },
 
   filtered(includeSearch = true, ignoreClass = false) {
     const lock = includeSearch ? this.state.selectedSearchTz : null;
-    const q = includeSearch && !lock ? this.searchQuery() : '';
-    return this.sortTrainees(Store.traineeList().filter(t => {
+    const q = includeSearch && !lock ? Util.norm(this.searchQuery()).toLocaleLowerCase() : '';
+    return Store.sortedTrainees().filter(t => {
       if (!this.passesFilters(t, ignoreClass)) return false;
       if (lock) return t.tz === lock;
-      return !q || this.matchTrainee(t, q);
-    }));
+      return !q || this.matchTrainee(t, q, true);
+    });
   },
 
   /** אוכלוסיית חדר הבקרה: שכבה וכיתת אם בלבד, ללא מסלול, חיפוש או חניך נעול */
@@ -511,6 +517,8 @@ const App = {
   },
 
   hideSuggestions() {
+    clearTimeout(this._suggestTimer);
+    this._suggestTimer = null;
     const pop = $('searchSuggestPopup');
     if (pop) { pop.classList.add('hidden'); pop.innerHTML = ''; }
     const input = $('globalSearch');
@@ -519,14 +527,16 @@ const App = {
   },
 
   showSuggestions() {
+    clearTimeout(this._suggestTimer);
+    this._suggestTimer = null;
     const input = $('globalSearch'), pop = $('searchSuggestPopup');
     if (!input || !pop) return;
     const raw = input.value;
     if (this.state.selectedSearchTz || !Util.norm(raw) || !Store.hasData()) return this.hideSuggestions();
-    const first = Util.norm(raw).toLocaleLowerCase().split(' ')[0];
-    const rank = t => { const n = Util.norm(t.name).toLocaleLowerCase(); return n.startsWith(first) ? 0 : n.split(' ').some(w => w.startsWith(first)) ? 1 : 2; };
+    const query = Util.norm(raw).toLocaleLowerCase(), first = query.split(' ')[0];
+    const rank = t => { const n = t.nameKey; return n.startsWith(first) ? 0 : n.split(' ').some(w => w.startsWith(first)) ? 1 : 2; };
     const candidates = this.state.tab === 'profile' ? Store.traineeList() : this.filtered(false);
-    const students = candidates.filter(t => this.matchTrainee(t, raw)).sort((a, b) => rank(a) - rank(b));
+    const students = candidates.filter(t => this.matchTrainee(t, query, true)).sort((a, b) => rank(a) - rank(b));
     let groups = [];
     if (this.state.tab === 'groups' && Store.loaded.groups) groups = this.matchGroups(raw).slice(0, 5);
     const SHOWN = 8, shown = students.slice(0, SHOWN);
@@ -1268,20 +1278,25 @@ const App = {
       /* הקלדה מעדכנת רק את חלון ההשלמה; הטבלאות מתעדכנות חיות רק בבגרות ובסדין, או כשמשחררים נעילה של חניך */
       FILTERED_TABS.forEach(t => { if (t !== st.tab || live || hadLock) this.dirty.add(t); });
       this.renderSearchChrome();
-      this.showSuggestions();
+      this.hideSuggestions();
+      this._suggestTimer = setTimeout(() => this.showSuggestions(), 100);
       if (live) this._searchTimer = setTimeout(() => this.renderTab(st.tab), 180);
       else if (hadLock) this.renderTab(st.tab);
     });
     on('globalSearch', 'focus', () => this.showSuggestions());
     on('globalSearch', 'keydown', e => {
-      const open = !$('searchSuggestPopup').classList.contains('hidden');
+      let open = !$('searchSuggestPopup').classList.contains('hidden');
+      if (e.key === 'Enter' && !open && this._suggestTimer != null) {
+        this.showSuggestions();
+        open = !$('searchSuggestPopup').classList.contains('hidden');
+      }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (open) this.moveSuggestion(e.key === 'ArrowDown' ? 1 : -1); else this.showSuggestions();
       } else if (e.key === 'Enter' && open) {
         const idx = this._sg.active >= 0 ? this._sg.active : (this.LIVE_SEARCH_TABS.includes(this.state.tab) ? -1 : 0);
         if (this._sg.items[idx]) { e.preventDefault(); this.pickSuggestion(idx); }
-      } else if (e.key === 'Escape' && open) { e.stopPropagation(); this.hideSuggestions(); }
+      } else if (e.key === 'Escape' && (open || this._suggestTimer != null)) { e.stopPropagation(); this.hideSuggestions(); }
     });
     on('searchSuggestPopup', 'mousedown', e => e.preventDefault());
     document.addEventListener('click', e => { if (!e.target.closest('#searchWrap')) this.hideSuggestions(); });

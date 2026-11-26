@@ -290,6 +290,19 @@ window.fetch = (url, options) => {
     assert(JSON.stringify(await Config._storeGet('groupsData')) === JSON.stringify(previousDataset), 'Failed config commit left cloud datasets');
     passed.push('Local settings commit failure rolls back datasets and in-memory settings');
 
+    let interimRev;
+    const recordInterimRev = () => { interimRev = Config.rev; };
+    window.addEventListener('sd:config-changed', recordInterimRev);
+    Config._write = function(key, value) {
+      if (key === this.KEYS.masterRoster) return { ok: false, error: 'Test roster quota' };
+      return originalWrite.call(this, key, value);
+    };
+    try { await rejects(() => CloudSync.applyState(incoming), 'Test roster quota'); }
+    finally { Config._write = originalWrite; window.removeEventListener('sd:config-changed', recordInterimRev); }
+    assert(interimRev != null && Config.rev > interimRev, 'Rollback invalidates caches built during the interim config event');
+    assert(Config.getException(tz).note === 'Edited during IndexedDB', 'Post-event rollback restores local settings');
+    passed.push('Post-event rollback advances the configuration revision');
+
     const link = CloudSync.teamJoinLink();
     const storageSource = await (await localFetch('../js/storage.js')).text();
     const join = JSON.parse(new TextDecoder().decode(CloudSync._unb64(link.split('#cloud=')[1].replace(/-/g, '+').replace(/_/g, '/'))));

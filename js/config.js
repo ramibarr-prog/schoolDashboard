@@ -299,6 +299,7 @@ const Config = {
   },
 
   data: null,
+  rev: 0,
   _sessionClosing: false,
   _cache: {},
   _staleDismissed: {},
@@ -318,7 +319,7 @@ const Config = {
       return { ok: false, error: quota ? 'נפח האחסון בדפדפן מלא. יש לנקות נתונים ישנים או לטעון קובץ קטן יותר.' : `שמירה נכשלה: ${e.message}` };
     }
   },
-  emit(name, detail) { window.dispatchEvent(new CustomEvent(`sd:${name}`, { detail })); },
+  emit(name, detail) { this.rev++; window.dispatchEvent(new CustomEvent(`sd:${name}`, { detail })); },
   requireEdit() {
     if (!window.App || window.App.requireEdit()) return null;
     return { ok: false, error: 'העריכה בוטלה. יש להתחבר ולסנכרן לפני ביצוע שינויים.' };
@@ -379,11 +380,13 @@ const Config = {
     this._ignoredCache = null;
     this._invalidateRoster();
     this.scrubRoster();
+    this.rev++;
     return this;
   },
 
   save({ localOnly = false } = {}) {
     const denied = this.requireEdit(); if (denied) return denied;
+    this.rev++;
     const result = this._write(this.KEYS.config, this.data);
     if (result.ok) this.emit('config-changed', localOnly ? { localOnly: true } : undefined);
     return result;

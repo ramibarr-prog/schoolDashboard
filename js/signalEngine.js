@@ -44,30 +44,13 @@
     });
     return result;
   };
-  const gradeOf = row => {
-    const t = Store.trainees.get(row.tz);
-    return t ? t.gradeKey : Util.normGrade(row.gradeKey || row.grade || '');
-  };
-  const gradesFor = (type, loaded) => {
-    const result = new Set();
-    if (loaded) Store.raw[type].forEach(row => {
-      const grade = gradeOf(row);
-      if (grade) result.add(grade);
-    });
-    return result;
-  };
-  const prerequisiteSets = () => ({
-    bagrut: gradesFor('bagrut', Store.loaded.bagrut),
-    groups: gradesFor('groups', Store.loaded.groups),
-    sadin: gradesFor('grades', Store.loaded.grades)
-  });
   const prereqsFrom = (gradeKey, sets) => ({
     hasBagrut: sets.bagrut.has(gradeKey),
     hasGroups: sets.groups.has(gradeKey),
     hasSadin: sets.sadin.has(gradeKey)
   });
   function prerequisitesFor(gradeKey) {
-    return prereqsFrom(Util.normGrade(gradeKey), prerequisiteSets());
+    return prereqsFrom(Util.normGrade(gradeKey), Store.prerequisiteSets);
   }
   function isPassingScore(score, opts = {}) {
     if (score == null || (typeof score === 'string' && !score.trim())) return false;
@@ -94,7 +77,7 @@
       eligible: 'ok', nearly: 'watch', blocked: 'risk', twelve_years: 'twelve' })[ev.paceStatus] || 'unknown';
   }
   function buildContext(roster) {
-    const sets = prerequisiteSets();
+    const sets = Store.prerequisiteSets;
     const anomalies = Store.loaded.groups ? GroupAnalyzer.placementAnomalies(roster).rows : [];
     const sadin = Store.loaded.grades ? GroupAnalyzer.sadinSheet(roster) : [];
     return { sets, anomalies: groupByTz(anomalies), sadin: new Map(sadin.map(row => [row.t.tz, row])) };
@@ -160,13 +143,15 @@
     return compute(tz, opts, buildContext(t ? [t] : []));
   }
   function computeAll(opts = {}) {
-    const roster = Store.traineeList();
-    const groups = [...Store.groups.values()].map(g => ({ ...g, members: [...g.members], gradeMembers: [...g.gradeMembers] }));
-    const current = [...Store._current.entries()], bagrut = [...Store._bagrut.entries()].map(([tz, entries]) => [tz, [...entries.entries()]]);
-    const key = JSON.stringify([Store.loaded, Store.raw, roster, groups, current, bagrut, Store.missed, Config.data, Config._rulesOverride]);
+    const key = `${Store.version}|${Config.rev}|${BagrutEngine.decoratorVersion}`;
     if (cachedKey !== key) { cachedKey = key; cachedResults.clear(); }
-    const optionsKey = JSON.stringify(opts);
-    if (cachedResults.has(optionsKey)) return cachedResults.get(optionsKey);
+    const optionsKey = JSON.stringify(opts), rules = Config.rules();
+    const cached = cachedResults.get(optionsKey);
+    if (cached && cached.rules === rules) {
+      cachedResults.delete(optionsKey); cachedResults.set(optionsKey, cached);
+      return cached.result;
+    }
+    const roster = Store.traineeList();
     const context = buildContext(roster), list = roster.map(t => compute(t.tz, opts, context));
     const counts = { total: list.length, ok: 0, watch: 0, risk: 0, unknown: 0, twelve: 0, dataQuality: 0 };
     list.forEach(result => {
@@ -174,8 +159,9 @@
       if (result.dataQuality.length) counts.dataQuality++;
     });
     const result = { version: ++sequence, byTz: new Map(list.map(result => [result.tz, result])), list, counts };
-    if (cachedResults.size >= 8) cachedResults.delete(cachedResults.keys().next().value);
-    cachedResults.set(optionsKey, result);
+    cachedResults.delete(optionsKey);
+    if (cachedResults.size >= 4) cachedResults.delete(cachedResults.keys().next().value);
+    cachedResults.set(optionsKey, { rules, result });
     return result;
   }
   function invalidate() { cachedKey = null; cachedResults.clear(); }

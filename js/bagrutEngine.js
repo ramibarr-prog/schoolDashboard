@@ -22,6 +22,9 @@ const BagrutEngine = (() => {
   }
 
   const DEFAULT_OPTS = BagrutFacts.DEFAULT_OPTS;
+  let cacheVersion = '', cacheConfigRev = -1;
+  let decoratorVersion = 0;
+  const evaluations = new Map();
 
   /** מקבל גם את שמות הדגלים בסימולטור כפי שהם בממשק וגם את השמות החלופיים */
   function normalizeOpts(o) {
@@ -38,14 +41,22 @@ const BagrutEngine = (() => {
 
   /* הרחבות תצוגה משלימות את תוצאת ההערכה; המנוע אינו תלוי בהן ופועל גם בלעדיהן */
   const decorators = [];
-  function registerDecorator(fn) { if (!decorators.includes(fn)) decorators.push(fn); }
+  function registerDecorator(fn) {
+    if (!decorators.includes(fn)) { decorators.push(fn); decoratorVersion++; evaluations.clear(); }
+  }
 
   /* ---------- הערכה מלאה לחניך (לפי כללי המחזור המשויך לשכבתו) ---------- */
   function evaluate(tz, userOpts) {
     const t = Store.trainees.get(tz);
     if (!t) return null;
-    return Config.withRulesForGrade(t.gradeKey, () => {
-      const opts = normalizeOpts(userOpts);
+    const version = `${Store.version}|${Config.rev}`;
+    if (cacheVersion !== version) {
+      if (cacheConfigRev !== Config.rev) Store._cohortCache.clear();
+      cacheVersion = version; cacheConfigRev = Config.rev; evaluations.clear();
+    }
+    const opts = normalizeOpts(userOpts), key = JSON.stringify([tz, opts]);
+    if (evaluations.has(key)) return evaluations.get(key);
+    const result = Config.withRulesForGrade(t.gradeKey, () => {
       const facts = BagrutFacts.buildStudentFacts(tz, t, opts);
       const { ev, ctx, juniorPace } = opts.fullMode
         ? BagrutPolicies.evalFinalDiploma(facts)
@@ -53,6 +64,8 @@ const BagrutEngine = (() => {
       decorators.forEach(fn => Object.assign(ev, fn(ev, { tz, ctx, juniorPace })));
       return ev;
     });
+    evaluations.set(key, result);
+    return result;
   }
 
   return {
@@ -67,6 +80,7 @@ const BagrutEngine = (() => {
     detectPotentialException: BagrutFacts.detectPotentialException, detectForeignCodes: BagrutFacts.detectForeignCodes,
     activeCohortQuestionnaires: BagrutFacts.activeCohortQuestionnaires, cohortOf: BagrutFacts.cohortOf,
     /* משותפים לשכבת התצוגה */
+    get decoratorVersion() { return decoratorVersion; },
     activeOnly: BagrutFacts.activeOnly, detectLevel: BagrutFacts.detectLevel, enrolledInMajor: BagrutFacts.enrolledInMajor,
     levelScope: BagrutFacts.levelScope, reverseNeed: BagrutPolicies.reverseNeed, registerDecorator
   };

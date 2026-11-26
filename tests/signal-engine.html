@@ -86,6 +86,7 @@
     });
     await step('manual decision without grade-level bagrut and twelve-year track', () => {
       Config.data.traineeExceptions[T(2)] = { isException: true, overrideStatus: 'twelve', reason: '', note: '' };
+      Config.emit('exceptions-changed');
       const r = SignalEngine.computeForTrainee(T(2));
       assert(r.ev.manual && r.overall === 'twelve' && has(r, 'bagrut.twelve'), 'Manual twelve-year decision applies');
       assert(!has(r, 'bagrut.unknown'), 'Manual decision is not unknown');
@@ -126,6 +127,7 @@
       assert(SignalEngine.isPassingScore(2, { social: true }) && SignalEngine.isPassingScore(4, { social: true }), 'Social 2..4 pass');
       assert(!SignalEngine.isPassingScore(1, { social: true }) && !SignalEngine.isPassingScore(null), 'Social 1 and missing score fail');
       Config.rulesForGrade('יב').passGrade = 60;
+      Config.emit('rules-changed');
       const changed = SignalEngine.computeAll();
       assert(changed !== first && changed.version !== first.version, 'Changed rule invalidates cache');
       assert(has(changed.byTz.get(T(11)), 'sadin.fail'), '58 fails at passGrade 60');
@@ -141,6 +143,37 @@
       const after = SignalEngine.computeAll();
       assert(after !== before && after.version !== before.version, 'Data mutation and rebuild invalidate cache');
       assert(has(after.byTz.get(T(11)), 'sadin.fail'), 'Rebuilt score is reflected');
+    });
+    await step('versioned caches respect roster, options and rule contexts', () => {
+      const roster = Store.traineeList(), tz = T(11);
+      const evalDefault = BagrutEngine.evaluate(tz, {});
+      assert(evalDefault === BagrutEngine.evaluate(tz, { ignoreInternal: false }), 'Equivalent options reuse the evaluation');
+      assert(evalDefault === SignalEngine.computeAll().byTz.get(tz).ev, 'Signals and direct evaluation share the result');
+      assert(evalDefault !== BagrutEngine.evaluate(tz, { fullMode: true }), 'Different options do not share evaluations');
+      const first = GroupAnalyzer.sadinSheet(roster);
+      const repeated = GroupAnalyzer.sadinSheet([...roster]);
+      assert(first !== repeated && first[0] === repeated[0], 'Equivalent rosters reuse sheet rows without sharing the array');
+      const copy = { ...roster[0] };
+      assert(GroupAnalyzer.sadinSheet([copy])[0].t === copy, 'Noncanonical trainees are not replaced by cached objects');
+      first.pop();
+      same(GroupAnalyzer.sadinSheet(roster).length, roster.length, 'Mutating a returned array does not corrupt the cache');
+      same(GroupAnalyzer.sadinSheet([...roster].reverse()).map(row => row.t.tz), roster.map(t => t.tz).reverse(), 'Roster order is preserved');
+      same(GroupAnalyzer.sadinSheet(roster, { subject: 'לא קיים' }).length, 0, 'Filters distinguish sheet cache entries');
+      const rules = Util.clone(Config.rules());
+      rules.passGrade = 10;
+      const overrideSheet = Config.withRules(rules, () => GroupAnalyzer.sadinSheet(roster));
+      assert(overrideSheet[0].failing < repeated[0].failing, 'Temporary rules use a separate sheet cache');
+      const normalSignals = SignalEngine.computeAll();
+      const overrideSignals = Config.withRules(rules, () => SignalEngine.computeAll());
+      assert(overrideSignals !== normalSignals, 'Temporary rules use a separate signal cache');
+      assert(GroupAnalyzer.sadinSheet(roster)[0] === repeated[0], 'Normal rules retain their sheet cache');
+      const oldRev = Config.rev;
+      Config.emit('cache-test');
+      assert(Config.rev > oldRev && BagrutEngine.evaluate(tz, {}) !== evalDefault, 'Configuration events invalidate evaluations');
+      assert(GroupAnalyzer.sadinSheet(roster)[0] !== repeated[0], 'Configuration events invalidate sheets');
+      const oldVersion = Store.version, beforeRebuild = BagrutEngine.evaluate(tz, {});
+      Store.rebuild();
+      assert(Store.version > oldVersion && BagrutEngine.evaluate(tz, {}) !== beforeRebuild, 'Rebuild invalidates evaluations');
     });
     await step('placement and missed-event flags follow GroupAnalyzer', () => {
       reset();
@@ -222,6 +255,13 @@
       const sheet = GroupAnalyzer.sadinSheet([Store.trainees.get(T(41))])[0];
       same([sheet.overall, sheet.failing, sheet.missed], [75, 0, 0], 'Unassigned inferred-group event is excluded, while no-ID score remains active');
       assert(!has(SignalEngine.computeForTrainee(T(41)), 'sadin.missed_event'), 'Inferred-group missed event does not reach signal');
+    });
+    await step('decorator registration invalidates shared evaluations', () => {
+      const before = SignalEngine.computeAll(), previous = BagrutEngine.evaluate(T(41));
+      BagrutEngine.registerDecorator(() => ({ cacheTestDecoration: true }));
+      const next = SignalEngine.computeAll(), evaluation = BagrutEngine.evaluate(T(41));
+      assert(next !== before && evaluation !== previous && evaluation.cacheTestDecoration, 'New decorators invalidate both caches');
+      assert(next.byTz.get(T(41)).ev === evaluation, 'Signals reuse the newly decorated evaluation');
     });
     document.title = 'PASS - Signal engine tests';
   } catch (e) {
