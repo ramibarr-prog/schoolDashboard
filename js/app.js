@@ -292,9 +292,7 @@ const App = {
     if (this._evalsKey !== key) { this._evalsKey = key; this.evals.clear(); }
     let e = this.evals.get(tz);
     if (!e) {
-      /* מצב תעודה סופית חל על שכבת י"ב בלבד; י' ו-י"א נשפטות תמיד לפי צפי מותאם / תקינות צבירה */
-      const t = Store.trainees.get(tz), sim = this.state.sim;
-      e = BagrutEngine.evaluate(tz, t && t.gradeKey !== 'יב' ? { ...sim, fullMode: false } : sim);
+      e = BagrutEngine.evaluate(tz, this.state.sim);
       this.evals.set(tz, e);
     }
     return e;

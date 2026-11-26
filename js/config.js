@@ -1116,9 +1116,10 @@ const Config = {
   /* ---------- כללי זכאות ---------- */
   /**
    * כללי הזכאות הפעילים: בזמן הערכת חניך (withRulesForGrade) – כללי המחזור של שכבתו;
-   * אחרת – המחזור הנערך כעת בהגדרות (ברירת מחדל: מחזור שכבת י"ב). כך כל הקוראים הקיימים ממשיכים לעבוד.
+   * אחרת – כללי המחזור המשויך לשכבת י"ב, ללא תלות במחזור הנערך בהגדרות.
    */
-  rules() { return this._rulesOverride || this._editProfile().rules; },
+  rules() { return this._rulesOverride || this.rulesForGrade('יב'); },
+  editRules() { return this._editProfile().rules; },
 
   /* ---------- מחזורי לימוד ושיוך שכבות ---------- */
   getCohortProfiles() { return this.data.cohortProfiles; },
@@ -1218,8 +1219,8 @@ const Config = {
   },
 
   /** חוזר מנכ"ל: פיצוי נקודות למקצוע בציון 5–44. מתמזג עם ברירות המחדל, כך שכללים ישנים שנשמרו ממשיכים לעבוד */
-  pointsCompensation() {
-    const d = defaultBagrutRules().pointsCompensation, p = this.rules().pointsCompensation || {};
+  pointsCompensation(rules = this.rules()) {
+    const d = defaultBagrutRules().pointsCompensation, p = rules.pointsCompensation || {};
     return { ...d, ...p, table: { ...d.table, ...(p.table || {}) } };
   },
 
@@ -1427,7 +1428,7 @@ const Config = {
     this._syncQuestionnaires();
     const res = this.save();
     this.emit('rules-changed');
-    return res.ok ? { ok: true, warnings: this.rulesWarnings() } : res;
+    return res.ok ? { ok: true, warnings: this.rulesWarnings(profile.rules) } : res;
   },
 
   setRules(obj) {
@@ -1451,7 +1452,7 @@ const Config = {
       if ('max' in p) r.compensationMax = Number(p.max);
       if ('maxCount' in p) r.maxCompensations = Number(p.maxCount);
       if ('excludedSubjects' in p) r.compensationExcludedSubjects = p.excludedSubjects.map(s => String(s).trim()).filter(Boolean);
-      if ('pointsEnabled' in p) r.pointsCompensation = { ...this.pointsCompensation(), enabled: !!p.pointsEnabled };
+      if ('pointsEnabled' in p) r.pointsCompensation = { ...this.pointsCompensation(r), enabled: !!p.pointsEnabled };
     });
   },
 

@@ -52,11 +52,29 @@
   function prerequisitesFor(gradeKey) {
     return prereqsFrom(Util.normGrade(gradeKey), Store.prerequisiteSets);
   }
-  function isPassingScore(score, opts = {}) {
+  function isPassingScore(score, opts = {}, rules = Config.rules()) {
     if (score == null || (typeof score === 'string' && !score.trim())) return false;
-    const n = Number(score), pass = Number(Config.rules().passGrade);
+    const n = Number(score), pass = Number(rules.passGrade);
     if (!Number.isFinite(n) || !Number.isFinite(pass)) return false;
     return (opts.social === true && n >= 2 && n <= 4) || n >= pass;
+  }
+  function isConfirmedMissed(event, hasGroups, tz) {
+    if (!hasGroups) return false;
+    const group = Store.groups.get(event.groupId);
+    return !!group && group.inFile && !!tz && group.members.has(tz);
+  }
+  function subjectState(subject, gradeKey, hasGroups) {
+    const rules = Config.rulesForGrade(gradeKey);
+    const scored = subject.events.filter(e => e.score != null);
+    const counted = scored.some(e => e.weight > 0) ? scored.filter(e => e.weight > 0) : scored;
+    const onlyMissedZeros = subject.avg === 0 && counted.length > 0 &&
+      counted.every(e => e.score === 0 && subject.missed.has(e.key));
+    const social = Util.norm(subject.name) === Util.norm('מעורבות חברתית');
+    const fail = subject.avg != null && !onlyMissedZeros && !isPassingScore(subject.avg, { social }, rules);
+    const borderline = fail && Number.isFinite(Number(rules.borderlineMin)) &&
+      Number.isFinite(Number(rules.passGrade)) && subject.avg >= Number(rules.borderlineMin) && subject.avg < Number(rules.passGrade);
+    const missed = [...subject.missed.values()].filter(m => isConfirmedMissed(m, hasGroups, subject.tz)).length;
+    return { fail, borderline, missed };
   }
   const useCurrent = opts => !!(opts.useCurrent !== undefined ? opts.useCurrent : opts.useCurrentGradesAsForecast);
 
@@ -111,20 +129,19 @@
     if (!prereqs.hasSadin) pedagogical.push(flag('sadin.unknown'));
     else {
       const sheet = context.sadin.get(tz);
-      if (sheet) Config.withRulesForGrade(t.gradeKey, () => {
-        const rules = Config.rules(), borderline = Number(rules.borderlineMin), pass = Number(rules.passGrade);
+      if (sheet) {
+        let missed = 0;
         sheet.subjects.forEach(subject => {
-          if (subject.avg == null) return;
-          const social = Util.norm(subject.name) === Util.norm('מעורבות חברתית');
-          if (!isPassingScore(subject.avg, { social })) {
+          const state = subjectState(subject, t.gradeKey, prereqs.hasGroups);
+          if (state.fail) {
             const detail = `${subject.name}: ${Util.fmt(subject.avg, 1)}`;
             pedagogical.push(flag('sadin.fail', detail));
-            if (Number.isFinite(borderline) && Number.isFinite(pass) && subject.avg >= borderline && subject.avg < pass)
-              pedagogical.push(flag('sadin.borderline', detail));
+            if (state.borderline) pedagogical.push(flag('sadin.borderline', detail));
           }
+          missed += state.missed;
         });
-        if (sheet.missed) pedagogical.push(flag('sadin.missed_event', String(sheet.missed)));
-      });
+        if (missed) pedagogical.push(flag('sadin.missed_event', String(missed)));
+      }
       if (prereqs.hasGroups) {
         Store.currentOf(tz).forEach(entry => {
           if (entry.enrollmentStatus === 'unassigned')
@@ -165,5 +182,5 @@
     return result;
   }
   function invalidate() { cachedKey = null; cachedResults.clear(); }
-  window.SignalEngine = Object.freeze({ CATALOG, prerequisitesFor, isPassingScore, computeForTrainee, computeAll, invalidate });
+  window.SignalEngine = Object.freeze({ CATALOG, prerequisitesFor, isPassingScore, isConfirmedMissed, subjectState, computeForTrainee, computeAll, invalidate });
 })();

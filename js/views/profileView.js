@@ -184,10 +184,7 @@
       link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
       document.head.appendChild(link);
     }
-    const list = this.profileList();
-    const t = list.find(x => x.tz === this.state.profileTz) || list[0];
-    const restore = Config.pushRulesForGrade(t ? t.gradeKey : '');
-    try { this.renderTrainee360Inner(); } finally { restore(); }
+    this.renderTrainee360Inner();
   },
 
   /** חיווי לקריאה בלבד: מצב ההערכה שבו מוצג כרטיס 360° (נגזר מהבחירה בלשונית צפי זכאות לבגרות) */
@@ -217,6 +214,7 @@
     let idx = list.findIndex(t => t.tz === this.state.profileTz);
     if (idx < 0) idx = 0;
     const t = list[idx];
+    return Config.withRulesForGrade(t.gradeKey, () => {
     this.state.profileTz = t.tz;
     const ev = this.getEval(t.tz), ex = Config.getException(t.tz), rules = Config.rules();
     const signal = SignalEngine.computeForTrainee(t.tz, this.state.sim);
@@ -452,6 +450,7 @@
       openBtn.classList.toggle('btn-ghost', !ex.isException);
       openBtn.textContent = ex.isException ? '⚡ מצב חריג פעיל' : '⚡ הגדר מצב חריג';
     }
+    });
   },
 
   /**

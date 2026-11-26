@@ -191,8 +191,7 @@
     try {
       const model = app.overviewModel(), sim = app.state.sim;
       const all = SignalEngine.computeAll(sim);
-      const adaptive = sim.fullMode ? SignalEngine.computeAll({ ...sim, fullMode: false }) : all;
-      const signals = new Map(model.rows.map(({ t }) => [t.tz, (t.gradeKey === 'יב' ? all : adaptive).byTz.get(t.tz)]));
+      const signals = new Map(model.rows.map(({ t }) => [t.tz, all.byTz.get(t.tz)]));
       const counts = { ok: 0, watch: 0, risk: 0, unknown: 0, twelve: 0 };
       summary.total = model.list.length;
       summary.overview = model.rows.length;

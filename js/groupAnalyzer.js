@@ -7,12 +7,6 @@
    ת.ז בקובצי המשנה שאינן בה אינן הופכות לחניכים: הן נרשמות ב-Store.unknown בלבד.
    ===================================================================== */
 
-/* ציון עובר בציונים שוטפים: מתחתיו המקצוע נחשב נכשל (טקסט אדמדם בלבד, ללא אייקונים) */
-const SADIN_PASS = 55;
-
-/** סף "נכשל" בסדין: ציון העובר של כללי הזכאות הפעילים (ברירת מחדל 55) */
-function sadinPass() { return Number(Config.rules().passGrade) || SADIN_PASS; }
-
 /* מקצועות שגרתיים שבהם רישום לשתי קבוצות / ריבוי מורים הוא תקין (חינוך, מגדר, מפגש בוקר) */
 const ROUTINE_DUPLICATE_SUBJECTS = ['חינוך', 'מגדר', 'מפגש בוקר'];
 /* מקצועות שמכילים "חינוך" אך אינם שגרתיים: חינוך גופני ותעבורתי לעולם לא מוסתרים */
@@ -609,12 +603,11 @@ const GroupAnalyzer = {
   analyzeCurrentGrades(filteredRoster, filters = {}) {
     const roster = Array.isArray(filteredRoster) ? filteredRoster : Store.traineeList();
     const { subject = 'all', onlyFail = false } = filters;
-    const pass = Config.rules().passGrade;
     const set = new Set(roster.map(t => t.tz));
     const entries = [];
     roster.forEach(t => Store.activeCurrentOf(t.tz).forEach(e => {
       if (subject !== 'all' && e.subject !== subject) return;
-      const low = e.avg != null && e.avg < pass;
+      const low = e.avg != null && !SignalEngine.isPassingScore(e.avg, { social: Util.norm(e.subject) === Util.norm('מעורבות חברתית') }, Config.rulesForGrade(t.gradeKey));
       if (onlyFail && !low) return;
       const g = Store.groups.get(e.groupId);
       entries.push({ t, subject: e.subject, groupId: e.groupId, teacher: (g && g.teacher) || e.teacher || '', n: e.n, avg: e.avg, low, events: e.events });
@@ -626,7 +619,8 @@ const GroupAnalyzer = {
       stats: {
         mean: avgs.length ? avgs.reduce((a, e) => a + e.avg, 0) / avgs.length : null,
         pairs: avgs.length,
-        belowCount: new Set(roster.filter(t => Store.activeCurrentOf(t.tz).some(e => e.avg != null && e.avg < pass)).map(t => t.tz)).size,
+        belowCount: new Set(roster.filter(t => Store.activeCurrentOf(t.tz).some(e => e.avg != null &&
+          !SignalEngine.isPassingScore(e.avg, { social: Util.norm(e.subject) === Util.norm('מעורבות חברתית') }, Config.rulesForGrade(t.gradeKey)))).map(t => t.tz)).size,
         missedCount: missed.length,
         noGradesCount: roster.filter(t => !t.inGrades).length
       }
@@ -635,7 +629,7 @@ const GroupAnalyzer = {
 
   /** גיליון רוחבי: ממוצע משוקלל לאירועים בכל מקצוע, וממוצע כללי שווה-משקל למקצועות. */
   sadinSheet(roster, filters = {}) {
-    const subject = filters.subject || 'all', teacher = filters.teacher || 'all', pass = sadinPass();
+    const subject = filters.subject || 'all', teacher = filters.teacher || 'all';
     const version = `${Store.version}|${Config.rev}`;
     if (version !== sadinSheetVersion) { sadinSheetVersion = version; sadinSheetCache = []; }
     const cacheable = roster.every(t => Store.trainees.get(t.tz) === t);
@@ -657,7 +651,7 @@ const GroupAnalyzer = {
       missedByTz.get(m.tz).push(m);
     });
     const rows = [];
-    roster.forEach(t => {
+    roster.forEach(t => Config.withRulesForGrade(t.gradeKey, () => {
       const entries = Store.activeCurrentOf(t.tz).map(e => ({ ...e, displaySubject: e.subject, teacher: teacherOf(e), subject: this.sadinSubject(e.subject) }));
       const allSubjects = new Map();
       entries.forEach(e => {
@@ -668,7 +662,7 @@ const GroupAnalyzer = {
       const overall = overallScores.length ? overallScores.reduce((a, b) => a + b, 0) / overallScores.length : null;
       const subjects = new Map();
       const getSubject = name => {
-        if (!subjects.has(name)) subjects.set(name, { name, entries: [], events: [], missed: new Map() });
+        if (!subjects.has(name)) subjects.set(name, { name, tz: t.tz, gradeKey: t.gradeKey, entries: [], events: [], missed: new Map() });
         return subjects.get(name);
       };
       entries.filter(e => matches(e.subject, e.teacher)).forEach(e => {
@@ -692,10 +686,11 @@ const GroupAnalyzer = {
       });
       subjects.forEach(s => { s.avg = Store.weightedAverage(s.events).avg; });
       if ((subject !== 'all' || teacher !== 'all') && !subjects.size) return;
-      const failing = [...subjects.values()].filter(s => s.avg != null && s.avg < pass).length;
+      const hasGroups = SignalEngine.prerequisitesFor(t.gradeKey).hasGroups;
+      const failing = [...subjects.values()].filter(s => SignalEngine.subjectState(s, t.gradeKey, hasGroups).fail).length;
       const missed = [...subjects.values()].reduce((n, s) => n + s.missed.size, 0);
       rows.push({ t, subjects, overall, failing, missed });
-    });
+    }));
     if (cacheable) {
       if (sadinSheetCache.length >= 4) sadinSheetCache.shift();
       sadinSheetCache.push({ key, rules, rows });
@@ -704,9 +699,15 @@ const GroupAnalyzer = {
   },
 
   /** מקצוע בסדין נחשב חוסם לחניך: ממוצע מתחת לציון עובר או אירוע הערכה שהוחמץ */
-  isRiskSubject(s) { return (s.avg != null && s.avg < sadinPass()) || s.missed.size > 0; },
+  isRiskSubject(s, gradeKey = s.gradeKey, hasGroups = SignalEngine.prerequisitesFor(gradeKey).hasGroups) {
+    const state = SignalEngine.subjectState(s, gradeKey, hasGroups);
+    return state.fail || state.missed > 0;
+  },
 
-  riskSubjects(row) { return [...row.subjects.values()].filter(s => this.isRiskSubject(s)); },
+  riskSubjects(row) {
+    const gradeKey = row.t.gradeKey, hasGroups = SignalEngine.prerequisitesFor(gradeKey).hasGroups;
+    return [...row.subjects.values()].filter(s => this.isRiskSubject(s, gradeKey, hasGroups));
+  },
 
   /** מקצועות חוסמים: לכל מקצוע – כמה חניכים רשומים בו וכמה מהם נכשלים או חסרים; ממוין לפי כמות, אחר כך אחוז */
   blockingSubjects(sheetRows, limit = 5) {
@@ -715,7 +716,7 @@ const GroupAnalyzer = {
       if (!(s.entries.length || s.events.length || s.missed.size)) return;
       const e = by.get(s.name) || { name: s.name, enrolled: 0, bad: 0 };
       e.enrolled++;
-      if (this.isRiskSubject(s)) e.bad++;
+      if (this.isRiskSubject(s, r.t.gradeKey)) e.bad++;
       by.set(s.name, e);
     }));
     return [...by.values()].filter(e => e.bad > 0).map(e => ({ ...e, pct: Math.round((e.bad / e.enrolled) * 100) }))
@@ -935,7 +936,6 @@ const GroupAnalyzer = {
     const byTeacher = opts.by === 'teacher';
     const roster = Array.isArray(opts.roster) ? opts.roster : Store.traineeList();
     const set = new Set(roster.map(t => t.tz));
-    const pass = Config.rules().passGrade;
     const groups = new Map();
     const add = (key, line) => { if (!groups.has(key)) groups.set(key, []); groups.get(key).push(line); };
     const teacherOf = (groupId, fallback) => { const g = Store.groups.get(groupId); return (g && g.teacher) || fallback || 'ללא מורה'; };
@@ -947,7 +947,7 @@ const GroupAnalyzer = {
     };
 
     roster.forEach(t => Store.activeCurrentOf(t.tz).forEach(e => {
-      if (e.avg == null || e.avg >= pass) return;
+      if (e.avg == null || SignalEngine.isPassingScore(e.avg, { social: Util.norm(e.subject) === Util.norm('מעורבות חברתית') }, Config.rulesForGrade(t.gradeKey))) return;
       const teacher = teacherOf(e.groupId, e.teacher);
       add(byTeacher ? `מורה: ${teacher}` : `כיתה: ${Config.classLabel(t.classKey)}`,
         `• ${nameOf(t)} (${t.classKey}) – ${e.subject}: ממוצע ${Math.round(e.avg)}${byTeacher ? '' : ` | מורה: ${teacher}`}`);

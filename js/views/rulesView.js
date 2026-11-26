@@ -116,13 +116,13 @@
 
   renderRulesDrawer() {
     this.renderCohortUi();
-    const r = Config.rules();
+    const r = Config.editRules();
     if (!r.coreSubjects.some(s => s.id === this.state.selectedCoreSubjectId))
       this.state.selectedCoreSubjectId = r.coreSubjects.length ? r.coreSubjects[0].id : '';
     const warnings = Config.rulesWarnings(r);
     setHtml('rulesWarnings', warnings.map(w => `<div>${E(w)}</div>`).join(''));
     setChecked('ruleCompEnabled', r.allowCompensationRule !== false);
-    setChecked('ruleCompPoints', Config.pointsCompensation().enabled);
+    setChecked('ruleCompPoints', Config.pointsCompensation(r).enabled);
     setVal('ruleCompMin', r.compensationMin);
     setVal('ruleCompMax', r.compensationMax);
     setVal('ruleCompCount', r.maxCompensations);
@@ -130,7 +130,7 @@
     setVal('ruleParamPass', r.passGrade);
     setVal('ruleParamBorderline', r.borderlineMin);
     setVal('ruleParamBonus', r.borderlineBonus);
-    setVal('ruleParamMagen', Config.magenWeight());
+    setVal('ruleParamMagen', Config.magenWeight(null, r));
 
     const gates = r.gates || {};
     setHtml('rulesGates', ['core', 'major', 'internal'].map(g => `
@@ -144,7 +144,7 @@
       const grade = c.expectedGrade || (q ? q.expectedGrade : 'יב');
       const comps = (s.variableUnits ? (s.levels || {})[level] : s.components) || [c];
       const magen = BagrutFacts.isInternalComp(c, comps) ? ''
-        : `<label class="flex items-center gap-1 whitespace-nowrap">מגן<input type="number" min="0" max="100" class="inp w-14" placeholder="${Config.magenWeight()}" value="${c.magenWeight ?? ''}" title="משקל ציון הגשה/מגן לשאלון (ריק = ברירת מחדל של המחזור)" data-chg="compMagen" ${attrs('core', s.id, level, i)}>%</label>`;
+        : `<label class="flex items-center gap-1 whitespace-nowrap">מגן<input type="number" min="0" max="100" class="inp w-14" placeholder="${Config.magenWeight(null, r)}" value="${c.magenWeight ?? ''}" title="משקל ציון הגשה/מגן לשאלון (ריק = ברירת מחדל של המחזור)" data-chg="compMagen" ${attrs('core', s.id, level, i)}>%</label>`;
       return `<div class="q-row ${c.enabled === false ? 'opacity-50' : ''}">
         <input type="checkbox" class="w-4 h-4" aria-label="פעיל" data-chg="compEnabled" ${attrs('core', s.id, level, i)} ${c.enabled === false ? '' : 'checked'}>
         <input type="text" class="inp q-codes" dir="ltr" aria-label="סמלי שאלון" value="${E(c.codes.join(', '))}" data-chg="compCodes" ${attrs('core', s.id, level, i)}>
@@ -223,7 +223,7 @@
       }));
     });
     setHtml('rulesPlan', GRADE_OPTS.map(g => {
-      const rows = plan.filter(row => BagrutFacts.compOrd(row.c) === Util.ord(g));
+      const rows = plan.filter(row => Config.withRules(r, () => BagrutFacts.compOrd(row.c)) === Util.ord(g));
       return `<section class="border border-slate-200 rounded-lg p-3 bg-white">
         <h3 class="font-semibold mb-2">שכבת ${Util.gl(g)}</h3>
         ${rows.length ? rows.map(row => `<div class="flex flex-wrap items-center gap-2 py-1 text-sm">
@@ -276,7 +276,7 @@
   /** עדכון רכיב שאלון (קודים / משקל / פעיל) מתוך שורת העורך */
   patchComp(el, patch) {
     const { kind, id, level } = el.dataset, i = +el.dataset.i;
-    const s = Config.rules().coreSubjects.find(x => x.id === id);
+    const s = Config.editRules().coreSubjects.find(x => x.id === id);
     const c = s && (s.variableUnits ? s.levels[level] : s.components)[i];
     if (c) this.applyRule(Config.upsertComponent(kind, id, level, i, { ...c, ...patch }));
   },
@@ -751,7 +751,7 @@
      כיול סמלי שאלונים
      ================================================================== */
   calibModel() {
-    const r = Config.rules(), cat = r.questionnaires || {}, rows = [];
+    const r = Config.editRules(), cat = r.questionnaires || {}, rows = [];
     const ordOf = name => { const i = this.CALIB_ORDER.findIndex(n => Util.norm(name).includes(Util.norm(n))); return i < 0 ? 50 : i; };
     const nameOf = code => (cat[code] && cat[code].name) || '';
     const subjects = [...r.coreSubjects].sort((a, b) => ordOf(a.name) - ordOf(b.name));
@@ -844,7 +844,7 @@
 
   /** טופס הוספה / עריכה. row = שורה קיימת לעריכה, preset = ערכים התחלתיים להוספה */
   openCalibModal(row, preset = {}) {
-    const r = Config.rules();
+    const r = Config.editRules();
     const targets = [];
     [...r.coreSubjects].forEach(s => {
       if (s.variableUnits) Object.keys(s.levels || {}).sort().forEach(l => targets.push({ v: `core:${s.id}:${l}`, l: `${s.name} ${l} יח'` }));
@@ -1068,7 +1068,7 @@
     ], v => {
       if (!this.confirmAction(`כל חוקי הבגרות והשאלונים של ${this.cohortName(to)} יוחלפו בעותק של ${this.cohortName(v.from)}. להמשיך?`)) return { ok: false, error: 'ההעתקה בוטלה' };
       const res = Config.copyCohortRules(v.from, to);
-      if (res.ok !== false) { Store.refresh(); SignalEngine.invalidate(); this.toast(`החוקים הועתקו מ-${this.cohortName(v.from)}`, 'ok'); }
+      if (res.ok !== false) this.toast(`החוקים הועתקו מ-${this.cohortName(v.from)}`, 'ok');
       return res;
     }, 'העתקה');
   },
@@ -1086,7 +1086,7 @@
     }, 'הוספה');
   },
   ruleRemove(el) {
-    const list = Config.rules()[{ core: 'coreSubjects', major: 'majors', internal: 'internals' }[el.dataset.kind]] || [];
+    const list = Config.editRules()[{ core: 'coreSubjects', major: 'majors', internal: 'internals' }[el.dataset.kind]] || [];
     const c = list.find(x => x.id === el.dataset.id);
     if (c && this.confirmAction(`להסיר את "${c.name}" מכללי הזכאות?`)) this.applyRule(Config.removeClause(el.dataset.kind, el.dataset.id));
   },
@@ -1123,8 +1123,6 @@
     const v = el.value.trim(), n = Number(v);
     if (v !== '' && !(isFinite(n) && n >= 0 && n <= 100)) { this.toast('משקל המגן חייב להיות בין 0 ל-100', 'error'); this.renderRulesDrawer(); return; }
     this.patchComp(el, { magenWeight: v === '' ? null : n });
-    Store.refresh();
-    SignalEngine.invalidate();
     this.renderRulesDrawer();
   },
   ruleToggle(el) { this.applyRule(Config.toggleClause(el.dataset.kind, el.dataset.id)); },
@@ -1273,18 +1271,10 @@
     num('ruleParamPass', v => Config.setRuleParam('passGrade', v));
     num('ruleParamBorderline', v => Config.setRuleParam('borderlineMin', v));
     num('ruleParamBonus', v => Config.setRuleParam('borderlineBonus', v));
-    num('ruleParamMagen', v => {
-      const res = Config.setRuleParam('magenWeight', v);
-      Store.refresh();
-      SignalEngine.invalidate();
-      return res;
-    });
+    num('ruleParamMagen', v => Config.setRuleParam('magenWeight', v));
     on('rulesReset', 'click', () => {
       if (!this.confirmAction(`לשחזר את כללי הזכאות והמשקלים של ${this.cohortName(Config.getActiveCohortId())} לברירת המחדל?`)) return;
-      const res = Config.resetRules();
-      Store.refresh();
-      SignalEngine.invalidate();
-      this.applyRule(res);
+      this.applyRule(Config.resetRules());
     });
 
     on('ovTableSearch', 'input', e => {

@@ -54,7 +54,9 @@ const BagrutEngine = (() => {
       if (cacheConfigRev !== Config.rev) Store._cohortCache.clear();
       cacheVersion = version; cacheConfigRev = Config.rev; evaluations.clear();
     }
-    const opts = normalizeOpts(userOpts), key = JSON.stringify([tz, opts]);
+    const opts = normalizeOpts(userOpts);
+    opts.fullMode = opts.fullMode && t.gradeKey === 'יב';
+    const key = JSON.stringify([tz, opts]);
     if (evaluations.has(key)) return evaluations.get(key);
     const result = Config.withRulesForGrade(t.gradeKey, () => {
       const facts = BagrutFacts.buildStudentFacts(tz, t, opts);

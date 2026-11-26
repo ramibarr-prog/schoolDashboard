@@ -162,7 +162,7 @@
       const rules = Util.clone(Config.rules());
       rules.passGrade = 10;
       const overrideSheet = Config.withRules(rules, () => GroupAnalyzer.sadinSheet(roster));
-      assert(overrideSheet[0].failing < repeated[0].failing, 'Temporary rules use a separate sheet cache');
+      assert(overrideSheet[0].failing === repeated[0].failing, 'Sheet failures use the trainee grade rules even under a temporary override');
       const normalSignals = SignalEngine.computeAll();
       const overrideSignals = Config.withRules(rules, () => SignalEngine.computeAll());
       assert(overrideSignals !== normalSignals, 'Temporary rules use a separate signal cache');
@@ -174,6 +174,49 @@
       const oldVersion = Store.version, beforeRebuild = BagrutEngine.evaluate(tz, {});
       Store.rebuild();
       assert(Store.version > oldVersion && BagrutEngine.evaluate(tz, {}) !== beforeRebuild, 'Rebuild invalidates evaluations');
+    });
+    await step('grade-scoped modes and current-grade subject states', () => {
+      reset();
+      Config.rulesForGrade('יא').passGrade = 70;
+      Config.rulesForGrade('י').passGrade = 60;
+      Config.emit('cache-test');
+      const roster = [student(51, 'יא', 'יא1'), student(52, 'יב', 'יב1'), student(53, 'י', 'י1')];
+      const g11 = 'מתמטיקה יא1 מורה [5101]', g12 = 'מתמטיקה יב1 מורה [5102]';
+      const g10 = 'אנגלית י1 מורה [5103]', social = 'מעורבות חברתית יא1 מורה [5104]';
+      const groups = normalize('groups', [
+        { tz: T(51), grade: 'יא', cls: 'יא1', gid: g11 },
+        { tz: T(51), grade: 'יא', cls: 'יא1', gid: social },
+        { tz: T(52), grade: 'יב', cls: 'יב1', gid: g12 },
+        { tz: T(53), grade: 'י', cls: 'י1', gid: g10 }
+      ], groupMap);
+      const sadin = normalize('grades', [
+        { tz: T(51), event: 'מבחן (100)', score: 65, group: g11, date: '01/01/2026' },
+        { tz: T(51), event: 'מבחן (100)', score: 3, group: social, date: '01/01/2026' },
+        { tz: T(52), event: 'מבחן (100)', score: 65, group: g12, date: '01/01/2026' },
+        { tz: T(53), event: 'מבחן (100)', score: 0, group: g10, date: '01/01/2026' }
+      ], sadinMap);
+      sadin.push({ ...sadin[0], tz: T(51), groupId: '', subject: 'מקצוע לא מאומת', score: 0 });
+      world({ roster, groups, sadin });
+      const rows = new Map(GroupAnalyzer.sadinSheet(Store.traineeList()).map(row => [row.t.tz, row]));
+      same([rows.get(T(51)).failing, rows.get(T(52)).failing, rows.get(T(53)).failing], [1, 0, 0], 'Failures use each grade and exclude social passing scores and missed-only zeros');
+      const socialSubject = [...rows.get(T(51)).subjects.values()].find(s => s.name === 'מעורבות חברתית');
+      const unverified = [...rows.get(T(51)).subjects.values()].find(s => s.name === 'מקצוע לא מאומת');
+      const confirmed = [...rows.get(T(53)).subjects.values()][0];
+      same(SignalEngine.subjectState(socialSubject, 'יא', true), { fail: false, borderline: false, missed: 0 }, 'Social 3 is passing');
+      same(SignalEngine.subjectState(unverified, 'יא', true), { fail: false, borderline: false, missed: 0 }, 'Unverified zero is not a failure or a confirmed missed event');
+      same(SignalEngine.subjectState(confirmed, 'י', true), { fail: false, borderline: false, missed: 1 }, 'Enrolled zero is a confirmed missed event, not a failure');
+      assert(!has(SignalEngine.computeForTrainee(T(51)), 'sadin.missed_event') && has(SignalEngine.computeForTrainee(T(53)), 'sadin.missed_event'), 'Signals count only confirmed missed events');
+      for (const n of [51, 53]) {
+        const adaptive = BagrutEngine.evaluate(T(n), { fullMode: false });
+        assert(BagrutEngine.evaluate(T(n), { fullMode: true }) === adaptive, 'Junior final-mode requests share the adaptive cache');
+        assert(SignalEngine.computeAll({ fullMode: true }).byTz.get(T(n)).ev === adaptive, 'Signals share the adaptive evaluation');
+      }
+      assert(BagrutEngine.evaluate(T(52), { fullMode: true }) !== BagrutEngine.evaluate(T(52), { fullMode: false }), 'Grade 12 retains distinct modes');
+      const before = SignalEngine.computeAll();
+      Config.setActiveCohort(Config.getGradeCohortMap()['11']);
+      assert(Config.rules() === Config.rulesForGrade('יב') && Config.editRules() === Config.rulesForGrade('יא'), 'Editor selection does not change calculation rules');
+      assert(SignalEngine.computeAll() === before, 'Editor selection leaves cached calculations unchanged');
+      assert(Config.withRulesForGrade('יא', () => Config.rules()) === Config.rulesForGrade('יא') && Config.rules() === Config.rulesForGrade('יב'), 'Explicit grade context is restored');
     });
     await step('placement and missed-event flags follow GroupAnalyzer', () => {
       reset();

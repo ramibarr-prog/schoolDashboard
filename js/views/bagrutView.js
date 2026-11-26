@@ -320,10 +320,8 @@
   }, true);
 
   function signalsFor(rows, sim) {
-    const adaptive = sim.fullMode && rows.some(r => r.t.gradeKey !== 'יב')
-      ? SignalEngine.computeAll({ ...sim, fullMode: false }).byTz : null;
-    const regular = SignalEngine.computeAll(sim).byTz;
-    return new Map(rows.map(r => [r.t.tz, (r.t.gradeKey === 'יב' || !adaptive ? regular : adaptive).get(r.t.tz)]));
+    const signals = SignalEngine.computeAll(sim).byTz;
+    return new Map(rows.map(r => [r.t.tz, signals.get(r.t.tz)]));
   }
 
   function signalSummary(rows, signals, sim) {
@@ -1148,7 +1146,7 @@
     }
     const scopeRows = st.targets ? scope.rows.filter(r => r.t.gradeKey === 'יב') : scope.rows;
     const rows = seniorDrill || st.whatifEntry
-      ? scopeRows.map(r => ({ t: r.t, ev: BagrutEngine.evaluate(r.t.tz, { ...sim, fullMode: r.t.gradeKey === 'יב' && sim.fullMode }) }))
+      ? scopeRows.map(r => ({ t: r.t, ev: BagrutEngine.evaluate(r.t.tz, sim) }))
       : scopeRows;
     const signals = signalsFor(rows, sim);
     const knownRows = rows.filter(r => !isUnknown(signals.get(r.t.tz)));
