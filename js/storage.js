@@ -11,7 +11,7 @@ function sanitizeState(s) {
   const clean = v => {
     if (Array.isArray(v)) return v.map(clean);
     if (obj(v)) return Object.fromEntries(Object.entries(v)
-      .filter(([k]) => !['__proto__', 'prototype', 'constructor'].includes(k))
+      .filter(([k, value]) => value !== undefined && !['__proto__', 'prototype', 'constructor'].includes(k))
       .map(([k, value]) => [k, k === 'tz' ? id(value) : clean(value)]));
     return v === null || ['string', 'boolean'].includes(typeof v) || (typeof v === 'number' && Number.isFinite(v)) ? v : null;
   };
@@ -48,18 +48,19 @@ function sanitizeState(s) {
   }
   const records = (source, convert) => Object.fromEntries(Object.entries(obj(source) ? source : {})
     .filter(([tz, value]) => id(tz) && obj(value)).map(([tz, value]) => [id(tz), convert(value, id(tz))]));
-  result.rosterOverrides = records(s.rosterOverrides, (v, tz) => ({
+  if (s.rosterOverrides !== undefined) result.rosterOverrides = records(s.rosterOverrides, (v, tz) => ({
     tz, grade: Util.GRADE_KEYS.includes(v.grade) ? v.grade : '',
     homeroom: text(v.homeroom), track: Config.TRACKS.includes(v.track) ? v.track : '',
     hidden: v.hidden === true, name: text(v.name), note: text(v.note).slice(0, 200), updatedAt: number(v.updatedAt)
   }));
-  result.studentMeta = records(s.studentMeta, v => ({
+  if (s.studentMeta !== undefined) result.studentMeta = records(s.studentMeta, v => ({
     isException: v.isException === true,
     overrideStatus: Config.OVERRIDE_STATUSES.some(status => status.value === v.overrideStatus) ? v.overrideStatus : '',
     trackOverride: Config.TRACKS.includes(v.trackOverride) ? v.trackOverride : '',
     reason: text(v.reason), note: text(v.note)
   }));
   for (const [key, type] of [['classNicknames', 'string'], ['specialEdClasses', 'boolean'], ['rosterMismatchDismissed', 'string']]) {
+    if (s[key] === undefined) continue;
     result[key] = Object.fromEntries(Object.entries(obj(s[key]) ? s[key] : {})
       .filter(([k, v]) => !['__proto__', 'prototype', 'constructor'].includes(k) && typeof v === type)
       .map(([k, v]) => [key === 'rosterMismatchDismissed' ? id(k) : k, v]).filter(([k]) => k));
@@ -279,11 +280,11 @@ const CloudSync = {
       try {
         Config.data = Util.clone(previous);
         const d = Config.data;
-        d.rosterOverrides = s.rosterOverrides;
-        d.traineeExceptions = s.studentMeta;
-        d.classNicknames = s.classNicknames;
-        d.specialEdClasses = s.specialEdClasses;
-        d.rosterMismatchDismissed = s.rosterMismatchDismissed;
+        if (s.rosterOverrides !== undefined) d.rosterOverrides = s.rosterOverrides;
+        if (s.studentMeta !== undefined) d.traineeExceptions = s.studentMeta;
+        if (s.classNicknames !== undefined) d.classNicknames = s.classNicknames;
+        if (s.specialEdClasses !== undefined) d.specialEdClasses = s.specialEdClasses;
+        if (s.rosterMismatchDismissed !== undefined) d.rosterMismatchDismissed = s.rosterMismatchDismissed;
         Config.applyCohortState(s.cohortProfiles, s.gradeCohortMap, s.customQuestionnaires);
         Config._syncQuestionnaires();
         const saved = Config._write(Config.KEYS.config, Config.data);
@@ -573,7 +574,7 @@ const CloudSync = {
     const dashboardKeys = new Set([...Object.keys(Config.KEYS), ...Object.values(Config.KEYS)]);
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
-      if (key && (key.startsWith('sd.') || dashboardKeys.has(key))) localStorage.removeItem(key);
+      if (key && (key.startsWith('sd.') || key.startsWith('schoolDashboard.') || dashboardKeys.has(key))) localStorage.removeItem(key);
     }
     localStorage.removeItem('apiToken');
     if (Config._idb) { Config._idb.close(); Config._idb = null; }
@@ -604,8 +605,10 @@ const CloudSync = {
         const settings = JSON.parse(new TextDecoder().decode(this._unb64(hash.replace(/-/g, '+').replace(/_/g, '/'))));
         if (!settings || typeof settings.url !== 'string' || !settings.url ||
             (settings.clientId !== undefined && typeof settings.clientId !== 'string')) throw new Error('פרטי הצטרפות חסרים');
-        this.saveSettings({ url: settings.url, clientId: settings.clientId || '' });
-        this._onboarding = true;
+        if (!this.url() || window.confirm('כבר מוגדרת כתובת ענן במחשב זה. להחליף את הגדרות החיבור באמצעות קישור ההצטרפות?')) {
+          this.saveSettings({ url: settings.url, clientId: settings.clientId || '' });
+          this._onboarding = true;
+        }
       } catch (e) {
         console.error('cloud onboarding', e);
         this.emitStatus({ kind: 'error', text: 'קישור ההצטרפות לענן אינו תקין', error: e.message });

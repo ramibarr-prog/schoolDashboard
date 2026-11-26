@@ -222,6 +222,27 @@ window.fetch = (url, options) => {
     await rejects(() => CloudSync.applyState({ ...state, groupsData: 17 }), 'groupsData');
     passed.push('Untrusted rows, IDs, metadata and override types sanitized; grade semantics preserved');
 
+    const mapFields = {
+      rosterOverrides: 'rosterOverrides', studentMeta: 'traineeExceptions', classNicknames: 'classNicknames',
+      specialEdClasses: 'specialEdClasses', rosterMismatchDismissed: 'rosterMismatchDismissed'
+    };
+    const savedMaps = Object.fromEntries(Object.values(mapFields).map(key => [key, clone(Config.data[key])]));
+    const localMaps = {
+      rosterOverrides: { [tz]: { tz, note: 'local' } }, traineeExceptions: { [tz]: { note: 'local' } },
+      classNicknames: { 'י1': 'local' }, specialEdClasses: { 'י1': true }, rosterMismatchDismissed: { [tz]: 'local' }
+    };
+    Object.assign(Config.data, clone(localMaps));
+    const sparse = { app: 'schoolDashboard', studentMeta: undefined };
+    const cleanSparse = sanitizeState(sparse);
+    for (const key of Object.keys(mapFields)) assert(!(key in cleanSparse), 'Missing field added: ' + key);
+    await CloudSync.applyState(sparse);
+    for (const key of Object.values(mapFields)) assert(JSON.stringify(Config.data[key]) === JSON.stringify(localMaps[key]), 'Missing field cleared local data: ' + key);
+    const emptyMaps = Object.fromEntries(Object.keys(mapFields).map(key => [key, {}]));
+    await CloudSync.applyState({ app: 'schoolDashboard', ...emptyMaps });
+    for (const key of Object.values(mapFields)) assert(JSON.stringify(Config.data[key]) === '{}', 'Explicit empty map not applied: ' + key);
+    Object.assign(Config.data, savedMaps);
+    passed.push('Missing snapshot maps preserve local settings while explicit empty maps clear them');
+
     const previousData = JSON.stringify(Config.data), previousRoster = JSON.stringify(Config.getRosterEntry());
     let previousDataset = clone(Config.getDataset('groupsData'));
     let failOnce = true;
@@ -283,6 +304,20 @@ window.fetch = (url, options) => {
     );
     assert(isolated.url() === CloudSync.url() && !isolated.passcode() && !isolated.identity() && isolated._onboarding, 'Join link must not restore credentials');
     assert(stripped === testLocation.pathname + testLocation.search, 'Join secrets left in address bar');
+    for (const allow of [false, true]) {
+      const old = new Map([['sd.cloud.url', 'https://old-cloud.test/exec'], ['sd.cloud.clientId', 'old-client'], ['sd.cloud.passcode', 'old-pass']]);
+      let confirmCount = 0, removedHash = '';
+      const existing = new Function('Config', 'Util', 'localStorage', 'window', 'document', 'location', 'history', storageSource + '\nreturn CloudSync;')(
+        Config, Util,
+        { getItem: k => old.get(k) || null, setItem: (k, v) => old.set(k, v), removeItem: k => old.delete(k) },
+        { addEventListener() {}, dispatchEvent() {}, confirm() { confirmCount++; return allow; } },
+        { addEventListener() {}, getElementById() { return null; } }, new URL(link),
+        { replaceState: (data, title, path) => { removedHash = path; } }
+      );
+      assert(confirmCount === 1 && removedHash === testLocation.pathname + testLocation.search, 'Existing cloud URL did not prompt or strip the hash');
+      assert(existing.url() === (allow ? CloudSync.url() : 'https://old-cloud.test/exec') && existing._onboarding === allow, 'Onboarding ignored confirmation');
+      assert(existing.passcode() === 'old-pass' && (allow || existing.clientId() === 'old-client'), 'Onboarding lost existing credentials');
+    }
     passed.push('Base64url team onboarding saves settings and immediately strips secrets from hash');
 
     const appSource = await (await localFetch('../js/app.js')).text();
@@ -305,6 +340,35 @@ window.fetch = (url, options) => {
     );
     app.renderCloudCard();
     assert(!document.getElementById('cloudToken') && document.getElementById('cloudPass').type === 'password', 'Legacy token field or unmasked passcode');
+    const passInput = document.getElementById('cloudPass');
+    assert(!passInput.value && !passInput.hasAttribute('value') && !passInput.placeholder.includes(CloudSync.passcode()), 'Saved passcode exposed in settings DOM');
+    const savedPass = CloudSync.passcode(), savedToast = app.toast, savedAccess = app.syncCloudAccess;
+    app.toast = () => {};
+    app.syncCloudAccess = async () => {};
+    try {
+      await app.acts.cloudSave.call(app);
+      assert(CloudSync.passcode() === savedPass, 'Blank save erased passcode');
+      passInput.value = 'new-test-pass';
+      await app.acts.cloudSave.call(app);
+      assert(CloudSync.passcode() === 'new-test-pass' && !passInput.value, 'New passcode not saved or input not cleared');
+      passInput.value = 'pending-test-pass';
+      document.getElementById('cloudUrl').value = 'http://invalid.test';
+      await app.acts.cloudSave.call(app);
+      assert(passInput.value === 'pending-test-pass' && CloudSync.passcode() === 'new-test-pass', 'Failed save lost entered passcode');
+      document.getElementById('cloudUrl').value = CloudSync.url();
+      passInput.value = '';
+      const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } });
+      try { await app.acts.cloudJoinLink.call(app); } finally {
+        if (clipboardDescriptor) Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+        else delete navigator.clipboard;
+      }
+      assert(CloudSync.passcode() === 'new-test-pass', 'Blank join-link action erased passcode');
+    } finally {
+      CloudSync.saveSettings({ passcode: savedPass });
+      app.toast = savedToast;
+      app.syncCloudAccess = savedAccess;
+    }
     assert(document.querySelector('[data-act="cloudJoinLink"]'), 'Missing join button');
     let googleCallback, googleRendered = false;
     CloudSync.signOutGoogle();
@@ -331,6 +395,7 @@ window.fetch = (url, options) => {
     CloudSync.pushCloudState = async () => { uiPushes++; return {}; };
     try { await app.acts.cloudSync.call(app); } finally { CloudSync.pushCloudState = realPush; }
     assert(uiPushes === 0 && uiToasts.length === 0, 'UI pushed or reported success after kept-local');
+    assert(CloudSync.passcode() === savedPass, 'Blank sync erased passcode');
     CloudSync.status = { kind: 'ok', text: '', updatedAt: 0 };
     CloudSync._setMeta({ dirty: false });
     assert(app.completeCloudAccess('current'), 'Fixture could not resume after simulated conflict resolution');
@@ -460,7 +525,8 @@ window.fetch = (url, options) => {
     const wipeValues = new Map([
       ['sd.cloud.url', 'https://cloud-sync.test/exec'], ['sd.cloud.token', 'test-token'],
       ['sd.cloud.passcode', 'test-pass'], ['sd.cloud.meta', '{"dirty":true}'],
-      ['sd.config.v2', '{}'], ['sd.future-key', 'delete'], ['masterRoster', '{}'], ['unrelated', 'keep']
+      ['sd.config.v2', '{}'], ['sd.future-key', 'delete'], ['masterRoster', '{}'], ['schoolDashboard.bagrut.pins.v1', '{}'],
+      ['schoolDashboardOther', 'keep'], ['unrelated', 'keep']
     ]);
     let wipeSync, reloaded = false, startedRequest, requestCount = 0, aborted = false, timerFired = false;
     const deleted = [], writesDuringWipe = [];
@@ -503,7 +569,7 @@ window.fetch = (url, options) => {
     await Promise.all([activePush, queuedPush]);
     await new Promise(resolve => setTimeout(resolve, 30));
     assert(aborted && requestCount === 1 && !timerFired && !writesDuringWipe.length, 'Wipe allowed queued/late writes or uploads');
-    assert(reloaded && autoSelectDisabled && deleted.join() === 'schoolDashboard' && !wipeSync.identity() && wipeValues.size === 1 && wipeValues.get('unrelated') === 'keep', 'Wipe missed dashboard storage or removed unrelated data');
+    assert(reloaded && autoSelectDisabled && deleted.join() === 'schoolDashboard' && !wipeSync.identity() && wipeValues.size === 2 && wipeValues.get('unrelated') === 'keep' && wipeValues.get('schoolDashboardOther') === 'keep', 'Wipe missed dashboard storage or removed unrelated data');
     assert(!wipeConfig._write('sd.config.v2', {}).ok && !(await wipeConfig._storePut('groupsData', { data: [] })).ok, 'A late file import could repopulate storage after wipe');
     await rejects(() => wipeSync.pushCloudState({ force: true }), 'הסנכרון חסום');
     reloaded = false;

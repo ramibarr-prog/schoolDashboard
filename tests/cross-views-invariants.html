@@ -1192,6 +1192,17 @@ window.fetch = (input, options) => {
         app.renderGroupsPanel(); probe('groups');
         app.state.profileTz = T(1);
         for (const tab of ['bagrut', 'events', 'groups']) { app.state.profTab = tab; app.renderTrainee360Panel(); probe(`360/${tab}`); }
+        const originalAttempts = Store.attemptsOf;
+        try {
+          Store.attemptsOf = tz => {
+            const attempts = originalAttempts.call(Store, tz);
+            return tz === T(1) && attempts.length ? [...attempts, { ...attempts[0], code: P4 }] : attempts;
+          };
+          app.state.profTab = 'bagrut';
+          app.renderTrainee360Panel();
+          probe('360/questionnaire code');
+          check([...$id('profile-more').querySelectorAll('tbody tr')].some(row => row.children[0].textContent === P4), 'Hostile questionnaire code must remain text');
+        } finally { Store.attemptsOf = originalAttempts; }
         app.openExceptionModal(T(1)); probe('exception modal');
         const model = GroupAnalyzer.explorerModel().groups.find(g => g.groupId === '9001');
         app.renderGroupDetail(model, [], () => false, model.cat); probe('group detail');

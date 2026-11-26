@@ -7,6 +7,13 @@
   const setVal = (id, value) => { const el = $(id); if (el) el.value = value; };
   const setChecked = (id, value) => { const el = $(id); if (el) el.checked = !!value; };
   const on = (id, event, fn) => { const el = $(id); if (el) el.addEventListener(event, fn); };
+  const cloudPassPlaceholder = cloud => cloud.passcode() ? 'קוד שמור — השאירו ריק כדי לשמור אותו' : 'הזינו קוד בית-ספר';
+  const saveCloudForm = cloud => {
+    const input = $('cloudPass');
+    cloud.saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: input.value || undefined });
+    input.value = '';
+    input.placeholder = cloudPassPlaceholder(cloud);
+  };
   const natural = (a, b) => String(a).localeCompare(String(b), 'he', { numeric: true });
   const qualityRecords = signals => {
     const records = [];
@@ -690,7 +697,7 @@
             <label class="flex flex-col gap-1">Google Client ID
               <input id="cloudClientId" class="inp" dir="ltr" value="${E(cloud.clientId())}"></label>
             <label class="flex flex-col gap-1" for="cloudPass">קוד בית-ספר (חובה להצפנה בענן)</label>
-            <div class="flex gap-2"><input id="cloudPass" class="inp flex-1" type="password" autocomplete="off" value="${E(cloud.passcode())}">
+            <div class="flex gap-2"><input id="cloudPass" class="inp flex-1" type="password" autocomplete="off" placeholder="${E(cloudPassPlaceholder(cloud))}">
               <button type="button" class="btn btn-ghost btn-sm" data-toggle-pass aria-controls="cloudPass" aria-pressed="false">הצג</button></div>
             <div><button type="button" class="btn btn-ghost btn-sm" data-act="cloudSave">שמירת הגדרות</button></div>
           </div>
@@ -924,7 +931,7 @@
 
   async cloudSave() {
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
+      saveCloudForm(this.cloudService());
       this.renderSync();
       this.toast('הגדרות הענן נשמרו', 'ok');
       await this.syncCloudAccess();
@@ -942,7 +949,7 @@
   async cloudSync() {
     let attempted = false, outcome = 'error';
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
+      saveCloudForm(this.cloudService());
       if (!this.cloudService().url()) return this.toast('יש להגדיר כתובת סנכרון ענן בהגדרות', 'warn');
       if (!this.canEdit() || this.cloudService().hasUnpublished()) {
         await this.syncCloudAccess();
@@ -971,7 +978,7 @@
   },
   async cloudJoinLink() {
     try {
-      this.cloudService().saveSettings({ url: $('cloudUrl').value, clientId: $('cloudClientId').value, passcode: $('cloudPass').value });
+      saveCloudForm(this.cloudService());
       await navigator.clipboard.writeText(this.cloudService().teamJoinLink());
       this.toast('קישור ההצטרפות הועתק. יש לשתף רק בערוץ פרטי עם הצוות.', 'ok');
     } catch (e) { this.toast(`העתקת הקישור נכשלה: ${e.message}`, 'error'); }
