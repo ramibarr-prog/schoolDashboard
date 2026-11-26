@@ -125,7 +125,7 @@ const App = {
 
   async syncCloudAccess({ push = false } = {}) {
     const cloud = this.cloudService();
-    this._cloudWriteReady = false;
+    this._cloudWriteReady = this.canEdit();
     this.renderCloudAccess();
     if (!cloud.identity() || !cloud.url() || !cloud.passcode()) { this.openCloudAccess(); return; }
     if (cloud.status.kind === 'conflict') {
@@ -138,7 +138,10 @@ const App = {
     if (result && result !== 'kept-local' && push && !dirty) {
       result = await this.cloudRefresh(() => cloud.pushCloudState(), { cloudAccess: true, action: 'sync' });
     }
-    if (!result || result === 'kept-local') this.openCloudAccess();
+    if (!result || result === 'kept-local') {
+      this._cloudWriteReady = false;
+      this.openCloudAccess();
+    }
     this.renderCloudAccess();
     return result;
   },

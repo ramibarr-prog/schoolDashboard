@@ -477,6 +477,15 @@ window.fetch = (url, options) => {
     synced('Google sign-in event');
     CloudSync.emitStatus({ kind: 'ok', text: '☁️ מסנכרן...' });
     synced('successful status overrides stale busy text');
+    let releaseRefresh;
+    holdPull = new Promise(resolve => { releaseRefresh = resolve; });
+    const verifiedRefresh = syncApp.syncCloudAccess();
+    assert(syncApp.canEdit() && document.getElementById('cloudReadOnly').hidden,
+      'Routine refresh revoked previously verified access before the request completed');
+    releaseRefresh();
+    await verifiedRefresh;
+    holdPull = null;
+    synced('verified access survives routine refresh');
     refreshed = 0;
     // Test the actual header handler without mounting the settings form.
     document.getElementById('cloudBody').innerHTML = '';
