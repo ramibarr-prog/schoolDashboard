@@ -1161,7 +1161,7 @@ const App = {
   bindRulesEvents(...args) { return RulesView.bindRulesEvents.apply(this, args); },
 
   bindEvents() {
-    on('headerCloudSync', 'click', () => this.syncCloudAccess());
+    on('headerCloudSync', 'click', () => this.syncCloudAccess({ push: true }));
     on('cloudAccessRetry', 'click', () => this.syncCloudAccess());
     on('cloudAccessContinue', 'click', () => { $('cloudAccessDialog').hidden = true; this.renderCloudAccess(); });
     on('cloudAccessSettings', 'click', () => {

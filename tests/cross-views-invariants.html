@@ -355,7 +355,8 @@ window.fetch = (input, options) => {
       const app = newApp();
       const doc = new DOMParser().parseFromString(await (await fetch('../index.html')).text(), 'text/html');
       const scripts = [...doc.querySelectorAll('script[src]')];
-      check(scripts.length > 0 && scripts.every(s => new URL(s.getAttribute('src'), location.href).searchParams.get('v') === '20261126_1'),
+      const versions = scripts.map(s => new URL(s.getAttribute('src'), location.href).searchParams.get('v'));
+      check(versions.length > 0 && versions.every(Boolean) && new Set(versions).size === 1,
         'Every external and application script has the same cache version');
       $id('stage').appendChild(document.importNode(doc.getElementById('rulesDrawer'), true));
       const cohort = Config.getGradeCohortMap()['11'];

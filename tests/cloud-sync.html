@@ -334,8 +334,14 @@ window.fetch = (url, options) => {
     passed.push('Base64url team onboarding saves settings and immediately strips secrets from hash');
 
     const appSource = await (await localFetch('../js/app.js')).text();
+    const indexSource = await (await localFetch('../index.html')).text();
+    const indexDocument = new DOMParser().parseFromString(indexSource, 'text/html');
+    const assetVersions = [...indexDocument.querySelectorAll('script[src], link[href]:not([rel="preconnect"])')]
+      .map(el => new URL(el.getAttribute('src') || el.getAttribute('href'), location.href).searchParams.get('v'));
+    assert(assetVersions.every(Boolean) && new Set(assetVersions).size === 1, 'Index assets do not share a cache version');
     const ui = document.createElement('div');
-    ui.innerHTML = '<div id="cloudBody"></div><div id="syncStatus"></div><div id="cloudConflict" hidden></div>';
+    ui.innerHTML = '<div id="cloudBody"></div><div id="cloudConflict" hidden></div>';
+    ui.appendChild(indexDocument.getElementById('syncStatus').cloneNode(true));
     document.body.appendChild(ui);
     let parsedRoster, allowConfirm = false;
     const confirmations = [];
@@ -415,7 +421,9 @@ window.fetch = (url, options) => {
     passed.push('Google account settings/join button/conflict prompt; UI stops after kept-local without false success');
 
     const syncUi = document.createElement('div');
-    syncUi.innerHTML = '<button id="headerCloudSync"></button><span id="headerCloudStatus"></span><span id="cloudReadOnly"></span><span id="ovSyncPill"></span>';
+    syncUi.appendChild(indexDocument.getElementById('headerCloudSync').parentElement.cloneNode(true));
+    syncUi.appendChild(indexDocument.getElementById('cloudAccessDialog').cloneNode(true));
+    syncUi.appendChild(indexDocument.querySelector('style').cloneNode(true));
     document.body.appendChild(syncUi);
     const syncListeners = [];
     let authDone;
@@ -444,9 +452,9 @@ window.fetch = (url, options) => {
     refreshed = 0;
     const synced = label => {
       assert(syncApp.canEdit() && document.getElementById('cloudReadOnly').hidden, label + ': read-only gate retained');
-      for (const id of ['syncStatus', 'ovSyncPill']) {
-        assert(document.getElementById(id).textContent === '☁️ מסונכרן', label + ': stale sync status in ' + id);
-      }
+      assert(getComputedStyle(document.getElementById('cloudReadOnly')).display === 'none', label + ': read-only banner still visible');
+      assert(document.getElementById('headerCloudStatus').textContent === 'מסונכרן', label + ': stale top-bar status');
+      assert(document.getElementById('syncStatus').textContent === '☁️ מסונכרן', label + ': stale ribbon sync status');
       assert(CloudSync.status.kind === 'ok' && !CloudSync.hasUnpublished(), label + ': cloud not settled');
     };
     CloudSync.acceptGoogleCredential(token);
@@ -456,12 +464,18 @@ window.fetch = (url, options) => {
     // Test the actual header handler without mounting the settings form.
     document.getElementById('cloudBody').innerHTML = '';
     remote = { ...remote, rev: remote.rev + 1 };
+    syncApp._cloudWriteReady = false;
+    syncApp.renderCloudAccess();
+    assert(!document.getElementById('cloudReadOnly').hidden, 'Read-only banner not exercised before header sync');
+    CloudSync.emitStatus({ kind: 'busy', text: '☁️ מסנכרן...' });
+    assert(document.getElementById('headerCloudStatus').textContent === 'מסנכרן...', 'Top-bar busy state not exercised');
+    const syncAccess = syncApp.syncCloudAccess.bind(syncApp);
     const headerDone = new Promise(resolve => {
-      const refresh = syncApp.cloudRefresh.bind(syncApp);
-      syncApp.cloudRefresh = async (...args) => { const result = await refresh(...args); resolve(result); return result; };
+      syncApp.syncCloudAccess = async (...args) => { const result = await syncAccess(...args); resolve(result); return result; };
     });
     document.getElementById('headerCloudSync').click();
-    assert(await headerDone === 'applied', 'Header did not pull the remote snapshot');
+    assert((await headerDone).ok, 'Header did not complete the pull/push flow');
+    syncApp.syncCloudAccess = syncAccess;
     synced('header pull');
     assert(refreshed === 1 && !syncErrors.length, 'Header refresh failed or reported a false error');
     Config.setException(tz, { note: 'Pending header upload' }); stopTimer();
@@ -504,7 +518,7 @@ window.fetch = (url, options) => {
     await CloudSync.pullCloudState();
     assert(app.completeCloudAccess('current'), 'Original fixture did not resume after the sign-in revision changed');
     syncUi.remove();
-    passed.push('Header/settings pull and sync share access completion; dirty upload, real errors, rendering errors and cancelled-upload status');
+    passed.push('Real index DOM: header/settings sync, Google sign-in, visible banner dismissal, settled statuses and consistent asset versions');
 
     const hostileId = '"><b data-id-probe>marker</b><i title="';
     testStore.trainees.set(hostileId, { tz: hostileId, name: 'Test', classKey: 'י1' });
