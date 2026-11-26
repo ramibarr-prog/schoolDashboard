@@ -74,6 +74,11 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-controls.hidden { display: none; }
 .bagrut-work-controls label { display: inline-flex; align-items: center; gap: .25rem; }
 .bagrut-work-list { overflow-x: auto; }
+.bagrut-work-students tbody tr[data-act="bagrutWorkSelect"] { cursor: pointer; }
+.bagrut-work-students tbody tr[data-act="bagrutWorkSelect"]:hover td { background: #f3f8f4; }
+.bagrut-work-students tbody tr.is-selected td,
+.bagrut-work-students tbody tr.is-selected:hover td { background: #dcece0; }
+.bagrut-work-splitter { display: none; }
 .bagrut-work-subject-scroll { overflow-x: auto; margin-top: .75rem; }
 .bagrut-work-subjects { width: 100%; border-collapse: collapse; text-align: right; font-size: .8rem; }
 .bagrut-work-subjects, #bagrut-table table.bagrut-work-students { table-layout: fixed; border-collapse: separate; border-spacing: 0; }
@@ -104,7 +109,14 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
     min-height: 460px;
     overflow: hidden;
   }
-  .bagrut-work-layout { flex: 1 1 auto; min-width: 0; min-height: 0; align-items: stretch; }
+  .bagrut-work-layout {
+    flex: 1 1 auto; min-width: 0; min-height: 0; align-items: stretch; gap: 0;
+    grid-template-columns: minmax(220px, min(var(--bagrut-work-split, 42%), calc(100% - 270px))) 10px minmax(260px, 1fr);
+  }
+  .bagrut-work-splitter { display: flex; align-items: center; justify-content: center; cursor: col-resize; }
+  .bagrut-work-splitter::after { content: ''; width: 3px; height: 48px; border-radius: 2px; background: #cbd9ce; }
+  .bagrut-work-splitter:hover::after, .bagrut-work-splitter:focus-visible::after, .bagrut-work-splitter.is-dragging::after { background: var(--sage); }
+  .bagrut-work-splitter:focus-visible { outline: 2px solid var(--sage); outline-offset: -2px; }
   .bagrut-work-list, .bagrut-work-detail { min-height: 0; overflow: auto; }
   .bagrut-work-subject-scroll { overflow: visible; }
   .bagrut-work-subjects thead th { position: sticky; top: 0; z-index: 20; background: var(--card-bg); }

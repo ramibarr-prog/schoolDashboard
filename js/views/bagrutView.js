@@ -13,6 +13,8 @@
   const PINS_KEY = 'schoolDashboard.bagrut.pins.v1';
   const DEFERRED_KEY = 'sd.bagrut.deferred.v1';
   const WIDTHS_KEY = 'schoolDashboard.bagrut.colWidths.v1';
+  const WORK_SPLIT_KEY = 'schoolDashboard.bagrut.workSplit.v1';
+  const WORK_SPLIT_DEFAULT = 42, WORK_SPLIT_MIN = 24, WORK_SPLIT_MAX = 72;
   const WORK_COLUMNS = {
     list: [['name', 'חניך', 150], ['class', 'כיתה', 85], ['issues', 'מה חוסם או דורש בדיקה', 240], ['order', 'סדר ברשימה', 135]],
     subjects: [['subject', 'מקצוע', 140], ['exams', 'תוצאות שאלונים', 180], ['status', 'סטטוס נוכחי', 135], ['target', 'ציון נדרש ב-30%', 165], ['details', 'פרטי חישוב', 110]]
@@ -20,6 +22,29 @@
   let pinsCache = null;
   let deferredCache = null;
   let widthsCache = null;
+  let workSplitCache = null;
+  function loadWorkSplit() {
+    if (workSplitCache !== null) return workSplitCache;
+    workSplitCache = WORK_SPLIT_DEFAULT;
+    try {
+      const saved = window.localStorage.getItem(WORK_SPLIT_KEY);
+      if (saved !== null) {
+        const value = JSON.parse(saved);
+        if (!Number.isFinite(value) || value < WORK_SPLIT_MIN || value > WORK_SPLIT_MAX) throw new Error('רוחב החלוקה אינו תקין');
+        workSplitCache = value;
+      }
+    } catch (e) { console.error('טעינת רוחב חלוקת הזכאות נכשלה', e); }
+    return workSplitCache;
+  }
+  function saveWorkSplit() {
+    try { window.localStorage.setItem(WORK_SPLIT_KEY, JSON.stringify(loadWorkSplit())); }
+    catch (e) { console.error('שמירת רוחב חלוקת הזכאות נכשלה', e); }
+  }
+  function setWorkSplit(layout, value) {
+    workSplitCache = Math.max(WORK_SPLIT_MIN, Math.min(WORK_SPLIT_MAX, value));
+    layout.style.setProperty('--bagrut-work-split', `${workSplitCache}%`);
+    layout.querySelector('.bagrut-work-splitter').setAttribute('aria-valuenow', String(workSplitCache));
+  }
   function loadWorkWidths() {
     if (widthsCache) return widthsCache;
     widthsCache = { list: {}, subjects: {} };
@@ -115,6 +140,47 @@
     table.querySelector('colgroup').innerHTML = columns.cols;
     saveWorkWidths();
   }, true);
+  const workSplitter = e => e.target.closest && e.target.closest('#bagrut-table .bagrut-work-splitter');
+  document.addEventListener('mousedown', e => {
+    const handle = workSplitter(e);
+    if (!handle || e.button !== 0) return;
+    e.preventDefault();
+    handle.focus();
+    const layout = handle.closest('.bagrut-work-layout');
+    let dragged = false;
+    handle.classList.add('is-dragging');
+    document.body.classList.add('col-resizing');
+    const move = ev => {
+      const rect = layout.getBoundingClientRect();
+      if (!rect.width) return;
+      setWorkSplit(layout, (rect.right - ev.clientX) / rect.width * 100);
+      dragged = true;
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+      handle.classList.remove('is-dragging');
+      document.body.classList.remove('col-resizing');
+      if (dragged) saveWorkSplit();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }, true);
+  document.addEventListener('dblclick', e => {
+    const handle = workSplitter(e);
+    if (!handle) return;
+    e.preventDefault();
+    setWorkSplit(handle.closest('.bagrut-work-layout'), WORK_SPLIT_DEFAULT);
+    saveWorkSplit();
+  });
+  document.addEventListener('keydown', e => {
+    const handle = workSplitter(e);
+    if (!handle || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    const layout = handle.closest('.bagrut-work-layout'), width = layout.getBoundingClientRect().width;
+    const visibleSplit = width ? Math.max(220 / width * 100, Math.min(loadWorkSplit(), (width - 270) / width * 100)) : loadWorkSplit();
+    setWorkSplit(layout, visibleSplit + (e.key === 'ArrowLeft' ? 2 : -2));
+    saveWorkSplit();
+  });
   function loadPins() {
     if (pinsCache) return pinsCache;
     pinsCache = new Set();
@@ -702,7 +768,7 @@
       const offset = offsetInfo(ev);
       const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
         !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
-      return `<tr><td><button type="button" class="bagrut-name" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}" aria-pressed="${t.tz === st.workTz}">${E(t.name)}</button></td>
+      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}" aria-pressed="${t.tz === st.workTz}">${E(t.name)}</button></td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
@@ -848,8 +914,9 @@
         ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
         ${simulation}`;
     }
-    setHtml('bagrut-table', `<div class="bagrut-work-layout"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width};min-width:100%"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
-      <tbody>${workRows(active) || '<tr><td colspan="4">אין חניכים פעילים להצגה</td></tr>'}${lowered.length ? `<tr class="room-divider"><td colspan="4">חניכים שהורדו למטה (${lowered.length})</td></tr>${workRows(lowered)}` : ''}</tbody></table></div><section class="card bagrut-work-detail" aria-label="בדיקת חניך">${detail}</section></div>`);
+    const workSplit = loadWorkSplit();
+    setHtml('bagrut-table', `<div class="bagrut-work-layout" style="--bagrut-work-split:${workSplit}%"><div class="card bagrut-work-list"><table class="grid bagrut-work-students text-right" data-width-group="list" style="width:${listColumns.width};min-width:100%"><colgroup>${listColumns.cols}</colgroup><thead><tr>${listColumns.headers}</tr></thead>
+      <tbody>${workRows(active) || '<tr><td colspan="4">אין חניכים פעילים להצגה</td></tr>'}${lowered.length ? `<tr class="room-divider"><td colspan="4">חניכים שהורדו למטה (${lowered.length})</td></tr>${workRows(lowered)}` : ''}</tbody></table></div><div class="bagrut-work-splitter" role="separator" aria-orientation="vertical" aria-valuemin="${WORK_SPLIT_MIN}" aria-valuemax="${WORK_SPLIT_MAX}" aria-valuenow="${workSplit}" tabindex="0" aria-label="שינוי רוחב החלוקה בין רשימת החניכים לפרטי החניך" title="גרור לשינוי רוחב החלוקה (לחיצה כפולה לאיפוס)"></div><section class="card bagrut-work-detail" aria-label="בדיקת חניך">${detail}</section></div>`);
   },
 
   dashRows() { return this.filtered().map(t => ({ t, ev: this.getEval(t.tz) })); },
