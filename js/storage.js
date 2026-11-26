@@ -159,7 +159,7 @@ const CloudSync = {
       try { this.acceptGoogleCredential(response.credential); }
       catch (e) { this.emitStatus({ kind: 'error', text: e.message, error: e.message }); }
     } });
-    id.renderButton(element, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'he' });
+    id.renderButton(element, { theme: 'outline', size: 'large', shape: 'pill', text: 'continue_with', locale: 'he', width: 320 });
   },
   meta() {
     let m;

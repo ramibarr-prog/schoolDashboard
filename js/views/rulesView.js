@@ -717,9 +717,18 @@
     const container = $('cloudGoogleAuth');
     if (!container) return;
     const cloud = this.cloudService(), identity = cloud.identity();
-    container.innerHTML = `<div class="flex flex-wrap items-center gap-2">
-      <span>${identity ? `מחובר עם Google: ${E(identity.email)}` : 'נדרשת התחברות עם Google כדי לסנכרן'}</span>
-      ${identity ? '<button type="button" class="btn btn-ghost btn-sm" data-act="cloudGoogleSignOut">התנתקות מחשבון Google</button>' : '<div id="googleSignIn"></div>'}</div>
+    container.innerHTML = identity ? `<div class="google-account">
+      <div class="google-account-identity">
+        <span class="google-account-avatar" aria-hidden="true">${E(Array.from(identity.email)[0].toUpperCase())}</span>
+        <div class="google-account-details"><bdi class="google-account-email">${E(identity.email)}</bdi><span class="google-account-status">מחובר באמצעות Google</span></div>
+      </div>
+      <button type="button" class="google-account-signout" data-act="cloudGoogleSignOut">התנתקות מחשבון Google</button>
+    </div>` : `<div class="google-account-prompt">
+      <span>נדרשת התחברות עם Google כדי לסנכרן</span>
+      <div class="google-button-area">
+        <div class="google-button-fallback" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24"><use href="#google-mark"></use></svg><span>המשך באמצעות Google</span></div>
+        <div id="googleSignIn" class="google-button-mount"></div>
+      </div></div>
       ${!identity && !(window.google && window.google.accounts && window.google.accounts.id) ? '<p class="text-xs text-slate-500">כפתור Google יופיע כשהשירות יהיה זמין; ניתן להמשיך במצב קריאה בלבד.</p>' : ''}`;
     const details = container.closest('.card')?.querySelector('details');
     if (details && (!cloud.configured() || cloud._onboarding)) details.open = true;

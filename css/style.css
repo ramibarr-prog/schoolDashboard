@@ -1,4 +1,64 @@
 body.sadin-active.sadin-weak-active #localControls { display: none; }
+#signInOverlay {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  overflow-y: auto; background: rgba(244, 246, 249, .75);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.sign-in-card {
+  box-sizing: border-box; flex-shrink: 0; width: calc(100% - 32px); max-width: 420px; margin: auto;
+  padding: 36px 32px; background: #fff; border: 1px solid #dadce0; border-radius: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .05); text-align: center; direction: rtl;
+}
+.sign-in-logo { display: block; margin: 0 auto 18px; }
+.sign-in-card h2 { margin: 0 0 8px; color: #1f1f1f; font-size: 22px; font-weight: 700; line-height: 1.3; }
+.sign-in-subtitle { margin: 0 0 26px; color: #5f6368; font-size: 14px; line-height: 1.5; }
+#cloudAccessMessage { margin: 0 0 14px; color: #5f6368; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.google-button-area { position: relative; width: 320px; max-width: 100%; height: 44px; margin: 0 auto; }
+.google-button-area[hidden] { display: none; }
+.google-button-fallback {
+  box-sizing: border-box; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  gap: 12px; border: 1px solid #747775; border-radius: 22px; background: #fff; color: #1f1f1f;
+  font-size: 14px; font-weight: 500; pointer-events: none;
+}
+.google-button-mount { position: absolute; top: 2px; left: 50%; width: 320px; transform: translateX(-50%); }
+.google-button-area:has(.google-button-mount:not(:empty)) .google-button-fallback { visibility: hidden; }
+.sign-in-unavailable { margin: 6px 0 0; color: #5f6368; font-size: 12px; }
+.google-button-area:has(.google-button-mount:not(:empty)) + .sign-in-unavailable,
+.google-button-area[hidden] + .sign-in-unavailable { display: none; }
+.google-mark-definition { position: absolute; }
+.sign-in-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0; color: #747775; font-size: 13px; }
+.sign-in-divider::before, .sign-in-divider::after { content: ''; flex: 1; height: 1px; background: #dadce0; }
+.sign-in-continue {
+  box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  width: 320px; max-width: 100%; padding: 10px 24px; border: 1px solid #dadce0; border-radius: 24px;
+  background: #fff; color: #0b57d0; font-size: 14px; font-weight: 500; cursor: pointer; transition: all .2s;
+}
+.sign-in-continue:hover, .google-account-signout:hover { background: #f0f5ff; border-color: #0b57d0; }
+.sign-in-continue:focus-visible, .sign-in-actions button:focus-visible, .google-account-signout:focus-visible { outline: 2px solid #0b57d0; outline-offset: 2px; }
+.sign-in-hint { margin: 6px 0 0; color: #5f6368; font-size: 12px; }
+.sign-in-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin-top: 16px; }
+.sign-in-actions button { padding: 4px; color: #0b57d0; font-size: 12px; cursor: pointer; }
+.sign-in-actions button:hover { text-decoration: underline; }
+.sign-in-footer { display: flex; align-items: center; justify-content: center; gap: 4px; margin: 24px 0 0; color: #747775; font-size: 12px; }
+.google-account { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border: 1px solid #dadce0; border-radius: 16px; background: #f8fafd; }
+.google-account-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.google-account-avatar { display: flex; flex: 0 0 40px; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: #d3e3fd; color: #0b57d0; font-size: 18px; font-weight: 500; }
+.google-account-details { display: grid; gap: 3px; min-width: 0; }
+.google-account-email { color: #1f1f1f; font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.google-account-status { color: #137333; font-size: 12px; }
+.google-account-signout { padding: 8px 14px; border: 1px solid #dadce0; border-radius: 20px; background: #fff; color: #0b57d0; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; }
+.google-account-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: #5f6368; font-size: 14px; }
+.google-account-prompt .google-button-area { margin: 0; }
+@media (max-width: 400px) {
+  .sign-in-card { padding-inline: 16px; }
+  .google-button-mount { transform: translateX(-50%) scale(.9); transform-origin: top center; }
+}
+@media (max-width: 350px) {
+  .google-button-mount { transform: translateX(-50%) scale(.75); }
+}
+@media (max-width: 300px) {
+  .google-button-mount { transform: translateX(-50%) scale(.6); }
+}
 #globalFilterBar[hidden] { display: none !important; }
 #localControls.hidden { display: none; }
 .screen-scope { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .75rem; }

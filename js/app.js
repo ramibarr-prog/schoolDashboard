@@ -98,6 +98,8 @@ const App = {
       cloud.status.kind === 'error' ? (cloud.status.error || cloud.status.text) : 'יש לבדוק עדכניות לפני עריכה.';
     const button = $('cloudAccessGoogle'), dialog = $('cloudAccessDialog');
     if (button && dialog && !dialog.hidden) {
+      const area = button.closest('.google-button-area');
+      if (area) area.hidden = !!identity;
       button.innerHTML = '';
       if (!identity) cloud.renderGoogleButton(button);
     }
