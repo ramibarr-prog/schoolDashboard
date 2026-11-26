@@ -458,14 +458,21 @@ const CloudSync = {
         force: opts.force === true,
         payload
       };
-      if (revision !== this._revision) { this._schedulePush(); return 'kept-local'; }
+      if (revision !== this._revision) {
+        if (this.status.kind === 'busy') this.emitStatus({ kind: 'none', text: '', error: '' });
+        this._schedulePush();
+        return 'kept-local';
+      }
       const r = await this._post(bodyData);
-      if (settingsRevision !== this._settingsRevision) return 'kept-local';
+      if (settingsRevision !== this._settingsRevision) {
+        if (this.status.kind === 'busy') this.emitStatus({ kind: 'none', text: '', error: '' });
+        return 'kept-local';
+      }
       if (r.conflict) return this._conflict(r);
       this._ready = true;
       this._tabRev = r.rev;
       this._setMeta({ dirty: revision !== this._revision, syncedAt: r.updatedAt, rev: r.rev });
-      this.emitStatus({ kind: 'ok', updatedAt: r.updatedAt, text: '' });
+      this.emitStatus({ kind: 'ok', updatedAt: r.updatedAt, text: '', error: '' });
       this._schedulePush();
       return r;
     } catch (e) {
@@ -493,12 +500,12 @@ const CloudSync = {
       if (!json.payload) {
         this._tabRev = json.rev;
         this._setMeta({ rev: json.rev, syncedAt: json.updatedAt });
-        this.emitStatus({ kind: 'none', text: '☁️ אין עדיין נתונים בענן' }); return 'empty';
+        this.emitStatus({ kind: 'ok', updatedAt: json.updatedAt, text: '', error: '' }); return 'empty';
       }
       if (json.payload.enc === 'none') throw new Error('הנתונים בענן אינם מוצפנים. יש להשתמש בתמונת מצב מוצפנת ולהזין קוד בית-ספר');
       const meta = this.meta();
       if (!opts.force && json.rev === this._tabRev && meta.syncedAt) {
-        this.emitStatus({ kind: 'ok', updatedAt: meta.syncedAt, text: '' });
+        this.emitStatus({ kind: 'ok', updatedAt: meta.syncedAt, text: '', error: '' });
         return 'current';
       }
       const state = await this.open(json.payload);
@@ -508,7 +515,7 @@ const CloudSync = {
       if (await this.applyState(state) === 'kept-local' || revision !== this._revision) return this._conflict(json);
       this._tabRev = json.rev;
       this._setMeta({ dirty: false, syncedAt: json.updatedAt, rev: json.rev });
-      this.emitStatus({ kind: 'ok', updatedAt: json.updatedAt, text: '' });
+      this.emitStatus({ kind: 'ok', updatedAt: json.updatedAt, text: '', error: '' });
       return 'applied';
     } catch (e) {
       this.emitStatus({ kind: 'error', text: '☁️ הסנכרון נכשל', error: e.message });

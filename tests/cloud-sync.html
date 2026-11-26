@@ -414,6 +414,98 @@ window.fetch = (url, options) => {
     assert(app.completeCloudAccess('current'), 'Fixture could not resume after simulated conflict resolution');
     passed.push('Google account settings/join button/conflict prompt; UI stops after kept-local without false success');
 
+    const syncUi = document.createElement('div');
+    syncUi.innerHTML = '<button id="headerCloudSync"></button><span id="headerCloudStatus"></span><span id="cloudReadOnly"></span><span id="ovSyncPill"></span>';
+    document.body.appendChild(syncUi);
+    const syncListeners = [];
+    let authDone;
+    const syncWindow = new Proxy(window, { get(target, key) {
+      if (key === 'addEventListener') return (type, listener) => {
+        const handler = event => {
+          const result = listener(event);
+          if (type === 'sd:cloud-auth') authDone = result;
+        };
+        syncListeners.push([type, handler]);
+        target.addEventListener(type, handler);
+      };
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const syncApp = new Function('Util', 'Config', 'CloudSync', 'document', 'Store', 'window', 'SignalEngine', 'RULES_VERSION', appSource + '\nreturn App;')(
+      Util, Config, CloudSync, testDocument, { ...testStore, refresh() {} }, syncWindow, { invalidate() {} }, 0
+    );
+    let refreshed = 0;
+    const syncErrors = [];
+    syncApp.afterDataChange = () => { refreshed++; };
+    syncApp.toast = (message, kind) => { if (kind === 'error') syncErrors.push(message); };
+    syncApp.syncFilters = () => {};
+    syncApp.showTab = () => {};
+    await syncApp.initCore();
+    refreshed = 0;
+    const synced = label => {
+      assert(syncApp.canEdit() && document.getElementById('cloudReadOnly').hidden, label + ': read-only gate retained');
+      for (const id of ['syncStatus', 'ovSyncPill']) {
+        assert(document.getElementById(id).textContent === '☁️ מסונכרן', label + ': stale sync status in ' + id);
+      }
+      assert(CloudSync.status.kind === 'ok' && !CloudSync.hasUnpublished(), label + ': cloud not settled');
+    };
+    CloudSync.acceptGoogleCredential(token);
+    await authDone;
+    synced('Google sign-in event');
+    refreshed = 0;
+    // Test the actual header handler without mounting the settings form.
+    document.getElementById('cloudBody').innerHTML = '';
+    remote = { ...remote, rev: remote.rev + 1 };
+    const headerDone = new Promise(resolve => {
+      const refresh = syncApp.cloudRefresh.bind(syncApp);
+      syncApp.cloudRefresh = async (...args) => { const result = await refresh(...args); resolve(result); return result; };
+    });
+    document.getElementById('headerCloudSync').click();
+    assert(await headerDone === 'applied', 'Header did not pull the remote snapshot');
+    synced('header pull');
+    assert(refreshed === 1 && !syncErrors.length, 'Header refresh failed or reported a false error');
+    Config.setException(tz, { note: 'Pending header upload' }); stopTimer();
+    syncApp.renderSync();
+    assert(!document.getElementById('syncStatus').textContent.includes('מסנכרן...'), 'Idle dirty state shown as busy');
+    await syncApp.syncCloudAccess();
+    synced('header dirty upload');
+    assert((await CloudSync.open(remote.payload)).studentMeta[tz].note === 'Pending header upload', 'Header lost pending edits');
+    syncApp._cloudWriteReady = false;
+    Config.setException(tz, { note: 'Pending settings upload' }); stopTimer();
+    await syncApp.acts.cloudSync.call(syncApp);
+    synced('settings sync');
+    syncApp._cloudWriteReady = false;
+    await syncApp.acts.cloudPull.call(syncApp);
+    synced('settings pull');
+    failPull = true;
+    await syncApp.syncCloudAccess();
+    assert(!syncApp.canEdit() && syncErrors.at(-1).includes('Test offline'), 'Real pull failure did not retain read-only/error');
+    failPull = false;
+    await syncApp.syncCloudAccess();
+    synced('retry after failure');
+    const renderCard = syncApp.renderCloudCard;
+    syncApp.renderCloudCard = () => { throw new Error('test view failure'); };
+    await syncApp.syncCloudAccess();
+    synced('view failure after successful sync');
+    assert(syncErrors.at(-1).includes('רענון התצוגה נכשל'), 'Rendering error mislabeled as cloud failure');
+    syncApp.renderCloudCard = renderCard;
+    const realSeal = CloudSync.seal;
+    CloudSync.seal = async (...args) => {
+      const payload = await realSeal.apply(CloudSync, args);
+      CloudSync._revision++;
+      return payload;
+    };
+    try {
+      assert(await CloudSync.pushCloudState() === 'kept-local', 'Upload changed during encryption was not stopped');
+      assert(CloudSync.status.kind !== 'busy', 'Cancelled upload left busy status');
+    } finally { CloudSync.seal = realSeal; stopTimer(); }
+    for (const [type, handler] of syncListeners) window.removeEventListener(type, handler);
+    clearTimeout(syncApp._timer);
+    await CloudSync.pullCloudState();
+    assert(app.completeCloudAccess('current'), 'Original fixture did not resume after the sign-in revision changed');
+    syncUi.remove();
+    passed.push('Header/settings pull and sync share access completion; dirty upload, real errors, rendering errors and cancelled-upload status');
+
     const hostileId = '"><b data-id-probe>marker</b><i title="';
     testStore.trainees.set(hostileId, { tz: hostileId, name: 'Test', classKey: 'י1' });
     app.getEval = () => ({});
@@ -731,6 +823,7 @@ window.fetch = (url, options) => {
       renderGoogleButton() {}, signOutGoogle() { accessIdentity = null; },
       wipeLocalSession: async () => { wipedFromAccess = true; },
       _conflict() { this.status = { kind: 'conflict' }; },
+      async pushCloudState() { this._conflict(); return 'kept-local'; },
       async pullCloudState() {
         accessPulls++;
         if (accessFailure) { this.status = { kind: 'error', error: 'test offline' }; throw new Error('test offline'); }

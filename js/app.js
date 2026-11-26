@@ -113,37 +113,33 @@ const App = {
   completeCloudAccess(result) {
     const cloud = this.cloudService();
     if (!result || result === 'kept-local' || !cloud.configured() || !cloud.passcode() ||
-      cloud.status.kind === 'conflict' || cloud.hasUnpublished()) return false;
+      cloud.status.kind !== 'ok' || cloud.hasUnpublished()) return false;
     this._cloudWriteReady = true;
     this._cloudAccessSettingsRevision = cloud._settingsRevision;
     const dialog = $('cloudAccessDialog');
     if (dialog) dialog.hidden = true;
+    this.renderSync();
     this.renderCloudAccess();
     return true;
   },
 
-  async syncCloudAccess() {
+  async syncCloudAccess({ push = false } = {}) {
     const cloud = this.cloudService();
     this._cloudWriteReady = false;
     this.renderCloudAccess();
     if (!cloud.identity() || !cloud.url() || !cloud.passcode()) { this.openCloudAccess(); return; }
-    if (cloud.status.kind === 'conflict' || cloud.hasUnpublished()) {
-      if (cloud.status.kind !== 'conflict') cloud._conflict({});
+    if (cloud.status.kind === 'conflict') {
       this.openCloudAccess();
-      return;
+      return 'kept-local';
     }
-    const identity = cloud.identity(), settingsRevision = cloud._settingsRevision;
-    try {
-      const result = await cloud.pullCloudState();
-      if (result === 'applied') this.afterDataChange();
-      if (identity === cloud.identity() && settingsRevision === cloud._settingsRevision) this.completeCloudAccess(result);
-      if (result === 'kept-local') this.openCloudAccess();
-    } catch (e) {
-      console.warn('cloud pull', e);
-      this.toast(`סנכרון הענן נכשל: ${e.message}`, 'error');
-      this.openCloudAccess();
+    const dirty = cloud.hasUnpublished();
+    let result = await this.cloudRefresh(() => dirty ? cloud.pushCloudState() : cloud.pullCloudState(), { cloudAccess: true });
+    if (result && result !== 'kept-local' && push && !dirty) {
+      result = await this.cloudRefresh(() => cloud.pushCloudState(), { cloudAccess: true });
     }
+    if (!result || result === 'kept-local') this.openCloudAccess();
     this.renderCloudAccess();
+    return result;
   },
 
   /* ------------------------------------------------------------------
@@ -186,7 +182,10 @@ const App = {
   async initCore() {
     try { await Config.ready; } catch (e) { console.warn('config storage', e); }
     this.renderSync();
-    window.addEventListener('sd:cloud-status', () => { this.renderSync(); this.renderCloudAccess(); });
+    window.addEventListener('sd:cloud-status', () => {
+      if (this.cloudService().status.kind === 'ok') this.completeCloudAccess('current');
+      this.renderSync(); this.renderCloudAccess();
+    });
     window.addEventListener('sd:cloud-auth', async () => {
       this.renderSync();
       this.renderCloudAuth();
