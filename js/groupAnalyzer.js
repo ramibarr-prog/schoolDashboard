@@ -847,7 +847,7 @@ const GroupAnalyzer = {
     const items = Store.loaded.groups ? this.analyzeGroupAnomalies([t], 'all').items : [];
     const rows = new Map();
     const rowOf = cat => {
-      if (!rows.has(cat.key)) rows.set(cat.key, { key: cat.key, label: cat.label, kind: cat.kind, order: cat.order, enrolled: [], sadin: [], issues: [] });
+      if (!rows.has(cat.key)) rows.set(cat.key, { key: cat.key, label: cat.label, kind: cat.kind, order: cat.order, routine: isRoutineDuplicateSubject(cat.label), enrolled: [], sadin: [], issues: [] });
       return rows.get(cat.key);
     };
     if (Store.loaded.groups) {
@@ -864,16 +864,17 @@ const GroupAnalyzer = {
     if (items.some(a => a.kind === 'nomajor')) rowOf({ key: 'major:none', label: this.MAJOR_LABEL, kind: 'major', order: 100 });
 
     rows.forEach(r => {
-      const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => g.inFile);
-      if (r.kind === 'core' && !r.enrolled.length && items.some(a => a.kind === 'none' && a.subject === r.label)) r.issues.push({ level: 'severe', text: 'חסר שיבוץ' });
-      if (r.key === 'major:none') r.issues.push({ level: 'warn', text: 'חסר שיבוץ: ללא מגמת בחירה' });
-      if (regular.length >= 2) r.issues.push({ level: 'severe', text: `כפול: רשום ב-${regular.length} קבוצות` });
-      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'grade'))) r.issues.push({ level: 'severe', text: 'חריג שכבה' });
-      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'outlier'))) r.issues.push({ level: 'warn', text: 'בודד מכיתתו' });
+      /* קבוצת תגבור לצד קבוצה רגילה אינה כפילות (כמו ב-analyzeGroupAnomalies / placementAnomalies) */
+      const ids = r.enrolled.map(g => g.groupId), regular = r.enrolled.filter(g => g.inFile && !g.reinforcement);
+      if (r.kind === 'core' && !r.enrolled.length && items.some(a => a.kind === 'none' && a.subject === r.label)) r.issues.push({ level: 'severe', kind: 'missing', text: 'חסר שיבוץ' });
+      if (r.key === 'major:none') r.issues.push({ level: 'warn', kind: 'nomajor', text: 'חסר שיבוץ: ללא מגמת בחירה' });
+      if (regular.length >= 2) r.issues.push({ level: 'severe', kind: 'dup', count: regular.length, text: `כפול: רשום ב-${regular.length} קבוצות` });
+      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'grade'))) r.issues.push({ level: 'severe', kind: 'grade', text: 'חריג שכבה' });
+      if (r.enrolled.some(g => g.diag.some(d => d.kind === 'outlier'))) r.issues.push({ level: 'warn', kind: 'outlier', text: 'בודד מכיתתו' });
       if (Store.loaded.grades) {
         r.sadin.forEach(s => { s.mismatch = !!(s.groupId && ids.length && !ids.includes(s.groupId)); });
-        if (r.sadin.some(s => s.mismatch)) r.issues.push({ level: 'warn', text: 'ציונים בסדין בקבוצה אחרת' });
-        else if (!ids.length && r.sadin.length && r.kind !== 'core') r.issues.push({ level: 'warn', text: 'ציונים בסדין ללא שיבוץ' });
+        if (r.sadin.some(s => s.mismatch)) r.issues.push({ level: 'warn', kind: 'sadin', text: 'ציונים בסדין בקבוצה אחרת' });
+        else if (!ids.length && r.sadin.length && r.kind !== 'core') r.issues.push({ level: 'warn', kind: 'sadin', text: 'ציונים בסדין ללא שיבוץ' });
       }
     });
     const KIND = { core: 0, major: 1, internal: 2, other: 3 };

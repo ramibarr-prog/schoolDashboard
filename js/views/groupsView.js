@@ -89,18 +89,6 @@
   },
 
   inspectOpenGroup(el) { this.closeModal(); this.selectGroup(el.dataset.id); },
-  studentMap(el) {
-    const t = Store.trainees.get(el.dataset.tz);
-    if (!t) return;
-    this.state.selectedSearchTz = t.tz;
-    this.state.filters.q = '';
-    const search = $('globalSearch');
-    if (search) search.value = t.name;
-    this.renderSearchChrome();
-    this.dirty.add('groups');
-    this.renderTab('groups');
-  },
-  mapBack() { this.state.groupsViewMode = 'anomalies'; this.clearSearch(); },
   rosterSort(el) { this.state.groups.rosterSort = el.dataset.sort; this.groupsRerender(); },
 
   gStrip(el) {
@@ -141,6 +129,10 @@
   },
 
   renderGroupsPanel() {
+    try { return GroupsView.renderGroupsBody.call(this); } finally { GroupsView.renderStudentMapPopover.call(this); }
+  },
+
+  renderGroupsBody() {
     if ($('panel-groups') && !$('weakness-styles')) {
       const link = document.createElement('link');
       link.id = 'weakness-styles'; link.rel = 'stylesheet'; link.href = 'css/style.css';
@@ -159,17 +151,8 @@
     if (!Store.hasData()) {
       this._explorerView = []; this._boardMissing = [];
       this.noRoster(['groups-kpis', 'groups-master', 'groups-detail', 'groups-mode'], 'groups-table');
-      hideAll(); show('groups-table', true); show('groups-student-map', false);
+      hideAll(); show('groups-table', true);
       return;
-    }
-    /* חניך נעול (נבחר בחיפוש): במקום שני המצבים מוצגת מפת השיבוצים שלו */
-    const lockT = this.lockedTrainee();
-    show('groups-student-map', !!lockT);
-    if (lockT) {
-      hideAll();
-      $('groups-kpis').classList.remove('grid');
-      this._explorerView = []; this._boardMissing = [];
-      return this.renderStudentGroupsMap(lockT.tz);
     }
     const list = this.filtered();
     const am = this.placementAnomaliesModel(list);
@@ -220,7 +203,7 @@
       return;
     }
     box.innerHTML = `<div class="gm-row"><div class="flex items-center gap-3"><h2 class="font-bold text-lg text-[#355747]">${mode === 'explorer' ? 'סייר קבוצות' : 'שיבוצים לתיקון'}</h2>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="groupsMode" data-mode="${next}">${label}</button></div><div id="groups-mode-extra" class="gm-extra"></div></div>`;
+      <button type="button" class="btn btn-ghost btn-sm" data-act="groupsMode" data-mode="${next}">${label}</button></div><div id="groups-mode-extra" class="gm-extra">${GroupsView.studentMapButton.call(this)}</div></div>`;
   },
 
   /** מוקד חריגי שיבוץ: כרטיסי קטגוריה, סינון מקצוע וטבלת חריגים */
@@ -271,6 +254,7 @@
     const help = 'כל כרטיס סופר חניכים ייחודיים בקטגוריה; חניך יכול להופיע בכמה קטגוריות, ולכן סכומן עשוי לעלות על סך החניכים. סימון כטופל הוא זמני ולכל קטגוריה בנפרד.';
     setHtml('groups-mode-extra', `<select class="inp ga-subject" data-chg="anSubject" aria-label="סינון לפי מקצוע"><option value="all">כל המקצועות</option>${subjects.map(s => `<option value="${E(s)}" ${s === subject ? 'selected' : ''}>${E(s)} (${categoryRows.filter(r => r.subject === s).length} חריגות)</option>`).join('')}</select>
       <button type="button" class="btn btn-ghost btn-sm ga-explorer" data-act="groupsMode" data-mode="explorer">סייר קבוצות</button>
+      ${GroupsView.studentMapButton.call(this)}
       <button type="button" class="routine-toggle ga-routine" data-act="toggleRoutine" aria-pressed="${state.showRoutineDuplicates}" title="כפילות רישום במקצועות שגרתיים היא בדרך כלל תקינה">הצג גם חינוך / מגדר / מפגש בוקר (${am.hiddenRoutineCount} חריגות)</button>
       <button type="button" class="ga-help" title="${E(help)}" aria-label="${E(help)}">i</button>`);
 
@@ -309,7 +293,7 @@
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
         <td class="text-right">${details}</td>
         <td class="text-right whitespace-nowrap">${items.length} חריגות</td>
-        <td class="text-right"><div class="ga-row-actions"><button type="button" class="ga-row-button" data-act="studentMap" data-tz="${E(r.tz)}">מפת חניך</button>
+        <td class="text-right"><div class="ga-row-actions"><button type="button" class="ga-row-button" data-act="studentMap" data-tz="${E(r.tz)}">מפת שיבוצים</button>
           <button type="button" class="ga-row-button" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'החזר ↑' : 'הורד לסוף ↓'}</button></div></td></tr>`;
     };
     const body = pending.slice(0, 1500).map(renderRow).join('') +
@@ -406,59 +390,103 @@
       ${others}`, true);
   },
 
-  /** מפת שיבוצים לחניך: שורה לכל מקצוע (ליבה, מגמה ושאר המקצועות שבהם רשום או מקבל ציונים) מול הסדין, עם חיווי בקרה */
-  renderStudentGroupsMap(tz) {
-    const trainee = Store.trainees.get(tz);
-    if (trainee && !SignalEngine.prerequisitesFor(trainee.gradeKey).hasGroups) {
-      return setHtml('groups-student-map', `<div class="card p-5">
-        <div class="font-bold text-lg">${E(trainee.name)} · ${E(Config.classLabel(trainee.classKey))}</div>
-        <div class="mt-2">${UI.signalBadge('placement.unknown')}</div>
-        <div class="mt-3 flex flex-wrap gap-2"><button type="button" class="btn btn-ghost" data-act="openProfile" data-tz="${E(tz)}">👤 מעבר לכרטיס 360°</button>
-          <button type="button" class="nav-back" data-act="mapBack">← חזרה למוקד חריגי שיבוץ</button></div></div>`);
-    }
+  /** כפתור קומפקטי לפתיחת "מפת שיבוצים" כשחניך נעול בחיפוש: מסך השיבוצים נשאר מוצג ומסונן לחניך */
+  studentMapButton() {
+    const lock = this.lockedTrainee();
+    return lock ? `<button type="button" class="btn btn-ghost btn-sm" data-act="studentMap" data-tz="${E(lock.tz)}">מפת שיבוצים</button>` : '';
+  },
+
+  studentMap(el) {
+    const t = Store.trainees.get(el.dataset.tz);
+    if (!t) return;
+    this.state.studentMapTz = t.tz;
+    this._studentMapTrigger = el;
+    GroupsView.renderStudentMapPopover.call(this, true);
+  },
+
+  /** סוגר את חלונית מפת השיבוצים; restoreFocus מחזיר את המיקוד לכפתור שפתח אותה */
+  closeStudentMap(restoreFocus = true) {
+    const was = this.state.studentMapTz;
+    this.state.studentMapTz = null;
+    const box = $('groups-student-map');
+    if (box) { box.innerHTML = ''; box.classList.add('hidden'); }
+    const trigger = this._studentMapTrigger;
+    this._studentMapTrigger = null;
+    if (was && restoreFocus && trigger && trigger.isConnected) trigger.focus();
+  },
+
+  /**
+   * מודל "מפת שיבוצים": עונה רק על השאלה אם החניך משובץ נכון בכל מקצוע. ללא ציונים, סדין או זכאות.
+   * status לכל מקצוע: ok (תקין) / warn (לבדיקה: כפול, חריג שכבה, בודד מכיתתו) / missing (ללא שיבוץ: חסר שיבוץ או מגמה).
+   * כפילות במקצוע שגרתי (חינוך / מגדר / מפגש בוקר) אינה חריגה כשההצגה שלהן כבויה; חריגות סדין טהורות אינן חלק מהמפה.
+   */
+  studentMapModel(tz) {
     const m = GroupAnalyzer.studentPlacementMap(tz);
-    if (!m) return setHtml('groups-student-map', '');
-    const t = m.t, c = m.counts;
-    const dash = '<span class="text-slate-300">—</span>';
-    const kpi = (label, value, sub, cls = '') => `<div class="prof-kpi"><div class="k">${label}</div><div class="v ${cls}">${value}</div><div class="s">${sub}</div></div>`;
-    const groupBtn = g => `<button type="button" class="font-semibold text-[#355747] hover:underline text-right" data-act="sgOpenGroup" data-id="${E(g.groupId)}" title="פתיחת הקבוצה בסייר הקבוצות">${E(g.subject)} <span dir="ltr">[${E(g.groupId)}]</span>${g.reinforcement ? ' <span class="text-xs text-slate-500">תגבור</span>' : ''}</button>`;
-    const dataIssue = issue => issue.text.startsWith('ציונים בסדין');
-    const placementCount = m.rows.reduce((n, r) => n + r.issues.filter(i => !dataIssue(i)).length, 0);
-    const body = m.rows.map(r => {
-      const tag = r.kind === 'core' ? 'ליבה' : r.kind === 'major' ? 'מגמה' : '';
+    if (!m) return null;
+    const showRoutine = !!this.state.showRoutineDuplicates;
+    const tiles = [];
+    m.rows.forEach(r => {
       const groups = r.enrolled.filter(g => g.inFile);
-      const enrolled = groups.length ? groups.map(g => `<div>${groupBtn(g)}</div>`).join('') : '<span class="text-slate-500">ללא שיבוץ</span>';
-      const teachers = groups.length ? groups.map(g => `<div>${E(g.teacher || 'ללא מורה')}</div>`).join('') : dash;
-      const sadin = r.sadin.length ? r.sadin.map(s => `<div class="${s.mismatch ? 'text-slate-600 font-semibold' : ''}">${s.groupId ? `<button type="button" class="hover:underline" data-act="sgOpenGroup" data-id="${E(s.groupId)}"><span dir="ltr">[${E(s.groupId)}]</span> ${E(s.teacher || 'ללא מורה')}</button>` : E(s.teacher || 'ללא קבוצה')}${s.avg != null ? ` <span class="text-slate-500 font-normal">· ממוצע ${Util.fmt(s.avg, 0)}</span>` : ''}</div>`).join('') : dash;
-      const status = r.issues.length ? r.issues.map(i => dataIssue(i) ? `<div>${UI.signalBadge('data.sadin_not_enrolled', i.text)}</div>` : `<div class="text-xs font-semibold ${i.level === 'severe' ? 'txt-bad' : 'txt-warn'}">${E(i.text)}</div>`).join('')
-        : groups.length ? '<span class="txt-ok font-semibold">✓ תקין</span>' : dash;
-      return `<tr><td class="font-bold text-[#355747] whitespace-nowrap">${E(r.label)}${tag ? ` <span class="text-[11px] font-normal text-slate-500">${tag}</span>` : ''}</td>
-        <td>${enrolled}</td><td class="whitespace-nowrap">${teachers}</td><td>${sadin}</td><td>${status}</td>
-        <td class="whitespace-nowrap"><button type="button" class="btn btn-ghost btn-sm" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(r.label)}">🔍 השוואת קבוצות במקצוע</button></td></tr>`;
-    }).join('');
-    setHtml('groups-student-map', `
-      <div class="card px-5 py-4">
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
-          <div class="min-w-0">
-            <div class="text-xs font-semibold text-[#75977D]">מפת שיבוצים לחניך</div>
-            <div class="text-2xl font-extrabold text-[#355747]">${E(t.name)}</div>
-            <div class="text-sm text-slate-500 mt-0.5">ת.ז ${E(t.tz)} · כיתת אם ${E(Config.classLabel(t.classKey))}${this.overrideBadge(t.tz)} · מסלול ${E(this.trackOf(t))}</div>
-          </div>
-          <div class="grid grid-cols-3 gap-3">
-            ${kpi('קבוצות משובצות', c.groups, 'בקובץ הקבוצות')}
-            ${kpi('מקצועות ליבה ללא שיבוץ', c.missingCore, c.missingCore ? 'דורש שיבוץ' : 'כל מקצועות הליבה משובצים', c.missingCore ? 'txt-bad' : 'txt-ok')}
-            ${kpi('חריגות שיבוץ', placementCount, placementCount ? 'לבדיקה בטבלה' : 'אין חריגות', placementCount ? 'txt-bad' : 'txt-ok')}
-          </div>
-          <div class="mr-auto flex flex-wrap gap-2">
-            <button type="button" class="btn btn-ghost" data-act="openProfile" data-tz="${E(t.tz)}">👤 מעבר לכרטיס 360°</button>
-            <button type="button" class="nav-back" data-act="mapBack">← חזרה למוקד חריגי שיבוץ</button>
-          </div>
-        </div>
-      </div>
-      ${signalSummary([t], { unmatchedList: [] }, this.state.sim, this.state.showRoutineDuplicates)}
-      <div class="tbl-wrap sticky-scroll"><table class="grid w-full" aria-label="מפת שיבוצים לחניך">
-        <thead><tr><th>מקצוע</th><th>קבוצה רשומה (שיבוץ)</th><th>מורה</th><th>קבוצה בסדין ציונים</th><th>חיווי בקרה</th><th>בדיקת קבוצת יעד</th></tr></thead>
-        <tbody>${body || '<tr><td colspan="6" class="text-center text-slate-500 py-8">לא נמצאו שיבוצים או ציונים לחניך זה</td></tr>'}</tbody></table></div>`);
+      const issues = r.issues.filter(i => i.kind !== 'sadin' && !(i.kind === 'dup' && r.routine && !showRoutine));
+      const status = issues.some(i => i.kind === 'missing' || i.kind === 'nomajor') ? 'missing' : issues.length ? 'warn' : groups.length ? 'ok' : '';
+      if (!status) return;
+      const dup = issues.find(i => i.kind === 'dup');
+      const main = groups.find(g => !g.reinforcement) || groups[0];
+      const sub = status === 'missing' ? 'אין קבוצה' : dup ? `כפול (${dup.count} קבוצות)` : (main && main.teacher) || 'ללא מורה';
+      tiles.push({ key: r.key, label: r.label, subject: r.key === 'major:none' ? GroupAnalyzer.MAJOR_KEY : r.label, status, sub, issues });
+    });
+    const counts = { ok: 0, warn: 0, missing: 0 };
+    tiles.forEach(x => { counts[x.status]++; });
+    const problems = counts.warn + counts.missing;
+    const verdict = !tiles.length ? null : !problems ? { cls: 'ok', text: 'הכול תקין' } :
+      !counts.missing && counts.ok >= counts.warn ? { cls: 'mostly', text: 'רוב השיבוצים תקינים' } : { cls: 'attention', text: 'דורש טיפול' };
+    return { t: m.t, tiles, counts, verdict, attention: tiles.filter(x => x.status !== 'ok') };
+  },
+
+  /** חלונית צפה "מפת שיבוצים" (בסגנון חלונית יצוא ה-30%): כותרת, שלושה מונים, אריחי מקצועות ורשימת "דורש תשומת לב" */
+  renderStudentMapPopover(focus = false) {
+    const box = $('groups-student-map');
+    if (!box) return;
+    const tz = this.state.studentMapTz, t = tz ? Store.trainees.get(tz) : null;
+    if (!t) { this.state.studentMapTz = null; box.innerHTML = ''; box.classList.add('hidden'); return; }
+    const ICON = { ok: '✓', warn: '!', missing: '−' };
+    const STATUS_TEXT = { ok: 'משובץ כראוי', warn: 'לבדיקה', missing: 'ללא שיבוץ' };
+    const ISSUE_TEXT = { missing: 'לא נמצא שיבוץ', nomajor: 'לא נמצאה קבוצת מגמה', dup: i => `רשום ב-${i.count} קבוצות`, grade: 'חריג שכבה', outlier: 'בודד מכיתתו' };
+    const issueText = i => typeof ISSUE_TEXT[i.kind] === 'function' ? ISSUE_TEXT[i.kind](i) : (ISSUE_TEXT[i.kind] || i.text);
+    const unknown = !SignalEngine.prerequisitesFor(t.gradeKey).hasGroups;
+    const m = unknown ? null : GroupsView.studentMapModel.call(this, tz);
+    let body;
+    if (unknown) body = `<p class="sm-note">${UI.signalBadge('placement.unknown')}</p>`;
+    else if (!m || !m.tiles.length) body = '<p class="sm-note">לא נמצאו שיבוצים לחניך זה</p>';
+    else {
+      const attrs = x => `data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(x.subject)}"`;
+      const tile = x => `<button type="button" class="sm-tile sm-tile-${x.status}" ${attrs(x)} title="${E(`השוואת קבוצות במקצוע ${x.label}`)}" aria-label="${E(`${x.label}: ${STATUS_TEXT[x.status]} · ${x.sub}`)}">
+          <span class="sm-tile-top"><span class="sm-tile-name">${E(x.label)}</span><span class="sm-icon sm-icon-${x.status}" aria-hidden="true">${ICON[x.status]}</span></span>
+          <span class="sm-tile-sub">${E(x.sub)}</span></button>`;
+      const issue = x => `<li><button type="button" class="sm-issue" ${attrs(x)} title="${E(`השוואת קבוצות במקצוע ${x.label}`)}">
+          <span class="sm-icon sm-icon-${x.status}" aria-hidden="true">${ICON[x.status]}</span><strong>${E(x.label)}</strong><span>${E(x.issues.filter(i => i.kind !== 'sadin').map(issueText).join(' · '))}</span></button></li>`;
+      const c = m.counts;
+      body = `<div class="sm-counts" role="group" aria-label="סיכום שיבוצים">
+          <div class="sm-count sm-count-ok"><strong>${c.ok}</strong><span>תקינים</span></div>
+          <div class="sm-count sm-count-warn"><strong>${c.warn}</strong><span>לבדיקה</span></div>
+          <div class="sm-count sm-count-missing"><strong>${c.missing}</strong><span>ללא שיבוץ</span></div></div>
+        <h3 class="sm-section">מפת שיבוצים</h3>
+        <div class="sm-grid">${m.tiles.map(tile).join('')}</div>
+        ${m.attention.length ? `<section class="sm-attention" aria-label="דורש תשומת לב"><h3 class="sm-section">דורש תשומת לב</h3><ul>${m.attention.map(issue).join('')}</ul></section>` : ''}`;
+    }
+    const verdict = m && m.verdict ? `<span class="sm-verdict sm-verdict-${m.verdict.cls}">${m.verdict.text}</span>` : '';
+    box.innerHTML = `<div class="card student-map-popover" role="dialog" aria-label="${E(`מפת שיבוצים · ${t.name}`)}" tabindex="-1" data-tz="${E(t.tz)}">
+      <header class="sm-head">
+        <div class="sm-title"><h2>${E(t.name)}</h2><p>שכבה ${E(Util.gl(t.gradeKey))} · כיתת אם ${E(Config.classLabel(t.classKey))}</p></div>
+        <div class="sm-head-side">${verdict}<button type="button" class="sm-close" data-act="studentMapClose" aria-label="סגירת מפת שיבוצים" title="סגירה">✕</button></div>
+      </header>
+      ${body}
+      <footer class="sm-foot">
+        <button type="button" class="sm-link" data-act="studentMapProfile" data-tz="${E(t.tz)}">מעבר לכרטיס 360°</button>
+        <button type="button" class="sm-link" data-act="studentMapClose">סגירה</button>
+      </footer></div>`;
+    box.classList.remove('hidden');
+    if (focus) { const pop = box.firstElementChild; if (pop) pop.focus({ preventScroll: true }); }
   },
 
   groupsRerender() {

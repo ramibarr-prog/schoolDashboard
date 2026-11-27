@@ -53,6 +53,8 @@ const App = {
     sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false },
     profileTz: null,
     selectedSearchTz: null,
+    /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
+    studentMapTz: null,
     settingsView: 'roster'
   },
   evals: new Map(),
@@ -356,6 +358,8 @@ const App = {
 
   showTab(name) {
     if (!TABS.includes(name)) return;
+    /* חלונית "מפת שיבוצים" שייכת למסך השיבוצים בלבד */
+    if (name !== 'groups' && this.state.studentMapTz) GroupsView.closeStudentMap.call(this, false);
     /* יציאה מהכרטיס בדרך אחרת מהחזרה (למשל מהתפריט הצדדי) מבטלת את הקשר המקור */
     if (name !== 'profile' && this.state.navOrigin) { this.state.navOrigin = null; this._histPushed = false; this.dirty.add('profile'); }
     const changed = this.state.tab !== name;
@@ -401,7 +405,7 @@ const App = {
   },
 
   syncGroupLayout() {
-    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groupsViewMode === 'explorer' && Store.hasData() && Store.loaded.groups && !this.lockedTrainee());
+    document.body.classList.toggle('group-explorer', this.state.tab === 'groups' && this.state.groupsViewMode === 'explorer' && Store.hasData() && Store.loaded.groups);
   },
 
   /* ------------------------------------------------------------------
@@ -1086,7 +1090,8 @@ const App = {
   sortAnomalyRows(...args) { return GroupsView.sortAnomalyRows.apply(this, args); },
   syncGroupsHeadHeight(...args) { return GroupsView.syncGroupsHeadHeight.apply(this, args); },
   openTargetGroupInspector(...args) { return GroupsView.openTargetGroupInspector.apply(this, args); },
-  renderStudentGroupsMap(...args) { return GroupsView.renderStudentGroupsMap.apply(this, args); },
+  renderStudentMapPopover(...args) { return GroupsView.renderStudentMapPopover.apply(this, args); },
+  studentMapModel(...args) { return GroupsView.studentMapModel.apply(this, args); },
   groupsRerender(...args) { return GroupsView.groupsRerender.apply(this, args); },
   scrollActiveGroup(...args) { return GroupsView.scrollActiveGroup.apply(this, args); },
   renderGroupsExplorer(...args) { return GroupsView.renderGroupsExplorer.apply(this, args); },
@@ -1225,6 +1230,10 @@ const App = {
       if (this.state.bagrut.export30Open && !(e.target.closest && e.target.closest('.bagrut-export-control'))) {
         BagrutView.exportTargets30Close.call(this);
       }
+      /* לחיצה מחוץ לחלונית "מפת שיבוצים" סוגרת אותה; לחיצה בתוך מודאל (השוואת קבוצות) או על כפתור הפתיחה אינה סוגרת */
+      if (this.state.studentMapTz && !(e.target.closest && e.target.closest('.student-map-popover, #modal-root, #mappingModal, [data-act="studentMap"]'))) {
+        GroupsView.closeStudentMap.call(this, false);
+      }
       if (e.target.closest('[data-go-overrides]')) {
         e.stopPropagation();
         this.state.settingsView = 'overrides';
@@ -1341,6 +1350,12 @@ const App = {
       }
       const mapping = $('mappingModal');
       const modalOpen = !!($('modal-root') && $('modal-root').children.length) || !!(mapping && !mapping.classList.contains('hidden'));
+      /* Esc סוגר קודם מודאל פתוח (למשל השוואת קבוצות מעל המפה), ורק אחריו את חלונית "מפת שיבוצים" */
+      if (this.state.studentMapTz && !modalOpen) {
+        GroupsView.closeStudentMap.call(this, true);
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
       const active = document.activeElement;
       const typing = !!active && (/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) || active.isContentEditable);
       this.closeModal(); this.hideMxPop(); this.hideSadinPop();
@@ -1629,7 +1644,8 @@ const App = {
     toggleRoutine() { return GroupsView.toggleRoutine.call(this); },
     inspectOpenGroup(el) { return GroupsView.inspectOpenGroup.call(this, el); },
     studentMap(el) { return GroupsView.studentMap.call(this, el); },
-    mapBack() { return GroupsView.mapBack.call(this); },
+    studentMapClose() { return GroupsView.closeStudentMap.call(this, true); },
+    studentMapProfile(el) { GroupsView.closeStudentMap.call(this, false); this.openProfile(el.dataset.tz, el); },
     rosterSort(el) { return GroupsView.rosterSort.call(this, el); },
     gStrip(el) { return GroupsView.gStrip.call(this, el); },
     gPick(el) { return GroupsView.gPick.call(this, el); },

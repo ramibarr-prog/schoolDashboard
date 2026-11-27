@@ -125,7 +125,7 @@ window.fetch = (input, options) => {
     <div id="bagrut-kpis"></div><select id="bagrutSubjectDrillSelect"></select><div id="bagrut-whatif"></div><div id="bagrut-cohort"></div><div id="bagrut-table"></div>
     <div id="overview-body"></div>
     <select id="sadinSubjectSelect"></select><select id="sadinTeacherSelect"></select><select id="sadinFilterSelect"></select><div id="sadin-table"></div>
-    <div id="groups-head"><div id="groups-mode"></div></div><div id="groups-kpis"></div><div id="groups-table"></div><div id="groups-strip"></div><div id="groups-master"></div><div id="groups-detail"></div><select id="groupSubjectSelect"></select><select id="groupTeacherSelect"></select>
+    <div id="groups-head"><div id="groups-mode"></div></div><div id="groups-kpis"></div><div id="groups-student-map" class="hidden"></div><div id="groups-table"></div><div id="groups-strip"></div><div id="groups-master"></div><div id="groups-detail"></div><select id="groupSubjectSelect"></select><select id="groupTeacherSelect"></select>
     <select id="profSelect"></select><div id="profName"></div><div id="profMeta"></div><div id="profBadges"></div><div id="profKpis"></div><div id="profBody"></div>
     <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button><button id="profilePin"></button>`;
   const mount = () => {
@@ -870,6 +870,99 @@ window.fetch = (input, options) => {
           check(card && card.textContent.includes(`חוסר ${om.byCategory.missing}`), `T(${n}): placement card shows the same missing count`);
         });
         same(pick(GroupAnalyzer.placementAnomalies([Store.trainees.get(T(109))]).rows), [[T(109), histName(), 8, 10]], 'The single pupil sees 8 of 10');
+      });
+
+      await part('Placement map popover: floating, quiet, keeps the anomalies screen and the global search untouched', async () => {
+        build(range(101, 108).map(n => [n, HIST(1)]));
+        const listeners = [], app = newApp({ grade: 'יב' }, listeners);
+        app.state.tab = 'groups';
+        $id('stage').insertAdjacentHTML('beforeend', '<div id="localControls"><button id="fClear">נקה</button></div><div id="bagrut-scope"></div><div id="sadinPop"></div><div id="mxPop"></div><input id="globalSearch" value=""><div id="searchSuggestPopup" class="hidden"></div>');
+        app.bindRulesEvents = () => {};
+        app.bindSadinColResize = () => {};
+        const windowListeners = [], addWindowListener = window.addEventListener;
+        window.addEventListener = function (...args) { windowListeners.push(args); return addWindowListener.apply(this, args); };
+        try { app.bindEvents(); } finally { window.addEventListener = addWindowListener; }
+        listeners.forEach(({ type, fn, options }) => $id('stage').addEventListener(type, fn, options));
+        const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        const pop = () => $id('groups-student-map').querySelector('.student-map-popover');
+        const trigger = tz => $id('groups-table').querySelector(`[data-act="studentMap"][data-tz="${tz}"]`);
+        const modalOpen = () => !!($id('modal-root') && $id('modal-root').children.length);
+        try {
+          app.renderGroupsPanel();
+          const sample = trigger(T(109));
+          check(sample && sample.textContent.trim() === 'מפת שיבוצים' && !$id('groups-table').textContent.includes('מפת חניך'), 'The table action is named "מפת שיבוצים"');
+          click(sample);
+          check(!!pop() && !$id('groups-student-map').classList.contains('hidden'), 'The placement map opens as a floating popover');
+          check(!$id('groups-table').classList.contains('hidden') && tzsIn($id('groups-table')).includes(T(109)) && tzsIn($id('groups-table')).includes(T(110)), 'The placement anomalies table stays visible and unfiltered behind the popover');
+          check(app.state.selectedSearchTz === null && $id('globalSearch').value === '' && app.state.filters.q === '', 'Opening the map neither locks the student nor changes the global search');
+          check(pop().querySelectorAll('.sm-count').length === 3 && pop().textContent.includes('תקינים') && pop().textContent.includes('לבדיקה') && pop().textContent.includes('ללא שיבוץ'), 'The popover shows exactly three counters');
+          check(!pop().querySelector('table') && !/ממוצע|סדין|זכאות|בגרות/.test(pop().textContent), 'The popover shows no grades, sadin data, eligibility data or tables');
+          const missing = pop().querySelector('.sm-tile-missing');
+          check(missing && missing.dataset.subject === histName() && missing.querySelector('.sm-icon').textContent === '−' && missing.querySelector('.sm-tile-sub').textContent === 'אין קבוצה', 'A missing subject is a quiet tile with a "-" icon and "אין קבוצה"');
+          check(pop().querySelector('.sm-attention') && pop().querySelector('.sm-attention').textContent.includes('לא נמצא שיבוץ') && pop().querySelector('.sm-verdict-attention'), 'The attention list and the "דורש טיפול" status appear when a subject is missing');
+          check(pop().querySelectorAll('.sm-tile [data-act]').length === 0 && pop().querySelectorAll('button[data-act="inspectGroups"]').length === pop().querySelectorAll('.sm-tile, .sm-issue').length, 'There are no repeated compare buttons: only the tiles and attention rows open the comparison');
+
+          app.acts.studentMap.call(app, { dataset: { tz: T(101) } });
+          check(pop().dataset.tz === T(101) && pop().querySelector('.sm-tile-ok .sm-icon').textContent === '✓' && !pop().querySelector('.sm-attention') && pop().querySelector('.sm-verdict-ok'), 'A fully placed student shows a ✓ tile, no attention list and "הכול תקין"');
+
+          click(trigger(T(109)));
+          click(pop().querySelector('.sm-tile-missing'));
+          check(modalOpen() && $id('modal-root').textContent.includes('בדיקת קבוצות יעד במקצוע') && !!pop(), 'Clicking a tile opens the group comparison above the map without closing it');
+          $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          check(!modalOpen() && !!pop(), 'Escape closes the comparison modal first and keeps the map');
+          $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          check(!pop() && app.state.studentMapTz === null && $id('groups-student-map').classList.contains('hidden'), 'A second Escape closes the floating map');
+
+          click(trigger(T(109)));
+          click($id('groups-table'));
+          check(!pop(), 'Clicking outside the popover closes it');
+          click(trigger(T(109)));
+          click(pop().querySelector('.sm-close'));
+          check(!pop(), 'The ✕ button closes the popover');
+          click(trigger(T(109)));
+          click(pop().querySelector('.sm-foot [data-act="studentMapClose"]'));
+          check(!pop(), 'The footer close button closes the popover');
+
+          app.state.selectedSearchTz = T(109);
+          app.dirty.add('groups');
+          app.renderGroupsPanel();
+          check(!$id('groups-table').classList.contains('hidden') && same(tzsIn($id('groups-table')), [T(109)], 'A locked student keeps the anomalies screen, filtered to that student') !== false, 'A locked student keeps the anomalies screen visible');
+          const compact = $id('groups-mode-extra').querySelector('[data-act="studentMap"]');
+          check(compact && compact.dataset.tz === T(109), 'A compact "מפת שיבוצים" button is offered for the locked student');
+          click(compact);
+          check(!!pop() && app.state.selectedSearchTz === T(109) && !$id('groups-table').classList.contains('hidden'), 'The compact button opens the popover while the screen stays in place');
+          app.showTab('overview');
+          check(!pop() && app.state.studentMapTz === null, 'Leaving the screen closes the popover');
+          check(errorsOf(app).length === 0, 'No render errors');
+        } finally {
+          listeners.forEach(({ type, fn, options }) => $id('stage').removeEventListener(type, fn, options));
+          windowListeners.forEach(args => window.removeEventListener(...args));
+        }
+      });
+
+      await part('Placement map accuracy: reinforcement is not a duplicate and routine duplicates stay quiet', async () => {
+        resetConfig();
+        const grp = (n, gid, cls = 'יב1') => ({ tz: T(n), grade: 'יב', cls, gid });
+        world({ roster: [stu(331, 'יב', 'יב1'), stu(332, 'יב', 'יב1'), stu(333, 'יב', 'יב2')], groups: groupRows([
+          grp(331, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'), grp(331, 'תגבור מתמטיקה 4 יח"ל יב1 מורה בדיקה [7932]'),
+          grp(332, 'מתמטיקה 4 יח"ל יב1 מורה א [7933]'), grp(332, 'מתמטיקה 4 יח"ל יב1 מורה ב [7934]'),
+          grp(333, 'חינוך יב2 מורה א [7935]', 'יב2'), grp(333, 'חינוך יב2 מורה ב [7936]', 'יב2')
+        ]) });
+        const app = newApp({ grade: 'יב' });
+        const mathOf = n => GroupAnalyzer.studentPlacementMap(T(n)).rows.find(r => r.kind === 'core' && r.enrolled.length);
+        const reinforced = mathOf(331);
+        check(reinforced && reinforced.enrolled.length === 2 && reinforced.enrolled.some(g => g.reinforcement) && !reinforced.issues.some(i => i.kind === 'dup'), 'A regular group plus a reinforcement group is not counted as a duplicate');
+        check(app.studentMapModel(T(331)).tiles.find(x => x.key === reinforced.key).status === 'ok', 'The map tile for regular + reinforcement is ok');
+        const real = mathOf(332);
+        check(real.issues.some(i => i.kind === 'dup' && i.count === 2), 'Two regular groups in one subject are still a duplicate');
+        const dupTile = app.studentMapModel(T(332)).tiles.find(x => x.key === real.key);
+        check(dupTile.status === 'warn' && dupTile.sub === 'כפול (2 קבוצות)', 'A real duplicate is a "לבדיקה" tile reading "כפול (2 קבוצות)"');
+        const routineTile = () => app.studentMapModel(T(333)).tiles.find(x => x.label.includes('חינוך'));
+        check(routineTile() && routineTile().status === 'ok', 'A duplicate in a routine subject is not a placement anomaly while routine subjects are hidden');
+        app.state.showRoutineDuplicates = true;
+        check(routineTile().status === 'warn' && routineTile().sub === 'כפול (2 קבוצות)', 'The same routine duplicate is flagged once routine subjects are shown');
+        app.state.showRoutineDuplicates = false;
+        check(app.studentMapModel(T(333)).counts.warn === 0 && app.studentMapModel(T(333)).verdict.text === 'הכול תקין', 'The counters and status ignore hidden routine duplicates');
       });
     });
 
