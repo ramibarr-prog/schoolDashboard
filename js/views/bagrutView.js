@@ -428,6 +428,101 @@
     return { current, target, note: notes.join(' · '), ...(includeDirectTargets ? { directTarget, compensationTarget } : {}) };
   }
 
+  function collectExportTargets30(app) {
+    if (app.state.filters.grade !== 'יב') {
+      return { error: 'כדי לייצא ציוני 30% יש לבחור בשכבת י״ב.', kind: 'warn', targets: [], subjects: [] };
+    }
+    if (!SignalEngine.prerequisitesFor('יב').hasBagrut) {
+      return { error: 'לא ניתן לייצא: חסר קובץ בגרות לשכבת י"ב', kind: 'error', targets: [], subjects: [] };
+    }
+    const roster = app.filtered().filter(t => t.gradeKey === 'יב');
+    const st = app.state.bagrut;
+    const sim100 = !!st.sim100 && st.drill === 'all' && !st.targets;
+    const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals, ...(sim100 ? { sim100: true } : {}) };
+    const signals = signalsFor(roster.map(t => ({ t })), options);
+    const rows = roster.map(t => ({ t, ev: signals.get(t.tz).ev }));
+    const overviewSource = st.overviewEntry && !st.targets && !sim100;
+    const source = overviewSource ? roster.map(t => ({ t, ev: app.getEval(t.tz) })) : rows;
+    const selected = app.filterByChip(source, st.targets ? 'all' : st.chip, overviewSource ? undefined : signals);
+    const targets = BagrutView.target30Rows.call(app, selected);
+    const bySubject = new Map();
+    targets.forEach(r => {
+      let entry = bySubject.get(r.subject);
+      if (!entry) { entry = { name: r.subject, rows: 0, students: new Set() }; bySubject.set(r.subject, entry); }
+      entry.rows++;
+      entry.students.add(r.t.tz);
+    });
+    const order = (Config.rulesForGrade('יב').coreSubjects || []).map(s => s.name);
+    const subjects = [...bySubject.values()]
+      .map(s => ({ name: s.name, rows: s.rows, students: s.students.size }))
+      .sort((a, b) => {
+        const ia = order.indexOf(a.name), ib = order.indexOf(b.name);
+        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib) || natural(a.name, b.name);
+      });
+    return { error: '', kind: '', targets, subjects };
+  }
+
+  function export30SelectedSet(st, subjects) {
+    const available = new Set(subjects.map(s => s.name));
+    if (st.export30Draft instanceof Set) {
+      return new Set([...st.export30Draft].filter(name => available.has(name)));
+    }
+    if (Array.isArray(st.export30Subjects)) {
+      const kept = st.export30Subjects.filter(name => available.has(name));
+      if (kept.length || !st.export30Subjects.length) return new Set(kept);
+    }
+    return new Set(subjects.map(s => s.name));
+  }
+
+  function renderExport30Popover(data, selected) {
+    const { subjects } = data;
+    const rows = subjects.map(s => `<label class="bagrut-export-item">
+      <input type="checkbox" data-chg="exportTargets30Subject" value="${E(s.name)}" ${selected.has(s.name) ? 'checked' : ''}>
+      <span class="bagrut-export-subject">${E(s.name)}</span>
+      <span class="bagrut-export-count">${s.rows} ${s.rows === 1 ? 'שורה' : 'שורות'}</span></label>`).join('');
+    return `<div id="bagrut-export-popover" class="card bagrut-export-popover" role="dialog" aria-labelledby="bagrut-export-heading" tabindex="-1">
+      <h2 id="bagrut-export-heading">בחירת מקצועות ליצוא 30%</h2>
+      ${subjects.length ? `<div class="bagrut-export-quick">
+        <button type="button" class="bagrut-export-link" data-act="exportTargets30SelectAll">בחר הכל</button>
+        <span aria-hidden="true">·</span>
+        <button type="button" class="bagrut-export-link" data-act="exportTargets30Clear">נקה בחירה</button></div>
+        <div class="bagrut-export-list" role="group" aria-label="מקצועות ליצוא">${rows}</div>` : ''}
+      <div class="bagrut-export-preview" role="status" aria-live="polite"></div>
+      <div class="bagrut-export-actions">
+        <button type="button" class="btn btn-primary btn-sm" data-act="exportTargets30Confirm">יצוא CSV</button>
+        <button type="button" class="bagrut-export-cancel" data-act="exportTargets30Close">ביטול</button>
+      </div></div>`;
+  }
+
+  function updateExport30Popover(app) {
+    const pop = $('bagrut-export-popover');
+    if (!pop) return;
+    const data = collectExportTargets30(app);
+    const st = app.state.bagrut;
+    const selected = export30SelectedSet(st, data.subjects);
+    st.export30Draft = selected;
+    pop.style.transform = '';
+    const rect = pop.getBoundingClientRect();
+    if (rect.width > 0) {
+      const shift = rect.left < 8 ? 8 - rect.left : rect.right > window.innerWidth - 8 ? window.innerWidth - 8 - rect.right : 0;
+      if (shift) pop.style.transform = `translateX(${shift}px)`;
+    }
+    pop.querySelectorAll('input[data-chg="exportTargets30Subject"]').forEach(cb => {
+      cb.checked = selected.has(cb.value);
+    });
+    const filtered = data.targets.filter(r => selected.has(r.subject));
+    const studentCount = new Set(filtered.map(r => r.t.tz)).size;
+    const preview = pop.querySelector('.bagrut-export-preview');
+    if (preview) {
+      preview.textContent = data.error ? data.error
+        : !data.subjects.length ? 'אין שורות 30% ליצוא בסינון הנוכחי.'
+        : !selected.size ? 'בחר לפחות מקצוע אחד ליצוא'
+        : `ייוצאו ${filtered.length} שורות (${studentCount} חניכים) ב-${selected.size} מקצועות`;
+    }
+    const confirmBtn = pop.querySelector('[data-act="exportTargets30Confirm"]');
+    if (confirmBtn) confirmBtn.disabled = !!data.error || !selected.size || !filtered.length;
+  }
+
   window.BagrutView = {
   renderExceptionBadges(t, ev, opts = {}) {
     if (!t) return '';
@@ -610,29 +705,88 @@
     return result;
   },
 
-  exportTargets30() {
-    if (this.state.filters.grade !== 'יב') {
-      this.toast('כדי לייצא ציוני 30% יש לבחור בשכבת י״ב.', 'warn');
-      return;
-    }
-    if (!SignalEngine.prerequisitesFor('יב').hasBagrut) {
-      this.toast('לא ניתן לייצא: חסר קובץ בגרות לשכבת י"ב', 'error');
-      return;
-    }
-    const roster = this.filtered().filter(t => t.gradeKey === 'יב');
+  exportTargets30Toggle() {
     const st = this.state.bagrut;
-    const sim100 = !!st.sim100 && st.drill === 'all' && !st.targets;
-    const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals, ...(sim100 ? { sim100: true } : {}) };
-    const signals = signalsFor(roster.map(t => ({ t })), options);
-    const rows = roster.map(t => ({ t, ev: signals.get(t.tz).ev }));
-    const overviewSource = st.overviewEntry && !st.targets && !sim100;
-    const source = overviewSource ? roster.map(t => ({ t, ev: this.getEval(t.tz) })) : rows;
-    const selected = this.filterByChip(source, st.targets ? 'all' : st.chip, overviewSource ? undefined : signals);
-    const targets = BagrutView.target30Rows.call(this, selected);
+    if (st.export30Open) return BagrutView.exportTargets30Close.call(this, true);
+    const data = collectExportTargets30(this);
+    if (data.error) {
+      this.toast(data.error, data.kind);
+      return;
+    }
+    const control = document.querySelector('#bagrutWorkControls .bagrut-export-control');
+    if (!control) return BagrutView.exportTargets30.call(this);
+    st.export30Open = true;
+    st.export30Draft = export30SelectedSet(st, data.subjects);
+    const prev = $('bagrut-export-popover');
+    if (prev) prev.remove();
+    control.insertAdjacentHTML('beforeend', renderExport30Popover(data, st.export30Draft));
+    const trigger = control.querySelector('[data-act="exportTargets30"]');
+    if (trigger) trigger.setAttribute('aria-expanded', 'true');
+    updateExport30Popover(this);
+    const pop = $('bagrut-export-popover');
+    if (pop) pop.focus();
+  },
+
+  exportTargets30Close(restoreFocus = false) {
+    const st = this.state.bagrut;
+    st.export30Open = false;
+    st.export30Draft = null;
+    const pop = $('bagrut-export-popover');
+    if (pop) pop.remove();
+    const trigger = document.querySelector('#bagrutWorkControls [data-act="exportTargets30"]');
+    if (trigger) {
+      trigger.setAttribute('aria-expanded', 'false');
+      if (restoreFocus) trigger.focus();
+    }
+  },
+
+  exportTargets30Subject(el) {
+    const st = this.state.bagrut;
+    if (!st.export30Open) return;
+    if (!(st.export30Draft instanceof Set)) st.export30Draft = new Set();
+    if (el.checked) st.export30Draft.add(el.value);
+    else st.export30Draft.delete(el.value);
+    st.export30Subjects = [...st.export30Draft];
+    updateExport30Popover(this);
+  },
+
+  exportTargets30SelectAll() {
+    const st = this.state.bagrut;
+    if (!st.export30Open) return;
+    const data = collectExportTargets30(this);
+    st.export30Draft = new Set(data.subjects.map(s => s.name));
+    st.export30Subjects = [...st.export30Draft];
+    updateExport30Popover(this);
+  },
+
+  exportTargets30Clear() {
+    const st = this.state.bagrut;
+    if (!st.export30Open) return;
+    st.export30Draft = new Set();
+    st.export30Subjects = [];
+    updateExport30Popover(this);
+  },
+
+  exportTargets30() {
+    const data = collectExportTargets30(this);
+    if (data.error) {
+      this.toast(data.error, data.kind);
+      return;
+    }
+    const st = this.state.bagrut;
+    const selectedSet = st.export30Open && st.export30Draft instanceof Set
+      ? export30SelectedSet(st, data.subjects)
+      : new Set(data.subjects.map(s => s.name));
+    if (!selectedSet.size) {
+      this.toast('יש לבחור לפחות מקצוע אחד ליצוא', 'warn');
+      return;
+    }
+    const targets = data.targets.filter(r => selectedSet.has(r.subject));
     if (!targets.length) {
       this.toast('אין יעדי 30% לייצוא בסינון הנוכחי', 'warn');
       return;
     }
+    st.export30Subjects = [...selectedSet];
     const quote = value => `"${String(value).replace(/"/g, '""')}"`;
     const safe = value => {
       const text = String(value == null ? '' : value);
@@ -643,11 +797,22 @@
     const lines = [header.map(safe).join(','), ...targets.map(r =>
       [id(r.t.tz), ...[r.t.name, Config.classLabel(r.t.classKey), r.subject, r.current, r.target, r.note].map(safe)].join(','))];
     const blob = new Blob(['\ufeff', lines.join('\r\n'), '\r\n'], { type: 'text/csv;charset=utf-8' });
+    const chosen = [...selectedSet];
+    const date = new Date().toISOString().slice(0, 10);
+    const slug = chosen.length === 1
+      ? chosen[0].replace(/["'״׳\\/:*?<>|]+/g, '').trim().replace(/\s+/g, '-')
+      : '';
+    const filename = slug
+      ? `bagrut-target-30-${slug}-${date}.csv`
+      : chosen.length < data.subjects.length
+        ? `bagrut-target-30-${chosen.length}-subjects-${date}.csv`
+        : `bagrut-target-30-${date}.csv`;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `bagrut-target-30-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    if (st.export30Open) BagrutView.exportTargets30Close.call(this, true);
   },
 
   bagrutScope(el) {
@@ -939,9 +1104,8 @@
         return subjectRow(`major:${c.id}`, `${c.name} · מגמה`, exams, '-', status, notes);
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
+        x.gate !== 3 &&
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
-      const science = ev.internals.find(item => item.id === 'science');
-      const scienceNeedsHint = science && ['נכשל', 'חסר'].includes(internalStatus(science, ev, noData));
       const impossibleSubjects = actualEv.subjects.filter(s => s.reverse && s.reverse.required30 > 100 &&
         s.unresolved.concat(s.pending).every(c => c.internal) && target30(s, actualEv, rules));
       const singleImpossible = impossibleSubjects.length === 1 ? impossibleSubjects[0] : null;
@@ -991,7 +1155,7 @@
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
         <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width};min-width:100%"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
-        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint || offsetExplanation ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}${scienceNeedsHint && x.gate === 3 && x.text.includes(science.name) ? ` ${scienceHint}` : ''}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}${offsetExplanation ? `<li>${E(offsetExplanation)}</li>` : ''}</ul>` : ''}`}
+        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint || offsetExplanation ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}${offsetExplanation ? `<li>${E(offsetExplanation)}</li>` : ''}</ul>` : ''}`}
         ${renderInternalDetails(ev, noData)}
         ${!b.noData && !b.isTrack12 && review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}
         ${simulation}`;
@@ -1171,9 +1335,24 @@
       }
       workControls.classList.toggle('hidden', this.state.tab !== 'bagrut');
       const disabled = this.state.filters.grade !== 'יב' ? ' disabled' : '';
-      workControls.innerHTML = `<button type="button" class="btn btn-ghost btn-sm" data-act="exportTargets30"${disabled}>ייצוא ציוני 30% מינימליים</button>
+      if (this.state.filters.grade !== 'יב' || this.state.tab !== 'bagrut') {
+        st.export30Open = false;
+        st.export30Draft = null;
+      }
+      workControls.innerHTML = `<div class="bagrut-export-control"><button type="button" class="btn btn-ghost btn-sm bagrut-export-trigger" data-act="exportTargets30" aria-haspopup="dialog" aria-controls="bagrut-export-popover" aria-expanded="${!!st.export30Open}"${disabled}>ייצוא ציוני 30% מינימליים <span aria-hidden="true">▾</span></button></div>
         <label><input type="checkbox" data-chg="bagrutWorkOption" data-key="ignoreInternals" ${st.ignoreInternals ? 'checked' : ''}${disabled}> התעלם ממקצועות פנימיים</label>
         ${st.drill === 'all' && !st.targets ? `<label><input type="checkbox" data-chg="bagrutWorkOption" data-key="sim100" ${st.sim100 ? 'checked' : ''}${disabled}> הוסף ציון 100 ב-30%</label>` : ''}`;
+      if (st.export30Open) {
+        const data = collectExportTargets30(this);
+        if (data.error) {
+          st.export30Open = false;
+          st.export30Draft = null;
+        } else {
+          st.export30Draft = export30SelectedSet(st, data.subjects);
+          workControls.querySelector('.bagrut-export-control').insertAdjacentHTML('beforeend', renderExport30Popover(data, st.export30Draft));
+          updateExport30Popover(this);
+        }
+      }
     }
     if (st.drill === 'all' && !st.targets && !(st.overviewEntry && this.state.filters.grade !== 'יב')) {
       this.renderFreshnessBar('bagrut');

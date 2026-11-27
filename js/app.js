@@ -1222,6 +1222,9 @@ const App = {
       if (this.state.sadin.weakRiskDraft && !(e.target.closest && e.target.closest('.weak-risk-control'))) {
         SadinView.weaknessRiskClose.call(this);
       }
+      if (this.state.bagrut.export30Open && !(e.target.closest && e.target.closest('.bagrut-export-control'))) {
+        BagrutView.exportTargets30Close.call(this);
+      }
       if (e.target.closest('[data-go-overrides]')) {
         e.stopPropagation();
         this.state.settingsView = 'overrides';
@@ -1328,6 +1331,11 @@ const App = {
       if (e.key !== 'Escape') return;
       if (this.state.sadin.weakRiskDraft) {
         SadinView.weaknessRiskClose.call(this, true);
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if (this.state.bagrut.export30Open) {
+        BagrutView.exportTargets30Close.call(this, true);
         e.preventDefault(); e.stopPropagation();
         return;
       }
@@ -1574,7 +1582,11 @@ const App = {
     bagrutChip(el) { return BagrutView.bagrutChip.call(this, el); },
     bagrutTargets() { return BagrutView.bagrutTargets.call(this); },
     bagrutTargetSort(el) { return BagrutView.bagrutTargetSort.call(this, el); },
-    exportTargets30() { return BagrutView.exportTargets30.call(this); },
+    exportTargets30() { return BagrutView.exportTargets30Toggle.call(this); },
+    exportTargets30SelectAll() { return BagrutView.exportTargets30SelectAll.call(this); },
+    exportTargets30Clear() { return BagrutView.exportTargets30Clear.call(this); },
+    exportTargets30Confirm() { return BagrutView.exportTargets30.call(this); },
+    exportTargets30Close() { return BagrutView.exportTargets30Close.call(this, true); },
     bagrutScope(el) { return BagrutView.bagrutScope.call(this, el); },
     excModal(el) { this.openExceptionModal(el.dataset.tz); },
     excModalSave(el) { this.saveProfileException(el); },
@@ -1663,6 +1675,7 @@ const App = {
       this.state.bagrut[el.dataset.key] = el.checked;
       this.dirty.add('bagrut'); this.renderTab('bagrut');
     },
+    exportTargets30Subject(el) { return BagrutView.exportTargets30Subject.call(this, el); },
     weaknessRiskRules(el) { return SadinView.weaknessRiskChange.call(this, el); },
     submittedQuestionnaire(el) { return SadinView.submittedQuestionnaireChange.call(this, el); },
     async backupImport(el) {

@@ -2185,12 +2185,15 @@ window.fetch = (input, options) => {
         choose(tz);
         const status = index === 0 ? 'חסר' : 'נכשל';
         const heading = [...detail().querySelectorAll('h3')].find(h => h.textContent === 'מה עוד חוסם או חסר');
-        const issue = [...heading.nextElementSibling.querySelectorAll('li')].find(li => li.textContent.includes('מבוא למדעים'));
-        check(panel().previousElementSibling === heading.nextElementSibling &&
+        const workRow = $id('bagrut-table').querySelector(`tr[data-act="bagrutWorkSelect"][data-tz="${tz}"]`);
+        check(!heading &&
+          panel().previousElementSibling.classList.contains('bagrut-work-subject-scroll') &&
+          workRow && workRow.textContent.includes('1 פנימיים') &&
           panel().querySelector('summary').textContent.includes('חסר / נכשל (3/4)') &&
           science().querySelector('.bagrut-subject-status').textContent === status &&
-          science().textContent.includes(hint) && issue.textContent.includes(hint),
-          `${tz}: ${status} science shows its status and both hints`);
+          science().textContent.includes(hint) &&
+          detail().querySelectorAll('.bagrut-internal-hint').length === 1,
+          `${tz}: ${status} science appears only in the internal-subjects panel with its hint and no duplicate extra-blockers heading`);
       });
       choose(T(204));
       check(panel().querySelector('summary').textContent.includes('עובר (4/4)') &&
@@ -2518,18 +2521,30 @@ window.fetch = (input, options) => {
       const ids = ['000000001', '000000002', '000000003'];
       const roster = ids.map((tz, i) => ({ ...stu(i + 1, 'יב', i === 0 ? 'יב1' : 'יב2'), tz,
         ...(i === 0 ? { firstName: '=שם,"בדיקה"', lastName: 'חניך' } : {}) }));
-      world({ roster, bagrut: bagrutRows(ids.flatMap((tz, i) => profile(tz, { '22283': null, '22261': [80, 60, 20][i] }))) });
+      world({ roster, bagrut: bagrutRows(ids.flatMap((tz, i) => profile(tz, {
+        '22283': null, '22261': [80, 60, 20][i],
+        ...(i === 0 ? { '8283': null, '8281': 70 } : {})
+      }))) });
       const listeners = [];
       const app = newApp({ grade: 'יב' }, listeners);
       const targets = BagrutView.target30Rows.call(app, app.dashRows()).filter(r => r.subject === 'היסטוריה');
       same(targets.map(r => [r.t.tz, r.target]), [[ids[0], '1'], [ids[1], '9'], [ids[2], 'לא אפשרי']], 'Positive minimum, compensation and impossible target');
       check(targets[1].note.includes('קיזוז') && targets[2].note.includes('100'), 'Compensation and impossible cases explain their constraints');
-      let blob;
+      let blob, downloadName = '';
       const create = URL.createObjectURL, revoke = URL.revokeObjectURL, click = HTMLAnchorElement.prototype.click;
+      const readBlob = async b => {
+        const bytes = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(new Uint8Array(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsArrayBuffer(b);
+        });
+        return { bytes, csv: new TextDecoder().decode(bytes) };
+      };
       try {
         URL.createObjectURL = b => { blob = b; return 'blob:target-test'; };
         URL.revokeObjectURL = () => {};
-        HTMLAnchorElement.prototype.click = () => {};
+        HTMLAnchorElement.prototype.click = function () { downloadName = this.download; };
         app.state.filters.cls = 'יב1';
         app.state.tab = 'bagrut';
         $id('stage').insertAdjacentHTML('beforeend', '<div id="localControls"><button id="fClear">נקה</button></div><div id="bagrut-scope"></div><div id="sadinPop"></div><div id="mxPop"></div>');
@@ -2540,23 +2555,46 @@ window.fetch = (input, options) => {
         try { app.bindEvents(); } finally { window.addEventListener = addWindowListener; }
         listeners.forEach(({ type, fn, options }) => $id('stage').addEventListener(type, fn, options));
         app.renderBagrutPanel();
-        $id('bagrutWorkControls').querySelector('[data-act="exportTargets30"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        listeners.forEach(({ type, fn, options }) => $id('stage').removeEventListener(type, fn, options));
-        windowListeners.forEach(args => window.removeEventListener(...args));
-        check(!!blob, 'Export creates a CSV blob for filtered targets');
+        const trigger = () => $id('bagrutWorkControls').querySelector('[data-act="exportTargets30"]');
+        const pop = () => $id('bagrut-export-popover');
+        trigger().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        check(!blob && !!pop(), 'Clicking export opens the subject-selection popover without immediate download');
+        same(pop().querySelector('.bagrut-export-preview').textContent.trim(), 'ייוצאו 2 שורות (1 חניכים) ב-2 מקצועות', 'Preview counts all selected subjects by default');
+        pop().querySelector('[data-act="exportTargets30Clear"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        same(pop().querySelector('.bagrut-export-preview').textContent.trim(), 'בחר לפחות מקצוע אחד ליצוא', 'Preview prompts when no subject is selected');
+        check(pop().querySelector('[data-act="exportTargets30Confirm"]').disabled, 'Export button is disabled when 0 subjects are selected');
+        const historyBox = pop().querySelector('input[data-chg="exportTargets30Subject"][value="היסטוריה"]');
+        historyBox.checked = true;
+        historyBox.dispatchEvent(new Event('change', { bubbles: true }));
+        same(pop().querySelector('.bagrut-export-preview').textContent.trim(), 'ייוצאו 1 שורות (1 חניכים) ב-1 מקצועות', 'Preview updates live for a single selected subject');
+        check(!pop().querySelector('[data-act="exportTargets30Confirm"]').disabled, 'Export button enables once a subject is selected');
+        pop().querySelector('[data-act="exportTargets30Confirm"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        check(!!blob && !pop(), 'Confirming single-subject export creates CSV and closes popover');
+        check(downloadName.includes('היסטוריה') && downloadName.endsWith('.csv'), 'Single-subject filename includes the subject name');
         if (blob) {
-          const bytes = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(new Uint8Array(reader.result));
-            reader.onerror = () => reject(reader.error);
-            reader.readAsArrayBuffer(blob);
-          });
+          const { bytes, csv } = await readBlob(blob);
           same([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf], 'UTF-8 BOM');
-          const csv = new TextDecoder().decode(bytes);
           check(csv.startsWith('"ת""ז","שם חניך","כיתה","מקצוע","מצב/ציון נוכחי","יעד מינימלי ב-30%","הערה"\r\n'), 'Seven export columns in order');
           check(csv.includes('"=""000000001"""') && !csv.includes(ids[1]) && !csv.includes(ids[2]), 'Leading zeros retained and class filter respected');
           check(csv.includes('""בדיקה""') && csv.includes("'=שם,"), 'Quotes are escaped and formula-like names are neutralized');
+          check(csv.includes('"היסטוריה"') && !csv.includes('"ספרות"'), 'Single-subject CSV contains only the selected subject');
         }
+        blob = null; downloadName = '';
+        trigger().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        pop().querySelector('[data-act="exportTargets30SelectAll"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        same(pop().querySelector('.bagrut-export-preview').textContent.trim(), 'ייוצאו 2 שורות (1 חניכים) ב-2 מקצועות', 'Select-all restores every available subject');
+        pop().querySelector('[data-act="exportTargets30Confirm"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        check(!!blob && !pop(), 'Multi-subject export creates CSV and closes popover');
+        if (blob) {
+          const { csv } = await readBlob(blob);
+          check(csv.includes('"היסטוריה"') && csv.includes('"ספרות"'), 'Multi-subject CSV contains all selected subjects');
+        }
+        trigger().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        check(!!pop(), 'Popover re-opens cleanly');
+        $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        check(!pop(), 'Escape closes the export popover');
+        listeners.forEach(({ type, fn, options }) => $id('stage').removeEventListener(type, fn, options));
+        windowListeners.forEach(args => window.removeEventListener(...args));
       } finally {
         URL.createObjectURL = create;
         URL.revokeObjectURL = revoke;
