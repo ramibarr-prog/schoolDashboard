@@ -58,7 +58,7 @@ const App = {
     settingsView: 'roster',
     ovMode: 'organize',
     hrOpenClass: null,
-    hrBankFilter: 'all',
+    hrBankFilter: 'pending',
     hrBankSearch: '',
     hrBankSort: { col: 'name', dir: 1 },
     hrBankShowAll: false,

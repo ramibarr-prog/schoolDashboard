@@ -622,11 +622,18 @@ window.fetch = (input, options) => {
         check(Store.classes().includes('יא5') && Store.classes().includes('י3'), 'Active ghost classes injected into Store.classes()');
         same(Config.classLabel('יא5'), 'יא5 • אורגנית', 'Ghost class nickname reflected in classLabel');
 
-        /* 2. שיוך קבוצתי של חניך רפאים שאותר + חניך קיים לכיתת רפאים + הוספת חניך ידני חדש */
+        /* 2. בנק מצטמצם כברירת מחדל (לצד ימין ב-RTL) + שיוך קבוצתי שמצמצם את התור + מתג "כל החניכים" */
         app.renderHomeroomWorkspace();
+        same($id('homeroomWorkspace').firstElementChild.id, 'hrBankCard', 'Student bank is placed first (right side in RTL)');
+        same(app.state.hrBankFilter, 'pending', 'Student bank defaults to shrinking pending queue');
+        check($id('hrBankTableWrap').querySelectorAll('tbody tr[data-drag-tz]').length === 1 && $id('hrBankTableWrap').textContent.includes(T(91)), 'Pending queue initially shows only unmatched ghost student T(91)');
         check(RulesView.hrApplyBatchAssign.call(app, [T(91), T(2)], 'יא5'), 'Batch assignment to ghost class succeeds');
         check(Config.setRosterOverride(T(92), { grade: 'יא', homeroom: 'יא5', name: 'חניך רפאים שני', manual: true }).ok, 'Manual ghost student added');
         app.afterDataChange();
+        app.renderHomeroomWorkspace();
+        check($id('hrBankTableWrap').querySelectorAll('tbody tr[data-drag-tz]').length === 0, 'Pending queue shrinks to 0 once ghost student is assigned');
+        app.acts.hrBankFilter.call(app, { dataset: { filter: 'all' } });
+        check($id('hrBankTableWrap').querySelectorAll('tbody tr[data-drag-tz]').length === 5, 'All-students toggle shows all active assigned students for bulk selection/reassignment');
         check(Store.trainees.get(T(91)).manual === true && Store.trainees.get(T(91)).classKey === 'יא5', 'Ghost student is active and flagged manual');
         check(!GroupAnalyzer.unmatchedIds().some(u => u.tz === T(91)), 'Promoted ghost student leaves unmatchedIds');
         check(BagrutEngine.evaluate(T(91), FULL).tier === 1, 'Ghost student is transparently evaluated by BagrutEngine');

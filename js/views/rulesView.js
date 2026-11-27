@@ -671,6 +671,10 @@
     if (!(this._hrSelected instanceof Set)) this._hrSelected = new Set();
     return this._hrSelected;
   },
+  hrPulledSet() {
+    if (!(this._hrPulled instanceof Set)) this._hrPulled = new Set();
+    return this._hrPulled;
+  },
 
   renderHomeroomModeBar() {
     const mode = this.state.ovMode === 'log' ? 'log' : 'organize';
@@ -708,6 +712,8 @@
   hrBankModel() {
     const rosterAll = Config.getRosterAll();
     const known = new Set();
+    const mismatchByTz = new Map(Config.detectRosterMismatches().map(m => [m.tz, m]));
+    const pulled = RulesView.hrPulledSet.call(this);
     const gradeHintByTz = new Map();
     ['groupsData', 'sadinData', 'bagrutData'].forEach(key => {
       Config.getRows(key).forEach(r => {
@@ -725,12 +731,17 @@
       const kind = r.hidden ? 'hidden' : isManual ? 'manual' : isMoved ? 'overridden' : 'regular';
       const grade = r.hidden ? (r.grade || r.rawGrade || '') : r.grade;
       const homeroom = r.hidden ? (r.homeroom || r.rawHomeroom || '') : r.homeroom;
+      const hasMismatch = !r.hidden && mismatchByTz.has(r.tz);
+      const isPulled = !r.hidden && pulled.has(r.tz);
+      const pending = !r.hidden && (hasMismatch || isPulled);
       let rosterText = r.rawHomeroom || r.homeroom || '—', rosterTone = '';
       if (r.hidden) { rosterText = `מוסתר${r.rawHomeroom ? ` (${r.rawHomeroom})` : ''}`; rosterTone = 'is-hidden'; }
+      else if (isPulled) { rosterText = `נשלף מ-${r.homeroom}`; rosterTone = 'is-ghost'; }
+      else if (hasMismatch) { rosterText = `סתירה · ${r.homeroom}`; rosterTone = 'is-ghost'; }
       else if (isManual) { rosterText = `רפאים · ${r.homeroom}`; rosterTone = 'is-ghost'; }
       else if (r.rawHomeroom && r.homeroom !== r.rawHomeroom) { rosterText = `${r.rawHomeroom} ← ${r.homeroom}`; rosterTone = 'is-moved'; }
       else if (r.override && r.override.track) { rosterText = `${r.homeroom} · ${r.track}`; rosterTone = 'is-moved'; }
-      rows.push({ tz: r.tz, name, grade, homeroom, rawHomeroom: r.rawHomeroom || '', kind, rosterText, rosterTone, sources: [], rec: r });
+      rows.push({ tz: r.tz, name, grade, homeroom, rawHomeroom: r.rawHomeroom || '', kind, pending, rosterText, rosterTone, sources: [], rec: r });
     });
     const unmatched = GroupAnalyzer.unmatchedIds();
     unmatched.forEach(u => {
@@ -738,7 +749,7 @@
       known.add(u.tz);
       rows.push({
         tz: u.tz, name: u.name || u.tz, grade: gradeHintByTz.get(u.tz) || '', homeroom: '', rawHomeroom: '',
-        kind: 'unmatched', rosterText: 'לא במצבת', rosterTone: 'is-ghost', sources: u.sources || [], rec: null
+        kind: 'unmatched', pending: true, rosterText: 'לא במצבת', rosterTone: 'is-ghost', sources: u.sources || [], rec: null
       });
     });
     Object.values(Config.getRosterOverrides()).forEach(o => {
@@ -746,11 +757,12 @@
       known.add(o.tz);
       rows.push({
         tz: o.tz, name: o.name || o.tz, grade: o.grade || gradeHintByTz.get(o.tz) || '', homeroom: o.homeroom || '', rawHomeroom: '',
-        kind: o.hidden ? 'hidden' : 'manual', rosterText: o.hidden ? 'מוסתר' : (o.homeroom || 'ידני'),
+        kind: o.hidden ? 'hidden' : 'manual', pending: false, rosterText: o.hidden ? 'מוסתר' : (o.homeroom || 'ידני'),
         rosterTone: o.hidden ? 'is-hidden' : 'is-ghost', sources: [], rec: null
       });
     });
     const counts = {
+      pending: rows.filter(r => r.pending).length,
       all: rows.filter(r => r.kind !== 'hidden').length,
       ghosts: rows.filter(r => r.kind === 'unmatched' || r.kind === 'manual').length,
       unmatched: unmatched.length,
@@ -761,10 +773,11 @@
   },
 
   hrFilteredBankRows(model) {
-    const filter = ['all', 'ghosts', 'overridden', 'hidden'].includes(this.state.hrBankFilter) ? this.state.hrBankFilter : 'all';
+    const filter = ['pending', 'all', 'ghosts', 'overridden', 'hidden'].includes(this.state.hrBankFilter) ? this.state.hrBankFilter : 'pending';
     this.state.hrBankFilter = filter;
     const q = Util.norm(this.state.hrBankSearch || '').toLocaleLowerCase();
     const list = model.rows.filter(r => {
+      if (filter === 'pending' && !r.pending) return false;
       if (filter === 'all' && r.kind === 'hidden') return false;
       if (filter === 'ghosts' && r.kind !== 'unmatched' && r.kind !== 'manual') return false;
       if (filter === 'overridden' && r.kind !== 'overridden' && r.kind !== 'manual') return false;
@@ -783,7 +796,7 @@
       if (sort.col === 'roster') {
         return dir * ((kindRank[a.kind] - kindRank[b.kind]) || natural(a.rosterText, b.rosterText) || natural(a.name, b.name));
       }
-      if (filter === 'ghosts' && a.kind !== b.kind) return (a.kind === 'unmatched' ? -1 : 1);
+      if ((filter === 'ghosts' || filter === 'pending') && a.kind !== b.kind) return (a.kind === 'unmatched' ? -1 : b.kind === 'unmatched' ? 1 : 0);
       return dir * (natural(a.name, b.name) || a.tz.localeCompare(b.tz));
     });
     return list;
@@ -794,20 +807,24 @@
     const host = $('homeroomWorkspace');
     if (!host) return;
     if (!$('hrLanesHost')) {
+      /* ב-RTL: העמודה הראשונה היא הצד הימני (בנק חניכים) והשנייה היא הצד השמאלי (שכבות וכיתות אם) */
       host.innerHTML = `
-        <div id="hrLanesHost" class="hr-lanes" aria-label="שכבות וכיתות אם"></div>
-        <aside id="hrBankCard" class="card hr-bank" aria-label="בנק חניכים">
+        <aside id="hrBankCard" class="card hr-bank" data-drop-bank="1" aria-label="בנק חניכים">
           <div class="hr-bank-head">
             <h3>בנק חניכים</h3>
             <button type="button" class="btn btn-ghost btn-sm" data-act="hrAddStudent">+ הוספת חניך חדש</button>
           </div>
-          <div id="hrBankPills" class="hr-bank-pills" role="group" aria-label="סינון בנק חניכים"></div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div id="hrBankModeToggle" class="hr-bank-mode" role="group" aria-label="מצב תצוגת בנק חניכים"></div>
+            <div id="hrBankPills" class="hr-bank-pills" role="group" aria-label="סינון משני"></div>
+          </div>
           <input id="hrBankSearch" class="inp w-full" placeholder="חיפוש לפי שם, ת.ז או כיתה..." aria-label="חיפוש בבנק חניכים" autocomplete="off">
           <div id="hrBatchBar" class="hr-batch-bar hidden"></div>
           <div id="hrBankTableWrap" class="hr-bank-wrap"></div>
           <div id="hrBankFooter" class="text-xs text-slate-500 flex items-center justify-between gap-2"></div>
           <div id="hrHideZone" class="hr-hide-zone" data-drop-hide="1"></div>
-        </aside>`;
+        </aside>
+        <div id="hrLanesHost" class="hr-lanes" aria-label="שכבות וכיתות אם"></div>`;
     }
     const search = $('hrBankSearch');
     if (search && document.activeElement !== search) search.value = this.state.hrBankSearch || '';
@@ -889,11 +906,15 @@
   },
 
   renderHomeroomBankControls(model = this._hrBankCache || RulesView.hrBankModel.call(this)) {
-    const pillsHost = $('hrBankPills'), batchBar = $('hrBatchBar'), hideZone = $('hrHideZone');
+    const modeHost = $('hrBankModeToggle'), pillsHost = $('hrBankPills'), batchBar = $('hrBatchBar'), hideZone = $('hrHideZone');
     if (!pillsHost) return;
-    const filter = this.state.hrBankFilter || 'all';
+    const filter = this.state.hrBankFilter || 'pending';
+    if (modeHost) {
+      modeHost.innerHTML = `
+        <button type="button" data-act="hrBankFilter" data-filter="pending" aria-pressed="${String(filter === 'pending')}">לטיפול (${model.counts.pending})</button>
+        <button type="button" data-act="hrBankFilter" data-filter="all" aria-pressed="${String(filter === 'all')}">כל החניכים (${model.counts.all})</button>`;
+    }
     const pills = [
-      ['all', `הכול (${model.counts.all})`, false],
       ['ghosts', `רפאים (${model.counts.ghosts})`, model.counts.unmatched > 0],
       ['overridden', `דריסות (${model.counts.overridden})`, false],
       ['hidden', `מוסתרים (${model.counts.hidden})`, false]
@@ -964,12 +985,15 @@
         <td><span class="hr-roster-tag ${r.rosterTone}">${E(r.rosterText)}</span>${restoreBtn}</td>
       </tr>`;
     }).join('');
+    const emptyMsg = this.state.hrBankFilter === 'pending' && !(this.state.hrBankSearch || '').trim()
+      ? '<tr><td colspan="4" class="text-center text-slate-500 py-6"><div>אין חניכים הממתינים לטיפול · כל החניכים משובצים</div><button type="button" class="underline text-xs text-[#355747] mt-1.5" data-act="hrBankFilter" data-filter="all">הצגת כל החניכים</button></td></tr>'
+      : '<tr><td colspan="4" class="text-center text-slate-400 py-6">אין חניכים להצגה בסינון זה</td></tr>';
     wrap.innerHTML = `<table class="hr-bank-tbl">
       <thead><tr>
         <th class="hr-chk-col"><input type="checkbox" id="hrSelectAll" ${allChecked ? 'checked' : ''} aria-label="בחירת כל החניכים המוצגים"></th>
         ${sortTh('name', 'שם')}${sortTh('grade', 'שכבה')}${sortTh('roster', 'במצבת')}
       </tr></thead>
-      <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-slate-400 py-6">אין חניכים להצגה בסינון זה</td></tr>'}</tbody>
+      <tbody>${rowsHtml || emptyMsg}</tbody>
     </table>`;
     if (footer) {
       footer.innerHTML = `<span>מציג ${shown.length} מתוך ${matches.length} · אפשר לסמן ולגרור יחד אל כיתה</span>
@@ -1195,6 +1219,8 @@
       return false;
     }
     RulesView.hrSelectedSet.call(this).clear();
+    const pulled = RulesView.hrPulledSet.call(this);
+    items.forEach(item => pulled.delete(item.tz));
     this.afterDataChange();
     const label = target === '__hide__' ? 'הועברו למוסתרים' : `שויכו לכיתה ${Config.classLabel(target)}`;
     this.toast(`${res.applied} חניכים ${label}`, 'ok');
@@ -2049,7 +2075,7 @@
       }
     });
     const clearDragHighlights = () => {
-      document.querySelectorAll('.hr-pebble.is-dragover, .hr-hide-zone.is-dragover').forEach(el => el.classList.remove('is-dragover'));
+      document.querySelectorAll('.hr-pebble.is-dragover, .hr-hide-zone.is-dragover, .hr-bank.is-dragover').forEach(el => el.classList.remove('is-dragover'));
     };
     document.addEventListener('dragstart', e => {
       const row = e.target.closest && e.target.closest('[data-drag-tz]');
@@ -2059,39 +2085,52 @@
       const inBank = !!row.closest('#hrBankCard');
       const batch = inBank && sel.has(tz) && sel.size > 1 ? [...sel] : [tz];
       this._hrDragTzs = batch;
+      this._hrDragFromBank = inBank;
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = 'move';
         try { e.dataTransfer.setData('text/plain', JSON.stringify(batch)); } catch (err) { /* noop */ }
       }
     });
     document.addEventListener('dragover', e => {
-      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide], [data-drop-bank]');
       if (!target || !this._hrDragTzs) return;
+      if (target.dataset.dropBank && this._hrDragFromBank) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
       clearDragHighlights();
       target.classList.add('is-dragover');
     });
     document.addEventListener('dragleave', e => {
-      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide], [data-drop-bank]');
       if (target && !target.contains(e.relatedTarget)) target.classList.remove('is-dragover');
     });
     document.addEventListener('drop', e => {
-      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide], [data-drop-bank]');
       if (!target) return;
+      if (target.dataset.dropBank && this._hrDragFromBank) return;
       e.preventDefault();
       clearDragHighlights();
       let tzs = this._hrDragTzs;
       this._hrDragTzs = null;
+      this._hrDragFromBank = false;
       if ((!tzs || !tzs.length) && e.dataTransfer) {
         try { tzs = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (err) { tzs = []; }
       }
       if (!Array.isArray(tzs) || !tzs.length) return;
+      if (target.dataset.dropBank) {
+        const pulled = RulesView.hrPulledSet.call(this);
+        tzs.forEach(tz => { const id = Util.normId(tz); if (id) pulled.add(id); });
+        this.state.hrBankFilter = 'pending';
+        RulesView.renderHomeroomWorkspace.call(this);
+        this.toast(`${tzs.length} חניכים נשלפו לבנק לטיפול`, 'info');
+        return;
+      }
       const dest = target.dataset.dropHide ? '__hide__' : target.dataset.dropClass;
       if (dest) RulesView.hrApplyBatchAssign.call(this, tzs, dest);
     });
     document.addEventListener('dragend', () => {
       this._hrDragTzs = null;
+      this._hrDragFromBank = false;
       clearDragHighlights();
     });
   },
