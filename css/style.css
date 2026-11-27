@@ -108,6 +108,12 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-students tbody tr[data-act="bagrutWorkSelect"]:hover td { background: #f3f8f4; }
 .bagrut-work-students tbody tr.is-selected td,
 .bagrut-work-students tbody tr.is-selected:hover td { background: #dcece0; }
+.bagrut-work-list tr.is-not-eligible td { color: #8c2f27; }
+.bagrut-work-list tr.is-not-eligible .bagrut-name { color: #8c2f27; }
+.bagrut-work-list tr.is-not-eligible td:first-child { border-inline-start: 3px solid #9a3412; }
+.bagrut-work-students tbody tr.is-not-eligible[data-act="bagrutWorkSelect"]:hover td { background: #fdf3ee; }
+.bagrut-work-students tbody tr.is-not-eligible.is-selected td,
+.bagrut-work-students tbody tr.is-not-eligible.is-selected:hover td { background: #fae6dc; }
 .bagrut-work-splitter { display: none; }
 .bagrut-work-subject-scroll { overflow-x: auto; margin-top: .75rem; }
 .bagrut-work-subjects { width: 100%; border-collapse: collapse; text-align: right; font-size: .8rem; }

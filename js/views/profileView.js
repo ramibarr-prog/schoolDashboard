@@ -31,28 +31,57 @@
     const t = Store.trainees.get(tz);
     if (!t) return;
     const ex = Config.getException(tz), ev = this.getEval(tz);
+    const active = !!ex.isException;
+    const dim = active ? '' : ' opacity-50';
     this.openModal(`
       <h3 class="text-lg font-semibold mb-1">⚡ מצב חריג – ${E(t.name)}</h3>
       <p class="text-xs text-slate-500 mb-3">ת.ז ${E(t.tz)} · ${E(Config.classLabel(t.classKey))}</p>
       ${ev.isPotentialException ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">חשד לחריג: ${E(ev.potentialExceptionReason)}</div>` : ''}
       ${ev.manualReview && ev.manualReview.required ? `<div class="text-sm bg-violet-50 text-violet-800 rounded-lg p-2 mb-3">🔎 נדרשת החלטת רכזת:<br>${this.manualReviewLines(ev).map(l => E(l)).join('<br>')}</div>` : ''}
-      <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${ex.isException ? 'checked' : ''}>מוחרג מחישוב אוטומטי</label>
-      <label class="flex flex-col gap-1 text-sm mb-3">סטטוס מוכרע
-        <select id="xmStatus" class="inp">${Config.OVERRIDE_STATUSES.map(s => `<option value="${s.value}" ${(ex.overrideStatus || 'atrisk') === s.value ? 'selected' : ''}>${E(s.label)}</option>`).join('')}</select></label>
-      <label class="flex flex-col gap-1 text-sm">סיבת החריג
-        <input id="xmReason" class="inp" maxlength="200" value="${E(ex.reason)}" placeholder="למשל: עולה חדש – הקלות שפה / המרת שאלון מבי&quot;ס קודם"></label>
+      <label class="flex items-center gap-2 text-sm mb-3"><input type="checkbox" id="xmIs" class="w-4 h-4" ${active ? 'checked' : ''}>הכרעה ידנית (עוקפת חישוב אוטומטי)</label>
+      <label class="flex flex-col gap-1 text-sm mb-3${dim}" data-xm-field>סטטוס מוכרע
+        <select id="xmStatus" class="inp" ${active ? '' : 'disabled'}>${Config.OVERRIDE_STATUSES.map(s => `<option value="${s.value}" ${(ex.overrideStatus || 'atrisk') === s.value ? 'selected' : ''}>${E(s.label)}</option>`).join('')}</select></label>
+      <label class="flex flex-col gap-1 text-sm${dim}" data-xm-field>סיבת החריג
+        <input id="xmReason" class="inp" maxlength="200" value="${E(ex.reason)}" placeholder="למשל: עולה חדש – הקלות שפה / המרת שאלון מבי&quot;ס קודם" ${active ? '' : 'disabled'}></label>
       <div class="flex gap-2 mt-4">
         <button type="button" class="btn btn-primary" data-act="excModalSave" data-tz="${E(t.tz)}">שמירה</button>
         <button type="button" class="btn btn-ghost" data-act="excModalClear" data-tz="${E(t.tz)}">הסרת חריג</button>
         <button type="button" class="btn btn-ghost mr-auto" data-act="closeModal">סגירה</button>
       </div>`);
+    const xmIs = $('xmIs');
+    const syncFields = () => {
+      const on = !!(xmIs && xmIs.checked);
+      ['xmStatus', 'xmReason'].forEach(id => {
+        const field = $(id);
+        if (!field) return;
+        field.disabled = !on;
+        const wrap = field.closest('[data-xm-field]');
+        if (wrap) wrap.classList.toggle('opacity-50', !on);
+      });
+    };
+    syncFields();
+    if (xmIs) xmIs.addEventListener('change', syncFields);
   },
 
   saveProfileException(el) {
+    const tz = el.dataset.tz;
+    const prev = !!Config.getException(tz).isException;
     const is = $('xmIs') ? $('xmIs').checked : false;
-    const res = Config.setException(el.dataset.tz, { isException: is, overrideStatus: is && $('xmStatus') ? $('xmStatus').value : '', reason: $('xmReason') ? $('xmReason').value.trim() : '' });
+    const res = Config.setException(tz, {
+      isException: is,
+      overrideStatus: is && $('xmStatus') ? $('xmStatus').value : '',
+      reason: is && $('xmReason') ? $('xmReason').value.trim() : ''
+    });
     this.closeModal();
-    this.toast(res.ok === false ? res.error : 'החריג נשמר', res.ok === false ? 'error' : 'ok');
+    if (res.ok === false) {
+      this.toast(res.error, 'error');
+    } else if (is) {
+      this.toast('החריג נשמר', 'ok');
+    } else if (prev) {
+      this.toast('ההכרעה הידנית הוסרה — חזר לחישוב אוטומטי', 'info');
+    } else {
+      this.toast('לא הופעלה הכרעה ידנית — נשאר חישוב אוטומטי', 'info');
+    }
   },
 
   clearProfileException(el) {

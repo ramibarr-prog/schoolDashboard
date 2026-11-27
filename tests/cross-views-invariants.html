@@ -434,10 +434,24 @@ window.fetch = (input, options) => {
         app.evals.clear();
         const before = JSON.stringify(BagrutEngine.evaluate(tz, app.state.sim));
         check(app.getEval(tz).tier === 4 && !app.getEval(tz).manual, 'Precondition: two failing subjects are tier 4');
+        const toasts = [];
+        const origToast = app.toast;
+        app.toast = function (msg, kind) { toasts.push({ msg, kind }); return origToast.apply(this, arguments); };
         app.openExceptionModal(tz);
         check($id('xmIs') && $id('xmStatus') && $id('xmReason'), 'The exception form must open');
-        $id('xmIs').checked = true; $id('xmStatus').value = 'eligible'; $id('xmReason').value = '  החלטה סינתטית: הקלות  ';
+        check(!$id('xmIs').checked && $id('xmStatus').disabled && $id('xmReason').disabled, 'Status and reason must be disabled when manual override is unchecked');
         app.acts.excModalSave.call(app, { dataset: { tz } });
+        app.evals.clear();
+        check(!app.getEval(tz).manual && app.getEval(tz).tier === 4, 'Saving without checking manual override must not change status');
+        check(toasts.length === 1 && toasts[0].msg !== 'החריג נשמר' && toasts[0].msg.includes('לא הופעלה הכרעה ידנית'), 'Saving without checking manual override must show an accurate toast');
+        app.openExceptionModal(tz);
+        $id('xmIs').checked = true;
+        $id('xmIs').dispatchEvent(new Event('change', { bubbles: true }));
+        check(!$id('xmStatus').disabled && !$id('xmReason').disabled, 'Checking manual override must enable status and reason fields');
+        $id('xmStatus').value = 'eligible'; $id('xmReason').value = '  החלטה סינתטית: הקלות  ';
+        app.acts.excModalSave.call(app, { dataset: { tz } });
+        check(toasts[toasts.length - 1].msg === 'החריג נשמר', 'Saving an active manual override shows confirmation toast');
+        app.toast = origToast;
         app.evals.clear();
         const decided = app.getEval(tz);
         check(decided.manual && decided.tier === 1 && decided.exceptionReason === 'החלטה סינתטית: הקלות', 'The decision must take effect immediately in the engine');
@@ -2136,17 +2150,20 @@ window.fetch = (input, options) => {
       pendingApp.renderBagrutPanel();
       const workRowOf = tz => $id('bagrut-table').querySelector(`tr[data-act="bagrutWorkSelect"][data-tz="${tz}"]`);
       const badgesIn = root => [...root.querySelectorAll('.bagrut-exc-badges .badge')].map(el => el.textContent.trim());
-      same(badgesIn(workRowOf(T(31))), ['12 שנות לימוד', 'מוחרג מחישוב'], '12-years and excluded-from-auto badges render without duplication in workRows');
-      same(workRowOf(T(31)).querySelector('.bagrut-exc-badge').getAttribute('title'), 'ועדה פדגוגית <בדיקה>', 'Exception reason tooltip is attached and escaped on workRows badge');
+      same(badgesIn(workRowOf(T(31))), ['12 שנות לימוד'], '12-years badge renders cleanly without redundant excluded badge in workRows');
+      check(!$id('bagrut-table').textContent.includes('מוחרג מחישוב'), 'Redundant excluded-from-auto badge must not render anywhere');
+      same(workRowOf(T(31)).querySelector('.bagrut-track-badge').getAttribute('title'), 'ועדה פדגוגית <בדיקה>', 'Exception reason tooltip is attached and escaped on workRows badge');
+      check(workRowOf(T(31)).classList.contains('is-not-eligible'), 'Non-eligible 12-years row receives is-not-eligible class');
       let workDetail = $id('bagrut-table').querySelector('.bagrut-work-detail header');
-      same(badgesIn(workDetail), ['12 שנות לימוד', 'מוחרג מחישוב'], '12-years and excluded-from-auto badges render in detail header');
+      same(badgesIn(workDetail), ['12 שנות לימוד'], '12-years badge renders cleanly in detail header');
       check(workDetail.querySelector('.bagrut-exc-reason') &&
         workDetail.querySelector('.bagrut-exc-reason').textContent.includes('ועדה פדגוגית <בדיקה>'), 'Exception reason is shown in detail header');
-      same(badgesIn(workRowOf(T(32))), ['מוחרג מחישוב', '⚡ זכאי - חריג'], 'Excluded-from-auto and decided override badges render in workRows');
+      same(badgesIn(workRowOf(T(32))), ['⚡ זכאי - חריג'], 'Manual eligible override badge renders cleanly in workRows');
       same(workRowOf(T(32)).querySelector('.bagrut-exc-badge.is-eligible').getAttribute('title'), 'אישור עולה חדש', 'Override badge carries exception reason tooltip');
+      check(!workRowOf(T(32)).classList.contains('is-not-eligible'), 'Manual eligible override row does not receive is-not-eligible class');
       pendingApp.acts.bagrutWorkSelect.call(pendingApp, workRowOf(T(32)));
       workDetail = $id('bagrut-table').querySelector('.bagrut-work-detail header');
-      same(badgesIn(workDetail), ['מוחרג מחישוב', '⚡ זכאי - חריג'], 'Excluded-from-auto and decided override badges render in detail header');
+      same(badgesIn(workDetail), ['⚡ זכאי - חריג'], 'Manual eligible override badge renders cleanly in detail header');
       check(workDetail.querySelector('.bagrut-exc-reason') &&
         workDetail.querySelector('.bagrut-exc-reason').textContent.includes('אישור עולה חדש'), 'Override reason is shown in detail header');
       Config.setException(T(31), { isException: false, overrideStatus: '', reason: '' });
@@ -2156,6 +2173,18 @@ window.fetch = (input, options) => {
       same([badgesIn(workRowOf(T(31))), badgesIn(workRowOf(T(32))), badgesIn($id('bagrut-table').querySelector('.bagrut-work-detail header'))],
         [[], [], []], 'Clearing the exception removes all exception and 12-years badges from workRows and detail');
       check(!$id('bagrut-table').querySelector('.bagrut-exc-reason'), 'Clearing the exception removes the reason from detail');
+      check(workRowOf(T(32)).classList.contains('is-not-eligible'), 'Clearing manual eligible override restores is-not-eligible class');
+
+      const simRoster = [33, 34].map(n => stu(n, 'יב', 'יב1'));
+      world({ roster: simRoster, bagrut: bagrutRows([...profile(T(33)), ...profile(T(34), { '86083': null })]) });
+      const simApp = newApp({ grade: 'יב' });
+      simApp.state.tab = 'bagrut';
+      simApp.renderBagrutPanel();
+      check(!workRowOf(T(33)).classList.contains('is-not-eligible'), 'Naturally eligible student row does not receive is-not-eligible class');
+      check(workRowOf(T(34)).classList.contains('is-not-eligible'), 'Student blocked by missing internal receives is-not-eligible class');
+      simApp.state.bagrut.ignoreInternals = true;
+      simApp.renderBagrutPanel();
+      check(!workRowOf(T(34)).classList.contains('is-not-eligible'), 'Simulation making student eligible immediately removes is-not-eligible class');
     });
 
     await group('Worklist internal subjects', async () => {

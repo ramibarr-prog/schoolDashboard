@@ -562,12 +562,9 @@
     };
     if (track === Config.SPECIAL_ED) push(Config.SPECIAL_ED, 'tier-0 bagrut-track-badge');
     if (isTwelve) push('12 שנות לימוד', 'tier-5 bagrut-track-badge', reason);
-    if (isManual) {
-      push('מוחרג מחישוב', 'badge-exc bagrut-exc-badge', reason);
-      if (ovEntry && ovEntry.value !== 'twelve' && ovEntry.tier !== 5) {
-        const tone = ovEntry.tier <= 2 ? ' is-eligible' : ovEntry.tier >= 4 ? ' is-bad' : '';
-        push(`⚡ ${ovEntry.short || ovEntry.label}`, `badge-exc bagrut-exc-badge${tone}`, reason);
-      }
+    if (isManual && ovEntry && ovEntry.value !== 'twelve' && ovEntry.tier !== 5) {
+      const tone = ovEntry.tier <= 2 ? ' is-eligible' : ovEntry.tier >= 4 ? ' is-bad' : '';
+      push(`⚡ ${ovEntry.short || ovEntry.label}`, `badge-exc bagrut-exc-badge${tone}`, reason);
     }
     const badgesHtml = items.length ? ` <span class="bagrut-exc-badges">${items.join(' ')}</span>` : '';
     const reasonHtml = opts.showReason && reason ? ` <small class="bagrut-exc-reason">סיבת החריג: ${E(reason)}</small>` : '';
@@ -1072,7 +1069,8 @@
     const workRows = list => list.map(r => {
       const { t, ev } = r;
       const { summary } = metaOf(r);
-      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${BagrutView.renderExceptionBadges.call(this, t, ev)}</td>
+      const rowCls = [t.tz === st.workTz ? 'is-selected' : '', eligible(ev) ? '' : 'is-not-eligible'].filter(Boolean).join(' ');
+      return `<tr class="${rowCls}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${BagrutView.renderExceptionBadges.call(this, t, ev)}</td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
