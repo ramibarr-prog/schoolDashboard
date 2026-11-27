@@ -1566,7 +1566,8 @@ const App = {
     bagrutSort(el) { return BagrutView.bagrutSort.call(this, el); },
     bagrutPin(el) {
       BagrutView.bagrutPin.call(this, el);
-      if (this.state.tab === 'profile') { this.dirty.add('profile'); this.renderTab('profile'); }
+      this.dirty.add('profile');
+      if (this.state.tab === 'profile') this.renderTab('profile');
     },
     profileSubjectToggle(el, event) {
       if (event.target.closest('summary, button, a, input, select')) return;

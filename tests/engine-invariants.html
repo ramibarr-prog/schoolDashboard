@@ -335,10 +335,10 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         check(kinds(two).includes('comp-over') && two.tier >= 3, 'A second 45-54 failure exceeds the compensation quota');
         [[3, 3, 150], [3, 4, 148], [4, 4, 146], [4, 5, 144], [5, 5, 140]].forEach(([e, m, required]) => {
           const ok = pointsCase(e, m, required / 2, required / 2);
-          check(subj(ok, 'history').compApplied === 'points' && !kinds(ok).includes('severe') && ok.notes.some(n => n.includes('פיצוי נקודות')), `Units ${e}+${m}: ${required} points must compensate`);
+          check(subj(ok, 'history').compApplied === 'points' && !kinds(ok).includes('severe') && ok.notes.some(n => n.includes('קומפנסציה') && !n.includes('פיצוי')), `Units ${e}+${m}: ${required} points must compensate`);
           const short = pointsCase(e, m, required / 2, required / 2 - 1);
           const blocker = short.blockers.find(b => b.k === 'severe');
-          check(blocker && blocker.text.includes(`נמוך מהנדרש ${required}`) && !subj(short, 'history').compApplied, `Units ${e}+${m}: ${required - 1} points must not compensate`);
+          check(blocker && blocker.text.includes(`נמוך מהנדרש לקומפנסציה (${required})`) && !blocker.text.includes('פיצוי') && !subj(short, 'history').compApplied, `Units ${e}+${m}: ${required - 1} points must not compensate`);
         });
         const full = pointsCase(4, 4, 75, 75, true);
         check(full.tier === 2 && full.compensation && full.compensation.type === 'points' && subj(full, 'history').compApplied === 'points' && !full.blockers.length, 'A student with a major and enough points must be eligible (tier 2) through points compensation');
@@ -1016,7 +1016,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
       });
 
       await run(2, 'one allowed range compensation or points compensation', async () => {
-        for (const [score, type, note] of [[50, 'range', 'קיזוז'], [40, 'points', 'פיצוי נקודות']]) {
+        for (const [score, type, note] of [[50, 'range', 'קיזוז'], [40, 'points', 'קומפנסציה']]) {
           golden(2, { '22283': score, '22261': score });
           const ev = final(2), history = subj(ev, 'history');
           check(ev.tier <= 2 && ev.compensation && ev.compensation.type === type, `${score}: eligibility via ${type}`);

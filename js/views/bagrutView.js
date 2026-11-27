@@ -1026,7 +1026,7 @@
       const b = UI.buildBagrutBreakdown(r.t, r.ev, { noData });
       const offset = offsetInfo(r.ev);
       const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${r.ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
-        !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
+        !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הקומפנסציה מותנים בציונים החסרים` : b.cellSummary;
       const blockerCount = b.noData || b.isTrack12 ? 0
         : b.subjectCount + b.internalCount + b.other.length + (b.enforceUnits && b.totalUnits != null && b.totalUnits < 21 ? 1 : 0);
       m = { noData, b, offset, summary, blockerCount };
@@ -1112,12 +1112,12 @@
           ? target30(actual, actualEv, rules, true) : null;
         const impossible = target && actual.reverse && actual.reverse.required30 > 100 &&
           actual.unresolved.concat(actual.pending).every(c => c.internal);
-        const tooltip = 'גם 100 ב-30% אינו מספיק למעבר ישיר. במקצוע שאינו עברית ואינו מוחרג ניתן לבחון קיזוז או קומפנסציה (פיצוי נקודות), בכפוף לכללי הזכאות.';
+        const tooltip = 'גם 100 ב-30% אינו מספיק למעבר ישיר. במקצוע שאינו עברית ואינו מוחרג ניתן לבחון קיזוז או קומפנסציה, בכפוף לכללי הזכאות.';
         const targetCell = impossible ? `<span class="badge tier-4" title="${E(tooltip)}">נכשל</span>` :
           target && target.directTarget != null ? E(target.directTarget) : '-';
         const mechanism = offset.applied === s ? (s.compApplied === 'points' ? 'קומפנסציה' : 'קיזוז') : '';
         const statusTip = mechanism === 'קיזוז' ? 'קיזוז לפי טווח הציונים וכללי הזכאות.' :
-          mechanism ? 'קומפנסציה באמצעות פיצוי נקודות ממקצועות עוברים, לפי כללי הזכאות.' : '';
+          mechanism ? 'קומפנסציה מול מקצועות עוברים, לפי כללי הזכאות.' : '';
         const status = b.noData ? '-' : s.exempt ? 'פטור' : mechanism
           ? `עובר (${mechanism})${simulatedForOffset ? ' (סימולציה)' : ''}` : s.status === 'pass'
           ? s.comps.some(c => c.simulated) && actual.status !== 'pass' ? 'עובר (סימולציה)' : 'עובר' : 'נכשל';
@@ -1125,21 +1125,21 @@
         blockers.filter(x => x.k !== 'questionnaire' && !['reverse30', 'reverse-pending'].includes(x.k))
           .forEach(x => notes.push(x.text));
         if (s.compApplied && mechanism) {
-          const compensation = ev.notes.filter(note => note.includes(s.name) && /קיזוז|פיצוי/.test(note));
-          notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'פיצוי נקודות' : 'עבר בקיזוז']));
+          const compensation = ev.notes.filter(note => note.includes(s.name) && /קיזוז|קומפנסציה/.test(note));
+          notes.push(...(compensation.length ? compensation : [s.compApplied === 'points' ? 'עבר בקומפנסציה' : 'עבר בקיזוז']));
         }
         if (target && (impossible || target.directTarget == null || /לקיזוז|הרכיב החסר|משוקלל|הכרעה ידנית|החלטת רכזת/.test(target.note))) {
           notes.push(target.note);
         }
         if (impossible) {
-          if (actual.critical) notes.push('המקצוע מוחרג מקיזוז ומפיצוי נקודות.');
+          if (actual.critical) notes.push('המקצוע מוחרג מקיזוז ומקומפנסציה.');
           else {
             if (target.compensationTarget != null) notes.push(`להגעה לציון ${actual.reverse.compMin} במקצוע נדרש ${target.compensationTarget} ב-30%; ${rules.allowCompensationRule ? 'הקיזוז כפוף לכללים ולמכסה' : 'הקיזוז מושבת בכללי המחזור'}.`);
             else notes.push(`גם 100 ב-30% אינו מספיק להגעה לציון ${actual.reverse.compMin} הנדרש לקיזוז.`);
             if (rules.allowCompensationRule) notes.push(`טווח הקיזוז הוא ${actual.reverse.compMin}–${rules.compensationMax}; מספר המקצועות המקוזזים כפוף למכסה של ${rules.maxCompensations}.`);
             notes.push(pointsRules.enabled
-              ? `פיצוי נקודות נבחן למקצוע אחד בציון ${pointsRules.minScore}–${actual.reverse.compMin - 1}, מול שני מקצועות עוברים של ${pointsRules.minUnits} יח״ל ומעלה. סכום הציונים הנדרש לפי סך היח״ל: ${Object.entries(pointsRules.table).map(([units, score]) => `${units} יח״ל: ${score}`).join(', ')}.`
-              : 'פיצוי נקודות מושבת בכללי המחזור.');
+              ? `קומפנסציה נבחנת למקצוע אחד בציון ${pointsRules.minScore}–${actual.reverse.compMin - 1}, מול שני מקצועות עוברים של ${pointsRules.minUnits} יח״ל ומעלה. סכום הציונים הנדרש לקומפנסציה לפי סך היח״ל: ${Object.entries(pointsRules.table).map(([units, score]) => `${units} יח״ל: ${score}`).join(', ')}.`
+              : 'קומפנסציה מושבתת בכללי המחזור.');
           }
         }
         return subjectRow(s.id, s.name, s.comps, targetCell, status, notes, statusTip);
@@ -1175,7 +1175,7 @@
       const otherFailingSubject = singleImpossible && actualEv.subjects.some(s => s !== singleImpossible && ['comp', 'severe', 'fail'].includes(s.status));
       const alternativesForHint = singleImpossible ? [
         rules.allowCompensationRule && usedCompensations < rules.maxCompensations && singleImpossible.reverse.requiredFor45 <= 100 ? `קיזוז בציון ${rules.compensationMin} לפחות` : '',
-        pointsRules.enabled && !otherFailingSubject && singleImpossible.reverse.max >= pointsRules.minScore ? 'קומפנסציה (פיצוי נקודות) מול מקצועות חזקים' : ''
+        pointsRules.enabled && !otherFailingSubject && singleImpossible.reverse.max >= pointsRules.minScore ? 'קומפנסציה מול מקצועות חזקים' : ''
       ].filter(Boolean) : [];
       const compensationHint = !b.noData && !b.isTrack12 && singleImpossible && !singleImpossible.critical && !additionalFailure && alternativesForHint.length
         ? `במקצוע ${singleImpossible.name} לא ניתן להגיע לעובר ${rules.passGrade} גם עם 100 ב-30%. אפשר לבדוק ${alternativesForHint.join(' או ')}, בכפוף לכללי הזכאות.`
@@ -1183,14 +1183,14 @@
       let offsetExplanation = '';
       if (!b.noData && !b.isTrack12 && offset.rejected) {
         offsetExplanation = offset.failures.length > 1
-          ? 'יש יותר ממקצוע אחד שנכשל בוודאות, ולכן לא ניתן להציג מעבר בקיזוז או בפיצוי.'
+          ? 'יש יותר ממקצוע אחד שנכשל בוודאות, ולכן לא ניתן להציג מעבר בקיזוז או בקומפנסציה.'
           : offset.failures[0].critical
-            ? `המקצוע ${offset.failures[0].name} אינו מאפשר קיזוז או פיצוי לפי הכללים.`
-            : `הציון ב${offset.failures[0].name} או שאר הציונים אינם עומדים בתנאים לקיזוז או לפיצוי נקודות.`;
+            ? `המקצוע ${offset.failures[0].name} אינו מאפשר קיזוז או קומפנסציה לפי הכללים.`
+            : `הציון ב${offset.failures[0].name} או שאר הציונים אינם עומדים בתנאים לקיזוז או לקומפנסציה.`;
       } else if (!b.noData && !b.isTrack12 && offset.applied) {
         const s = offset.applied;
         offsetExplanation = s.compApplied === 'points'
-          ? `${s.name} עובר באמצעות פיצוי נקודות ממקצועות עוברים, לפי כללי הזכאות.`
+          ? `${s.name} עובר באמצעות קומפנסציה מול מקצועות עוברים, לפי כללי הזכאות.`
           : `${s.name} עובר בקיזוז כי הציון שלו נמצא בטווח המותר לפי כללי הזכאות.`;
         if (simulatedForOffset) offsetExplanation += ' הבדיקה כוללת ציוני 100 מדומים.';
         if (offset.pending) offsetExplanation += ' הדבר מותנה בכך שלא ייווצרו נכשלים נוספים במקצועות שטרם דווחו.';
@@ -1205,7 +1205,9 @@
       }
       const position = index < 0 ? active.length + lowered.findIndex(r => r.t.tz === t.tz) + 1 : index + 1;
       const eligibility = eligible(ev);
-      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}${BagrutView.renderExceptionBadges.call(this, t, ev, { showReason: true })}</h2>
+      const isPinned = loadPins().has(t.tz);
+      const starButton = `<button type="button" class="bagrut-work-pin${isPinned ? ' is-pinned' : ''}" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${isPinned}" aria-label="${isPinned ? 'הסר ממעקב צמוד' : 'סמן למעקב צמוד'}" title="${isPinned ? 'הסר ממעקב צמוד' : 'סמן למעקב צמוד'}">${isPinned ? '★' : '☆'}</button>`;
+      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))} ${starButton}${BagrutView.renderExceptionBadges.call(this, t, ev, { showReason: true })}</h2>
         <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
         <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${!eligibility && !b.noData && !b.isTrack12 && offset.rejected ? ' - לא זכאי לקיזוז או קומפנסציה' : ''}${st.sim100 ? ' (סימולציה)' : ''}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>

@@ -86,7 +86,7 @@ const BagrutAdvisor = (() => {
       s.critical ? set('rose', String(score), 'ללא קיזוז' + fromCur, 'fail') : set('amber', String(score), 'קיזוז' + fromCur, 'comp');
     } else {
       const pts = ctx.compensation && ctx.compensation.type === 'points' && ctx.compensation.subject === s.name;
-      pts ? set('amber', String(score), 'פיצוי נקודות', 'comp') : set('rose', String(score), s.source === 'current' ? '(שוטף נמוך)' : 'נכשל', 'fail');
+      pts ? set('amber', String(score), 'קומפנסציה', 'comp') : set('rose', String(score), s.source === 'current' ? '(שוטף נמוך)' : 'נכשל', 'fail');
     }
 
     const tip = [`${s.name}${s.variableUnits && s.units ? ` · ${s.units} יח"ל` : ''}`, ...s.comps.map(c => compTip(tz, c))];

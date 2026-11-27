@@ -150,7 +150,7 @@
     if (s.comps.length && s.comps.every(c => c.future && c.state === 'missing')) return plain('future-cell', s.group ? 'לומד' : 'עתידי');
     if (s.learning || s.pending.length || s.unresolved.length) return plain('text-slate-500', s.group ? 'לומד' : 'ממתין לדיווח');
     if ((s.forecast || s.filled.length) && s.status === 'pass') return plain('text-slate-500', 'לומד');
-    if (s.compApplied) return badge('tier-3', `${s.forecast || s.source === 'current' ? 'תחזית ' : ''}${s.compApplied === 'points' ? 'פיצוי' : 'קיזוז'} (${Util.fmt(s.adj, 0)})`);
+    if (s.compApplied) return badge('tier-3', `${s.forecast || s.source === 'current' ? 'תחזית ' : ''}${s.compApplied === 'points' ? 'קומפנסציה' : 'קיזוז'} (${Util.fmt(s.adj, 0)})`);
     if (s.status === 'pass') return plain('text-emerald-700 font-semibold', '✓ עובר');
     if (s.status === 'comp') return badge('tier-4', `קיזוז לא זמין (${Util.fmt(s.adj, 0)})`);
     if (s.status === 'fail' || s.status === 'severe') return badge('tier-4', 'נכשל');
@@ -172,7 +172,7 @@
     });
     ev.subjects.filter(s => s.compApplied).forEach(s => {
       const low = s.comps.find(c => c.state === 'num' && c.num < Config.rules().passGrade);
-      items.push(`${s.name}${s.variableUnits && s.units ? ` ${s.units} יח"ל` : ''}: ציון ${Util.fmt(s.adj, 0)}${low ? ` בשאלון ${low.code}` : ''} (${s.forecast || s.source === 'current' ? 'תחזית ' : 'מופעל '}${s.compApplied === 'points' ? 'פיצוי נקודות' : 'קיזוז'})`);
+      items.push(`${s.name}${s.variableUnits && s.units ? ` ${s.units} יח"ל` : ''}: ציון ${Util.fmt(s.adj, 0)}${low ? ` בשאלון ${low.code}` : ''} (${s.forecast || s.source === 'current' ? 'תחזית ' : 'מופעל '}${s.compApplied === 'points' ? 'קומפנסציה' : 'קיזוז'})`);
     });
     const failedCodes = new Set();
     ev.subjects.forEach(s => {
@@ -388,7 +388,7 @@
     const reviewReasons = ev.blockers.filter(b => b.k === 'exempt-review').map(b => b.text);
     const focus = breakdown.isTrack12 || breakdown.noData ? [] : [...new Set([...this.profileFocus(ev).filter(text => !text.startsWith('לבדיקה:')), ...ev.focus.filter(f => !f.target && !f.text.startsWith('לבדיקה:') && !/לא מספיק/.test(f.text) && !reviewReasons.some(reason => f.text.includes(reason))).map(f => f.text)])];
     const focusItems = focus.map(text => ({
-      text, category: ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|פיצוי/.test(text) ? 'משפר ציון' : 'חוסם זכאות'
+      text, category: ev.reverse.some(r => text.includes(r.subject)) || /קיזוז|קומפנסציה/.test(text) ? 'משפר ציון' : 'חוסם זכאות'
     }));
     const currentRows = [...cur.core.values(), ...cur.majors.values(), ...cur.extras];
     const currentItems = currentRows.flatMap(row => [

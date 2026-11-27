@@ -246,7 +246,7 @@ const BagrutPolicies = (() => {
         B.push({ gate: 1, k: 'fail', hard: !soft, watch: soft, grade: s.adj, text: `${s.source === 'current' ? 'נכשל שוטף ב' : 'נכשל ב'}${s.name} (${rnd(s.adj)})` });
       } else if (s.status === 'severe') {
         /* ציון 5–44: חסם קשה, אלא אם פיצוי הנקודות מתקיים (נבדק ב-applyPointsCompensation אחרי שער 2) */
-        if (s.critical) B.push({ gate: 1, k: 'critical', hard: !soft, watch: soft, grade: s.adj, text: `${s.name} ${rnd(s.adj)} – נדרש ${rules.passGrade} ללא פיצוי` });
+        if (s.critical) B.push({ gate: 1, k: 'critical', hard: !soft, watch: soft, grade: s.adj, text: `${s.name} ${rnd(s.adj)} – נדרש ${rules.passGrade} ללא קומפנסציה` });
         else B.push({ gate: 1, k: 'severe', hard: !soft, watch: soft, grade: s.adj, subject: s.id, text: `${s.source === 'current' ? 'נכשל שוטף ב' : 'נכשל ב'}${s.name} (${rnd(s.adj)})` });
       } else if (s.status === 'comp') {
         if (s.critical) B.push({ gate: 1, k: 'critical', hard: true, grade: s.adj, text: `${s.name} ${rnd(s.adj)} – נדרש ${rules.passGrade} ללא קיזוז` });
@@ -433,10 +433,10 @@ const BagrutPolicies = (() => {
     if (best && best.sum >= best.req) {
       B.splice(idx, 1);
       s.compApplied = 'points';
-      notes.push(`פיצוי נקודות חוזר מנכ"ל: ${s.name} ${rnd(s.adj)} מפוצה ב-${best.a.name} ${best.a.grade} + ${best.b.name} ${best.b.grade} = ${best.sum} (נדרש ${best.req})`);
+      notes.push(`קומפנסציה (חוזר מנכ"ל): ${s.name} ${rnd(s.adj)} מול ${best.a.name} ${best.a.grade} + ${best.b.name} ${best.b.grade} = ${best.sum} (נדרש ${best.req})`);
       ctx.compensation = { type: 'points', subject: s.name, grade: s.adj, sum: best.sum, required: best.req };
     } else {
-      blocker.text += best ? ` – סכום הנקודות ${best.sum} נמוך מהנדרש ${best.req}` : ' – אין שני מקצועות של 3 יח"ל ומעלה שעברו לפיצוי נקודות';
+      blocker.text += best ? ` – סכום הנקודות ${best.sum} נמוך מהנדרש לקומפנסציה (${best.req})` : ' – אין שני מקצועות של 3 יח"ל ומעלה שעברו לקומפנסציה';
     }
   }
 

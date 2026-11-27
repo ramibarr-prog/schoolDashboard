@@ -127,7 +127,7 @@ window.fetch = (input, options) => {
     <select id="sadinSubjectSelect"></select><select id="sadinTeacherSelect"></select><select id="sadinFilterSelect"></select><div id="sadin-table"></div>
     <div id="groups-head"><div id="groups-mode"></div></div><div id="groups-kpis"></div><div id="groups-table"></div><div id="groups-strip"></div><div id="groups-master"></div><div id="groups-detail"></div><select id="groupSubjectSelect"></select><select id="groupTeacherSelect"></select>
     <select id="profSelect"></select><div id="profName"></div><div id="profMeta"></div><div id="profBadges"></div><div id="profKpis"></div><div id="profBody"></div>
-    <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button>`;
+    <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button><button id="profilePin"></button>`;
   const mount = () => {
     let stage = document.getElementById('stage');
     if (!stage) { stage = document.createElement('div'); stage.id = 'stage'; document.body.appendChild(stage); }
@@ -2477,8 +2477,10 @@ window.fetch = (input, options) => {
       choose(T(103));
       check(history().children[3].querySelector('.tier-4') && history().children[2].textContent.includes('עובר (קומפנסציה)') &&
         history().children[2].textContent.includes('סימולציה') &&
-        history().children[2].querySelector('[title]').title.includes('פיצוי נקודות') &&
-        detail().textContent.includes('היסטוריה עובר באמצעות פיצוי נקודות'),
+        history().children[2].querySelector('[title]').title.includes('קומפנסציה') &&
+        !history().children[2].querySelector('[title]').title.includes('פיצוי') &&
+        detail().textContent.includes('היסטוריה עובר באמצעות קומפנסציה') &&
+        !detail().textContent.includes('פיצוי'),
         'An impossible direct target is retained when the simulated score qualifies for points compensation');
       same(JSON.stringify([...Store._bagrut].map(([tz, entries]) => [tz, [...entries]])), storeBefore, 'Simulation does not modify stored results');
       same(JSON.stringify(BagrutEngine.evaluate(T(110), FULL)), realBefore, 'Normal engine evaluations are unchanged by local simulation');
@@ -2489,12 +2491,12 @@ window.fetch = (input, options) => {
       choose(T(106));
       const failedTarget = history().children[3].querySelector('.tier-4');
       check(failedTarget && failedTarget.textContent === 'נכשל' && failedTarget.title.includes('100 ב-30%') &&
-        failedTarget.title.includes('קיזוז') && failedTarget.title.includes('פיצוי נקודות'),
+        failedTarget.title.includes('קיזוז') && failedTarget.title.includes('קומפנסציה') && !failedTarget.title.includes('פיצוי'),
         'Impossible direct target shows a red badge explaining the possible alternatives');
-      check(historyDetails().textContent.includes('79 ב-30%') && historyDetails().textContent.includes('פיצוי נקודות'),
+      check(historyDetails().textContent.includes('79 ב-30%') && historyDetails().textContent.includes('קומפנסציה') && !historyDetails().textContent.includes('פיצוי'),
         'Subject details explain the required compensation target and points compensation');
       check(detail().textContent.includes('במקצוע היסטוריה לא ניתן להגיע לעובר 55') &&
-        detail().textContent.includes('קומפנסציה (פיצוי נקודות)'), 'A single impossible subject has conditional guidance');
+        detail().textContent.includes('קומפנסציה מול מקצועות חזקים') && !detail().textContent.includes('פיצוי'), 'A single impossible subject has conditional guidance');
       choose(T(107));
       check(!detail().textContent.includes('במקצוע היסטוריה לא ניתן להגיע לעובר 55'),
         'No single-subject guidance when two subjects cannot pass directly');
@@ -2522,7 +2524,7 @@ window.fetch = (input, options) => {
         'Details button closes the subject detail row');
       choose(T(105));
       check(BagrutEngine.evaluate(T(105), FULL).subjects.find(s => s.id === 'history').compApplied === 'points' &&
-        historyDetails().textContent.includes('פיצוי נקודות'), 'Existing points compensation is shown in subject details');
+        historyDetails().textContent.includes('קומפנסציה') && !historyDetails().textContent.includes('פיצוי'), 'Existing points compensation is shown in subject details');
       choose(T(101));
       const ev = BagrutEngine.evaluate(T(101), FULL);
       const subjectRows = [...detail().querySelectorAll('tbody tr[data-subject]')];
@@ -2587,6 +2589,32 @@ window.fetch = (input, options) => {
       check(!JSON.parse(window.localStorage.getItem('sd.bagrut.deferred.v1')).includes(target), 'Restore persists locally');
       check(!$id('bagrut-table').textContent.includes('חניכים שהורדו למטה (1)'), 'Empty deferred section is removed');
       app.acts.bagrutPin.call(app, { dataset: { tz: T(101) } });
+      choose(T(101));
+      const pinnedChipCount = () => Number($id('bagrut-kpis').querySelector('[data-chip="pinned"] span:last-child').textContent.trim());
+      const starBtn = () => detail().querySelector('header .bagrut-work-pin[data-act="bagrutPin"]');
+      const pinsBefore = pinnedChipCount();
+      check(starBtn() && starBtn().textContent.trim() === '☆' && starBtn().getAttribute('aria-pressed') === 'false',
+        'Detail header shows unpinned star-only button');
+      app.acts.bagrutPin.call(app, starBtn());
+      check(starBtn() && starBtn().textContent.trim() === '★' && starBtn().getAttribute('aria-pressed') === 'true' &&
+        pinnedChipCount() === pinsBefore + 1,
+        'Clicking detail star pins student and increments pinned chip count');
+      app.state.profileTz = T(101);
+      app.renderTrainee360Panel();
+      check($id('profilePin').getAttribute('aria-pressed') === 'true' && $id('profilePin').textContent.includes('★'),
+        'Pinning from eligibility detail immediately reflects in 360 profile');
+      app.state.bagrut.chip = 'pinned';
+      app.renderBagrutPanel();
+      app.acts.bagrutPin.call(app, starBtn());
+      check(pinnedChipCount() === pinsBefore, 'Unpinning while pinned filter is active refreshes cleanly and decrements count');
+      app.state.bagrut.chip = 'all';
+      app.renderBagrutPanel();
+      choose(T(101));
+      check(starBtn() && starBtn().textContent.trim() === '☆' && starBtn().getAttribute('aria-pressed') === 'false',
+        'Detail star returns to unpinned state');
+      app.renderTrainee360Panel();
+      check($id('profilePin').getAttribute('aria-pressed') === 'false' && $id('profilePin').textContent.includes('☆'),
+        'Unpinning from eligibility detail immediately reflects in 360 profile');
       same(errorsOf(app), [], 'No panel errors');
 
       app.state.filters.grade = 'all';
