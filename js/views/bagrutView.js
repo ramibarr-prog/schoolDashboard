@@ -777,7 +777,7 @@
       offsetCache.set(ev, result);
       return result;
     };
-    const known = rows.filter(r => !noBagrutData(signalMap.get(r.t.tz), options) && r.ev.tier !== 0 && r.ev.tier !== 5);
+    const known = rows.filter(r => !noBagrutData(signalMap.get(r.t.tz), options) && r.ev.tier !== 0 && r.ev.tier !== 5 && this.trackOf(r.t) !== Config.SPECIAL_ED);
     const forecastOptions = { ...options, fullMode: false, useCurrent: true };
     const forecast = signalsFor(known, forecastOptions);
     const eligible = ev => (ev.tier === 1 || ev.tier === 2) &&
@@ -798,7 +798,7 @@
     const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => matches(r, id)).length}</span></button>`;
     setHtml('bagrut-kpis', `<div class="card bagrut-work-summary">
       <div class="bagrut-work-metrics">${metric(todayCount, st.sim100 ? 'עומדים בתנאי סוף י״ב בסימולציה' : 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
-      <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל חנ״מ והכרעות ידניות; ללא מסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי מותאם לשלב בשנה ומשלב ציונים שוטפים; רכיבי י״ב שטרם דווחו בהיקף הנדרש בשכבה אינם נחשבים חסרים. הצפי אינו הבטחה לזכאות.</p>
+      <p>מתוך חניכי י״ב בסינון עם נתוני בגרות, כולל הכרעות ידניות; ללא חנ״מ ומסלול 12 שנות לימוד. ${st.ignoreInternals ? 'הבדיקה מתעלמת מיחידות פנימיות ואינה קביעה סופית. ' : ''}הצפי מותאם לשלב בשנה ומשלב ציונים שוטפים; רכיבי י״ב שטרם דווחו בהיקף הנדרש בשכבה אינם נחשבים חסרים. הצפי אינו הבטחה לזכאות.</p>
       ${st.overviewEntry ? '<p>הרשימה שומרת על החניכים שנבחרו בחדר הבקרה; מצב כל חניך נבדק כאן לפי סוף י״ב.</p>' : ''}
       ${attention ? `<p>במעקב: ${attention.tzSet.size} חניכים · ${attention.bagrutRisk.length} בסיכון בבגרות · ${attention.multi.length} עם 2+ שליליים/חסרים בשוטף${attention.both ? ` (${attention.both} בשניהם)` : ''}</p>` : ''}
       <div class="bagrut-tabs" role="group" aria-label="סינון רשימת העבודה">${quick('all', 'הכל')}${quick('risk', 'בסיכון')}${quick('eligible', 'עומדים בתנאים')}${quick('pinned', 'במעקב צמוד')}</div></div>`);
@@ -811,7 +811,8 @@
       const offset = offsetInfo(ev);
       const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
         !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
-      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></td>
+      const isSpecial = this.trackOf(t) === Config.SPECIAL_ED;
+      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${isSpecial ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
@@ -947,7 +948,8 @@
       }
       const position = index < 0 ? active.length + lowered.findIndex(r => r.t.tz === t.tz) + 1 : index + 1;
       const eligibility = eligible(ev);
-      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}</h2>
+      const isSpecial = this.trackOf(t) === Config.SPECIAL_ED;
+      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}${isSpecial ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</h2>
         <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
         <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${!eligibility && !b.noData && !b.isTrack12 && offset.rejected ? ' - לא זכאי לקיזוז או קומפנסציה' : ''}${st.sim100 ? ' (סימולציה)' : ''}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>
@@ -1301,20 +1303,18 @@
       return `<button type="button" class="gstat ${cls}" data-act="bagrutChip" data-chip="${id}" aria-pressed="${active === id}" title="${E(`${label} · ${count} חניכים`)}">
         <span>${label}</span><span class="bagrut-tab-count">${count}</span></button>`;
     };
-    const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא מסלול 12 שנות לימוד)`;
+    const basis = `מחושב על ${stats.counted} חניכים עם נתוני בגרות (ללא חנ"מ ומסלול 12 שנות לימוד)`;
     const juniorGrade = ['י', 'יא'].includes(this.state.filters.grade);
     const eligible = !juniorGrade && (stats.total > 0 || !paceRows.length) ? `<div class="bagrut-summary-metric">
-      ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis, stats.counted)}
-      ${pct(stats.eligibilityInclSpecialEd, 'צפי זכאות · כולל חנ"מ', basis, stats.counted)}</div>` : '';
+      ${pct(stats.eligibilityExSpecialEd, 'צפי זכאות · ללא חנ"מ', basis, stats.counted)}</div>` : '';
     let pace = '';
     if (paceRows.length || juniorGrade) {
       const ps = BagrutAdvisor.summarizePace(paceRows.map(r => r.ev));
       const grades = juniorGrade ? Util.gl(this.state.filters.grade) :
         Util.GRADE_KEYS.filter(g => paceRows.some(r => r.t.gradeKey === g)).map(g => Util.gl(g)).join(', ');
-      const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}); שאלוני שכבות עליונות אינם נספרים כחוסר`;
+      const paceBasis = `תקין לקצב או טרם החלו היבחנות, מתוך ${ps.counted} חניכים עם נתוני בגרות (שכבות ${grades}; ללא חנ"מ ומסלול 12 שנות לימוד); שאלוני שכבות עליונות אינם נספרים כחוסר`;
       pace = `<div class="bagrut-summary-metric">
-        ${pct(ps.pctExSpecialEd, `תקינות צבירה (${grades}) · ללא חנ"מ`, paceBasis, ps.counted)}
-        ${pct(ps.pctInclSpecialEd, 'תקינות צבירה · כולל חנ"מ', paceBasis, ps.counted)}</div>`;
+        ${pct(ps.pctExSpecialEd, `תקינות צבירה (${grades}) · ללא חנ"מ`, paceBasis, ps.counted)}</div>`;
     }
     box.classList.remove('hidden');
     const attention = active === 'attention' && !this.state.bagrut.targets ? this.attentionModel(rows.map(r => r.t), rows) : null;
@@ -1626,7 +1626,7 @@
       const breakdown = UI.buildBagrutBreakdown(t, ev, { noData: unknown });
       return `<tr class="${pins.has(t.tz) ? 'bagrut-pinned-row' : ''}${this.state.bagrut.drawerTz === t.tz ? ' bg-drawer-row-active' : ''}" data-act="bagrutDrawerOpen" data-tz="${E(t.tz)}" tabindex="0" aria-label="${E(`פירוט זכאות: ${t.name}`)}">
         <td><div class="bagrut-student"><button type="button" class="bagrut-pin" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" aria-label="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}: ${E(t.name)}" title="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}">${pins.has(t.tz) ? '★' : '☆'}</button>
-        <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button></div></td>
+        <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${this.trackOf(t) === Config.SPECIAL_ED ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</div></td>
         ${showClass ? `<td>${E(Config.classLabel(t.classKey))}</td>` : ''}
         <td>${status(ev, signal)}</td><td class="bagrut-required bg-drawer-required" tabindex="0" data-breakdown-lines="${E(JSON.stringify(breakdown.tooltipLines))}"><span>${E(breakdown.cellSummary)}</span></td>
         ${cells.map(renderCell).join('')}</tr>`;

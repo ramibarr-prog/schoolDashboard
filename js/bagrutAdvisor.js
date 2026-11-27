@@ -163,20 +163,20 @@ const BagrutAdvisor = (() => {
   }
   BagrutEngine.registerDecorator(decorate);
 
-  /** מדדי KPI מצטברים לרשימת הערכות */
+  /** מדדי KPI מצטברים לרשימת הערכות (ללא מסלול 12 שנות לימוד וחנ"מ) */
   function summarize(evals) {
     const special = Config.SPECIAL_ED;
-    const counted = evals.filter(e => e.tier !== 5 && e.tier !== 0);
+    const counted = evals.filter(e => e.tier !== 5 && e.tier !== 0 && trackOf(e.tz) !== special);
     const ok = e => e.tier >= 1 && e.tier <= 2;
-    const noSp = counted.filter(e => trackOf(e.tz) !== special);
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+    const eligibility = pct(counted.filter(ok).length, counted.length);
     return {
       total: evals.length,
       noBagrut: evals.filter(e => e.tier === 0).length,
       counted: counted.length,
       specialEd: evals.filter(e => trackOf(e.tz) === special).length,
-      eligibilityExSpecialEd: pct(noSp.filter(ok).length, noSp.length),
-      eligibilityInclSpecialEd: pct(counted.filter(ok).length, counted.length),
+      eligibilityExSpecialEd: eligibility,
+      eligibilityInclSpecialEd: eligibility,
       singleBlocker: evals.filter(e => e.singleBlocker).length,
       exceptions: evals.filter(e => e.manual).length,
       savable: evals.filter(e => e.savable).length,
@@ -198,14 +198,14 @@ const BagrutAdvisor = (() => {
     });
   }
 
-  /** תקינות צבירה מצטברת: י' / י"א לפי paceStatus; חניכי י"ב (אם נכללו) לפי צפי הזכאות הרגיל */
+  /** תקינות צבירה מצטברת: י' / י"א לפי paceStatus; חניכי י"ב (אם נכללו) לפי צפי הזכאות הרגיל (ללא מסלול 12 שנות לימוד וחנ"מ) */
   function summarizePace(evals) {
     const special = Config.SPECIAL_ED;
-    const counted = evals.filter(e => e.tier !== 5 && e.paceStatus !== 'no_data' && e.paceStatus !== 'twelve_years');
+    const counted = evals.filter(e => e.tier !== 5 && e.paceStatus !== 'no_data' && e.paceStatus !== 'twelve_years' && trackOf(e.tz) !== special);
     const ok = e => e.paceStatus === 'on_track' || e.paceStatus === 'not_started' || e.paceStatus === 'eligible';
-    const noSp = counted.filter(e => trackOf(e.tz) !== special);
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
     const count = (...st) => counted.filter(e => st.includes(e.paceStatus)).length;
+    const rate = pct(counted.filter(ok).length, counted.length);
     return {
       total: evals.length,
       counted: counted.length,
@@ -213,8 +213,8 @@ const BagrutAdvisor = (() => {
       notStarted: count('not_started'),
       warning: count('pace_warning', 'nearly'),
       lag: count('pace_lag', 'blocked'),
-      pctInclSpecialEd: pct(counted.filter(ok).length, counted.length),
-      pctExSpecialEd: pct(noSp.filter(ok).length, noSp.length)
+      pctInclSpecialEd: rate,
+      pctExSpecialEd: rate
     };
   }
 

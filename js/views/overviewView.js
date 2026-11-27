@@ -180,7 +180,7 @@
     const risk = bagrutOn ? this.filterByChip(m.rows, 'notok') : [];
     const near = risk.filter(r => r.ev.singleBlocker).length;
     const weakness = sadinOn ? SadinView.getHotspotsSummary.call(this, m.list, { ...this.state.sadin, subject: 'all', teacher: 'all' }) : null;
-    const completion = m.bagrutOn ? this.filterByChip(m.bench.rows, 'completion').filter(r => r.ev.tier !== 0 && r.ev.tier !== 5) : [];
+    const completion = m.bagrutOn ? this.filterByChip(m.bench.rows, 'completion').filter(r => r.ev.tier !== 0 && r.ev.tier !== 5 && this.trackOf(r.t) !== Config.SPECIAL_ED) : [];
     const completionIds = new Set(completion.map(r => r.t.tz));
     const counted = m.bench.rows.filter(r => r.ev.tier !== 0 && r.ev.tier !== 5 &&
       (!m.bench.pace || !['no_data', 'twelve_years'].includes(r.ev.paceStatus)) && this.trackOf(r.t) !== Config.SPECIAL_ED);
@@ -193,9 +193,9 @@
     const bannerTitle = !m.bagrutOn ? 'אין נתונים מספקים להצגת תמונת השכבה'
       : completion.length ? `${completion.length} חניכים ${m.bench.pace ? 'קרובים לחזרה לקצב' : 'במסלול השלמה או החלטה'}` : 'אין חניכים במסלול השלמה או החלטה';
     const bannerDetail = !m.bagrutOn ? 'יש לטעון נתוני בגרות לשכבת הייחוס.'
-      : !counted.length ? 'אין חניכים ללא חנ״מ לחישוב המדד.'
-      : completion.length ? `טיפול בהם עשוי להעלות את ${measure} מ-${current}% ל-${projected}% · המדד ללא חנ״מ`
-      : `${measure}: ${current}% ללא חנ״מ`;
+      : !counted.length ? 'אין חניכים ללא חנ״מ ומסלול 12 שנות לימוד לחישוב המדד.'
+      : completion.length ? `טיפול בהם עשוי להעלות את ${measure} מ-${current}% ל-${projected}% · ללא חנ״מ ומסלול 12 שנות לימוד`
+      : `${measure}: ${current}% · ללא חנ״מ ומסלול 12 שנות לימוד`;
     const pins = this.filterByChip(m.rows, 'pinned');
     const pinnedList = pins.slice(0, 3).map(({ t, ev }) => {
       const focus = ev.tier === 5 ? 'מסלול 12 שנות לימוד' :

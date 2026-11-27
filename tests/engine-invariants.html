@@ -1060,7 +1060,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         check(compound.tier === 4 && compound.atRisk === true && kinds(compound).includes('critical'), `Hebrew 40 plus another failure must be tier 4 (got ${compound.tier})`);
       });
 
-      await run(6, 'special education is included in engine and advisor metrics', async () => {
+      await run(6, 'special education is evaluated individually but excluded from advisor denominator', async () => {
         world({
           roster: [student(1), student(6, { track: Config.SPECIAL_ED })],
           bagrut: bagrutRows([...profile(id(1)), ...profile(id(6), { '36361': 40 })])
@@ -1068,7 +1068,7 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         const regular = final(1), special = final(6), summary = BagrutAdvisor.summarize([regular, special]);
         same([regular.tier, special.tier], [1, 3], 'Both tracks are evaluated by the engine');
         same([summary.counted, summary.specialEd, summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd],
-          [2, 1, 50, 100], 'Special-ed student changes the inclusive denominator, not the exclusive one');
+          [1, 1, 100, 100], 'Special-ed student is excluded from the eligibility denominator');
       });
 
       await run(7, 'unmapped questionnaire holds automatic eligibility until a decision', async () => {

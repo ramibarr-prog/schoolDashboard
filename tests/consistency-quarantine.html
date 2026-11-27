@@ -170,6 +170,13 @@
       app.evals.clear(); SignalEngine.invalidate();
       const forecast = ImportQuarantine.auditConsistency(app);
       assert(forecast.ok, 'Mixed-grade forecast is consistent: ' + JSON.stringify(forecast.issues));
+      const beforeSpecial = app.overviewModel().stats.counted;
+      Config.setException(T(2), { trackOverride: Config.SPECIAL_ED });
+      app.evals.clear(); SignalEngine.invalidate();
+      const specialAudit = ImportQuarantine.auditConsistency(app);
+      assert(specialAudit.ok && app.overviewModel().stats.counted === beforeSpecial - 1,
+        'Special-ed override reduces eligibility denominator by 1 and stays consistent');
+      Config.setException(T(2), { trackOverride: '' });
       app.state.sim.fullMode = false;
       app.state.sim.useCurrent = false;
       app.evals.clear(); SignalEngine.invalidate();

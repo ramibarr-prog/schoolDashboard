@@ -301,13 +301,13 @@ window.fetch = (input, options) => {
   const EXPECTED_TRACK = { [T(1)]: 'חנ"מ', [T(2)]: 'אתגר', [T(3)]: 'מב"ר', [T(4)]: 'חנ"מ', [T(9)]: 'חנ"מ', [T(10)]: 'חנ"מ', [T(14)]: 'אתגר', [T(24)]: 'מב"ר', [T(31)]: 'חנ"מ' };
   const expectedTrack = tz => EXPECTED_TRACK[tz] || 'רגילה';
   const tallies = list => {
-    const counted = list.filter(x => x.ev.tier !== 5 && x.ev.tier !== 0);
-    const ok = x => x.ev.tier === 1 || x.ev.tier === 2;
     const special = x => trackOfStudent(x.t) === 'חנ"מ';
-    const noSpecial = counted.filter(x => !special(x));
+    const counted = list.filter(x => x.ev.tier !== 5 && x.ev.tier !== 0 && !special(x));
+    const ok = x => x.ev.tier === 1 || x.ev.tier === 2;
+    const rate = pct(counted.filter(ok).length, counted.length);
     return {
       total: list.length, counted: counted.length, noBagrut: list.filter(x => x.ev.tier === 0).length, twelve: list.filter(x => x.ev.tier === 5).length,
-      specialEd: list.filter(special).length, incl: pct(counted.filter(ok).length, counted.length), ex: pct(noSpecial.filter(ok).length, noSpecial.length),
+      specialEd: list.filter(special).length, incl: rate, ex: rate,
       exceptions: list.filter(x => x.ev.manual).length
     };
   };
@@ -617,15 +617,24 @@ window.fetch = (input, options) => {
         const list = Store.traineeList().filter(t => t.gradeKey === 'יב').map(t => ({ t, ev: app.getEval(t.tz) }));
         const expected = tallies(list);
         const summary = BagrutAdvisor.summarize(list.map(x => x.ev));
-        check(summary.counted + summary.noBagrut + expected.twelve === summary.total && summary.total === expected.total, 'counted + no-bagrut + 12-years must equal the whole group');
+        const specialCounted = list.filter(x => trackOfStudent(x.t) === 'חנ"מ' && x.ev.tier !== 0 && x.ev.tier !== 5).length;
+        check(summary.counted + summary.noBagrut + expected.twelve + specialCounted === summary.total && summary.total === expected.total, 'counted + no-bagrut + 12-years + special-ed must equal the whole group');
         same([summary.counted, summary.noBagrut, summary.specialEd, summary.exceptions], [expected.counted, expected.noBagrut, expected.specialEd, expected.exceptions], 'Summary counts');
-        same([summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd], [expected.incl, expected.ex], 'Eligibility percentages incl. / excl. special-ed');
+        same([summary.eligibilityInclSpecialEd, summary.eligibilityExSpecialEd], [expected.ex, expected.ex], 'Eligibility percentages exclude special-ed');
         check(expected.twelve === 1 && list.find(x => x.t.tz === T(12)).ev.tier === 5, 'The 12-years student must be tier 5 and excluded from the denominator');
         const stats = app.overviewModel().stats;
-        same([stats.eligibilityInclSpecialEd, stats.eligibilityExSpecialEd], [expected.incl, expected.ex], 'Control room benchmark percentages include/exclude special-ed');
+        same([stats.eligibilityInclSpecialEd, stats.eligibilityExSpecialEd], [expected.ex, expected.ex], 'Control room benchmark percentages exclude special-ed');
         app.renderOverviewPanel();
         const withSpecial = list.filter(x => trackOfStudent(x.t) === 'חנ"מ').length;
-        check(withSpecial === expected.specialEd && withSpecial > 0, 'Special-ed students must be counted');
+        check(withSpecial === expected.specialEd && withSpecial > 0, 'Special-ed students must be tracked while excluded from denominator');
+        Config.setException(T(2), { trackOverride: 'חנ"מ' });
+        app.evals.clear();
+        const afterAdd = app.overviewModel().stats;
+        same(afterAdd.counted, expected.counted - 1, 'Adding special-ed exception decreases denominator by 1');
+        Config.setException(T(2), { trackOverride: '' });
+        app.evals.clear();
+        const afterRemove = app.overviewModel().stats;
+        same(afterRemove.counted, expected.counted, 'Removing special-ed exception restores denominator by 1');
         noGarbage('overview');
       });
     });
@@ -1065,11 +1074,12 @@ window.fetch = (input, options) => {
           const rows = expected.map(t => ({ t, ev: app.getEval(t.tz) })).filter(x => app.tierBased(x.ev));
           const stats = tallies(rows);
           const kpi = $id('bagrut-kpis').textContent;
-          const incl = /(\d+)%\s*צפי זכאות · כולל חנ"מ/.exec(kpi), ex = /(\d+)%\s*צפי זכאות · ללא חנ"מ/.exec(kpi);
-          if (incl && ex) {
-            check(Number(incl[1]) === stats.incl && Number(ex[1]) === stats.ex, `${label}: KPI shows ${incl[1]}% / ${ex[1]}%, expected ${stats.incl}% / ${stats.ex}%`);
+          const ex = /(\d+)%\s*צפי זכאות · ללא חנ"מ/.exec(kpi);
+          if (ex) {
+            check(Number(ex[1]) === stats.ex && !/כולל חנ"מ/.test(kpi), `${label}: KPI shows ${ex[1]}% excl. special-ed, expected ${stats.ex}%`);
             if (stats.counted) {
-              const byTier = [1, 2, 3, 4].map(n => rows.filter(x => x.ev.tier === n).length);
+              const nonSpecial = rows.filter(x => trackOfStudent(x.t) !== 'חנ"מ');
+              const byTier = [1, 2, 3, 4].map(n => nonSpecial.filter(x => x.ev.tier === n).length);
               check(byTier.reduce((a, b) => a + b, 0) <= stats.counted && Math.abs(byTier.reduce((a, b) => a + pct(b, stats.counted), 0) - pct(byTier.reduce((a, b) => a + b, 0), stats.counted)) <= 2, `${label}: category percentages are inconsistent with the denominator`);
             }
           }

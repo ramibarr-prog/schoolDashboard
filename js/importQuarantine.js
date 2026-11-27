@@ -230,6 +230,14 @@
       const mismatchedStats = Object.keys(expectedStats).filter(key => model.stats[key] !== expectedStats[key]);
       if (mismatchedStats.length)
         issue('overview-stats', 'מדדי הבגרות בחדר הבקרה אינם תואמים לנתוני מסך הבגרות.', mismatchedStats);
+      const special = Config.SPECIAL_ED;
+      const expectedCounted = model.bench.rows.filter(row => {
+        const ev = app.getEval(row.t.tz);
+        if (!ev || ev.tier === 5 || (typeof app.trackOf === 'function' && app.trackOf(row.t) === special)) return false;
+        return model.bench.pace ? !['no_data', 'twelve_years'].includes(ev.paceStatus) : ev.tier !== 0;
+      }).length;
+      if (model.stats.counted !== expectedCounted)
+        issue('overview-counted', 'מכנה הזכאות בחדר הבקרה אינו תואם להחרגת חנ"מ ומסלול 12 שנות לימוד.', { expected: expectedCounted, actual: model.stats.counted });
       const chips = ['eligible', 'tier3', 'tier4', 'tier5', 'tier0', 'pace:on_track', 'pace:not_started', 'pace:pace_warning', 'pace:pace_lag'];
       chips.forEach(chip => {
         const expected = model.rows.filter(row => {
