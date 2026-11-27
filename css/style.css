@@ -92,6 +92,18 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-export-preview { padding: .7rem; border-radius: .5rem; background: var(--sage-tint); color: var(--forest); font-size: .8rem; font-weight: 600; }
 .bagrut-export-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .75rem; }
 .bagrut-work-list { overflow-x: auto; }
+.bagrut-work-students thead th { padding: 0; }
+.bagrut-sort-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: .35rem;
+  width: 100%; padding: .35rem .5rem; background: transparent; color: inherit;
+  font: inherit; text-align: right; cursor: pointer;
+}
+.bagrut-sort-btn:hover { background: rgba(250, 247, 239, .12); }
+.bagrut-sort-btn:focus-visible { outline: 2px solid var(--mustard); outline-offset: -2px; }
+.bagrut-sort-btn.is-active { background: rgba(250, 247, 239, .16); }
+.bagrut-sort-ind { flex-shrink: 0; font-size: .7rem; opacity: .55; }
+.bagrut-sort-btn:hover .bagrut-sort-ind { opacity: .85; }
+.bagrut-sort-ind.is-active { opacity: 1; color: var(--mustard); }
 .bagrut-work-students tbody tr[data-act="bagrutWorkSelect"] { cursor: pointer; }
 .bagrut-work-students tbody tr[data-act="bagrutWorkSelect"]:hover td { background: #f3f8f4; }
 .bagrut-work-students tbody tr.is-selected td,

@@ -106,15 +106,29 @@
     try { window.localStorage.setItem(WIDTHS_KEY, JSON.stringify(loadWorkWidths())); }
     catch (e) { console.error('שמירת רוחבי עמודות הזכאות נכשלה', e); }
   }
-  function workColumns(kind) {
+  function workColumns(kind, sortState = null) {
     const saved = loadWorkWidths()[kind];
     const customized = Object.keys(saved).length > 0;
     const columns = WORK_COLUMNS[kind].map(([key, label, defaultWidth]) => ({ key, label, width: saved[key] || defaultWidth }));
     const width = columns.reduce((sum, c) => sum + c.width, 0);
+    const sortKeyOf = { name: 'name', class: 'class', issues: 'blockers', order: 'default' };
+    const headerCell = c => {
+      if (kind !== 'list') {
+        return `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה לאיפוס רוחבי הטבלה)"></span></th>`;
+      }
+      const sk = sortKeyOf[c.key];
+      const active = Boolean(sortState && sortState.key === sk);
+      const ariaSort = sk === 'default' ? '' : ` aria-sort="${active ? (sortState.dir === 'asc' ? 'ascending' : 'descending') : 'none'}"`;
+      const indicator = sk === 'default'
+        ? (!sortState || !sortState.key ? '<span class="bagrut-sort-ind is-active" aria-hidden="true">•</span>' : '<span class="bagrut-sort-ind" aria-hidden="true">↺</span>')
+        : `<span class="bagrut-sort-ind${active ? ' is-active' : ''}" aria-hidden="true">${active ? (sortState.dir === 'asc' ? '▲' : '▼') : '⇅'}</span>`;
+      const title = sk === 'default' ? 'איפוס לסדר ברירת המחדל של רשימת העבודה' : `מיון לפי ${c.label}`;
+      return `<th scope="col" data-ck="${c.key}"${ariaSort}><button type="button" class="bagrut-sort-btn${active ? ' is-active' : ''}" data-act="bagrutWorkSort" data-sort="${sk}" title="${E(title)}"><span class="bagrut-col-label">${E(c.label)}</span>${indicator}</button><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה לאיפוס רוחבי הטבלה)"></span></th>`;
+    };
     return {
       width: customized ? `${width}px` : '100%',
       cols: columns.map(c => `<col style="width:${customized ? `${c.width}px` : `${c.width / width * 100}%`}">`).join(''),
-      headers: columns.map(c => `<th scope="col" data-ck="${c.key}"><span class="bagrut-col-label">${E(c.label)}</span><span class="col-resizer" aria-hidden="true" title="גרור לשינוי רוחב עמודה (לחיצה כפולה לאיפוס רוחבי הטבלה)"></span></th>`).join('')
+      headers: columns.map(headerCell).join('')
     };
   }
   function lockWorkColWidths(table) {
@@ -926,6 +940,20 @@
 
   readinessAverage(avg) { return avg == null ? '—' : Util.fmt(avg, 1); },
 
+  workSort(el) {
+    const st = this.state.bagrut;
+    const cur = st.workSort || { key: null, dir: 'asc' };
+    const key = el.dataset.sort;
+    if (key === 'default') {
+      st.workSort = { key: null, dir: 'asc' };
+    } else if (['name', 'class', 'blockers'].includes(key)) {
+      if (cur.key !== key) st.workSort = { key, dir: 'asc' };
+      else if (cur.dir === 'asc') st.workSort = { key, dir: 'desc' };
+      else st.workSort = { key: null, dir: 'asc' };
+    } else return;
+    this.dirty.add('bagrut'); this.renderTab('bagrut');
+  },
+
   workSelect(el) {
     this.state.bagrut.workTz = el.dataset.tz;
     this.dirty.add('bagrut'); this.renderTab('bagrut');
@@ -947,7 +975,8 @@
 
   renderBagrutWorklist() {
     const st = this.state.bagrut, roster = this.filtered().filter(t => t.gradeKey === 'יב');
-    const listColumns = workColumns('list'), subjectColumns = workColumns('subjects');
+    const workSort = st.workSort || (st.workSort = { key: null, dir: 'asc' });
+    const listColumns = workColumns('list', workSort), subjectColumns = workColumns('subjects');
     const options = { ...finalOptions, ignoreInternals: !!st.ignoreInternals };
     const actualSignals = signalsFor(roster.map(t => ({ t })), options);
     const signalMap = st.sim100 ? signalsFor(roster.map(t => ({ t })), { ...options, sim100: true }) : actualSignals;
@@ -992,10 +1021,44 @@
     const matches = (r, chip) => chip === 'eligible' ? eligible(r.ev) : this.chipMatch(r, chip, signalMap.get(r.t.tz));
     const selected = rows.filter(r => overviewIds ? overviewIds.has(r.t.tz) : matches(r, st.chip));
     const order = r => r.ev.tier === 5 ? 0 : r.ev.tier === 0 || r.ev.manualReview.required || r.ev.tier >= 3 || !eligible(r.ev) ? 2 : 1;
-    selected.sort((a, b) => order(b) - order(a) || b.ev.tier - a.ev.tier || natural(a.t.name, b.t.name) || natural(a.t.tz, b.t.tz));
-    const deferred = loadDeferred(), active = selected.filter(r => !deferred.has(r.t.tz)), lowered = selected.filter(r => deferred.has(r.t.tz));
+    const rowMeta = new Map();
+    const metaOf = r => {
+      let m = rowMeta.get(r.t.tz);
+      if (m) return m;
+      const noData = noBagrutData(signalMap.get(r.t.tz), options);
+      const b = UI.buildBagrutBreakdown(r.t, r.ev, { noData });
+      const offset = offsetInfo(r.ev);
+      const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${r.ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
+        !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
+      const blockerCount = b.noData || b.isTrack12 ? 0
+        : b.subjectCount + b.internalCount + b.other.length + (b.enforceUnits && b.totalUnits != null && b.totalUnits < 21 ? 1 : 0);
+      m = { noData, b, offset, summary, blockerCount };
+      rowMeta.set(r.t.tz, m);
+      return m;
+    };
+    const defaultCmp = (a, b) => order(b) - order(a) || b.ev.tier - a.ev.tier || natural(a.t.name, b.t.name) || natural(a.t.tz, b.t.tz);
+    const sortDir = workSort.dir === 'desc' ? -1 : 1;
+    const workComparator = (a, b) => {
+      if (workSort.key === 'name') {
+        return a.t.name.localeCompare(b.t.name, 'he') * sortDir || natural(a.t.tz, b.t.tz);
+      }
+      if (workSort.key === 'class') {
+        return natural(Config.classLabel(a.t.classKey), Config.classLabel(b.t.classKey)) * sortDir ||
+          a.t.name.localeCompare(b.t.name, 'he') || natural(a.t.tz, b.t.tz);
+      }
+      if (workSort.key === 'blockers') {
+        const ma = metaOf(a), mb = metaOf(b);
+        const primary = (order(b) - order(a)) || (mb.blockerCount - ma.blockerCount) || (b.ev.tier - a.ev.tier) ||
+          natural(ma.summary, mb.summary);
+        return primary * sortDir || a.t.name.localeCompare(b.t.name, 'he') || natural(a.t.tz, b.t.tz);
+      }
+      return defaultCmp(a, b);
+    };
+    const deferred = loadDeferred();
+    const active = selected.filter(r => !deferred.has(r.t.tz)).sort(workComparator);
+    const lowered = selected.filter(r => deferred.has(r.t.tz)).sort(workComparator);
     this._bagrutWorkIds = active.map(r => r.t.tz);
-    if (!selected.some(r => r.t.tz === st.workTz)) st.workTz = active.length ? active[0].t.tz : '';
+    if (!selected.some(r => r.t.tz === st.workTz)) st.workTz = active.length ? active[0].t.tz : (lowered.length ? lowered[0].t.tz : '');
     const quick = (id, label) => `<button type="button" class="gstat" data-act="bagrutChip" data-chip="${id}" aria-pressed="${st.chip === id}"><span>${label}</span><span>${rows.filter(r => matches(r, id)).length}</span></button>`;
     setHtml('bagrut-kpis', `<div class="card bagrut-work-summary">
       <div class="bagrut-work-metrics">${metric(todayCount, st.sim100 ? 'עומדים בתנאי סוף י״ב בסימולציה' : 'עומדים היום בתנאי סוף י״ב')}${metric(forecastCount, 'צפי לסוף השנה')}</div>
@@ -1006,12 +1069,9 @@
     const kpis = $('bagrut-kpis');
     if (kpis) kpis.classList.remove('hidden');
     const pinButton = t => `<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutPin" data-defer="true" data-tz="${E(t.tz)}" aria-pressed="${deferred.has(t.tz)}" aria-label="${deferred.has(t.tz) ? 'החזר למעלה' : 'הורד למטה'}: ${E(t.name)}">${deferred.has(t.tz) ? 'החזר למעלה' : 'הורד למטה'}</button>`;
-    const workRows = list => list.map(({ t, ev }) => {
-      const noData = noBagrutData(signalMap.get(t.tz), options);
-      const b = UI.buildBagrutBreakdown(t, ev, { noData });
-      const offset = offsetInfo(ev);
-      const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
-        !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
+    const workRows = list => list.map(r => {
+      const { t, ev } = r;
+      const { summary } = metaOf(r);
       return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${BagrutView.renderExceptionBadges.call(this, t, ev)}</td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');

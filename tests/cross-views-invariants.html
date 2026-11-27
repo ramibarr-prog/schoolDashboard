@@ -2313,6 +2313,60 @@ window.fetch = (input, options) => {
           'Returning restores the worklist without changing its selection');
         await tick(50);
       } finally { window.scrollTo = oldScrollTo; }
+
+      /* Worklist column sorting, deferred preservation, and navigation sync */
+      const sortRoster = [
+        stu(41, 'יב', 'יב2', { firstName: 'גיא', lastName: 'א' }),
+        stu(42, 'יב', 'יב10', { firstName: 'אדם', lastName: 'ב' }),
+        stu(43, 'יב', 'יב1', { firstName: 'דנה', lastName: 'ג' }),
+        stu(44, 'יב', 'יב2', { firstName: 'ברק', lastName: 'ד' })
+      ];
+      world({ roster: sortRoster, bagrut: bagrutRows([
+        ...profile(T(41), { '22283': 30, '22261': 30, '34221': 30, '34225': 30 }),
+        ...profile(T(42)),
+        ...profile(T(43), { '22283': null, '22261': 70 }),
+        ...profile(T(44))
+      ]) });
+      app.state.bagrut.workTz = T(43);
+      app.state.bagrut.workSort = { key: null, dir: 'asc' };
+      app.renderBagrutPanel();
+      const orderNow = () => [...$id('bagrut-table').querySelectorAll('.bagrut-work-students tbody tr[data-act="bagrutWorkSelect"]')].map(tr => tr.dataset.tz);
+      const sortBtn = key => $id('bagrut-table').querySelector(`button.bagrut-sort-btn[data-sort="${key}"]`);
+      const defaultOrder = orderNow();
+      check(defaultOrder[0] === T(41) && defaultOrder[1] === T(43), 'Default worklist order puts uneligible/risk students first');
+
+      click.fn({ target: sortBtn('name') });
+      same(orderNow(), [T(42), T(44), T(41), T(43)], 'Name sort click 1 sorts ascending in Hebrew');
+      same(sortBtn('name').closest('th').getAttribute('aria-sort'), 'ascending', 'Name column exposes aria-sort=ascending');
+      same(app.state.bagrut.workTz, T(43), 'Selected student stays selected after sorting');
+      click.fn({ target: sortBtn('name') });
+      same(orderNow(), [T(43), T(41), T(44), T(42)], 'Name sort click 2 sorts descending in Hebrew');
+      same(sortBtn('name').closest('th').getAttribute('aria-sort'), 'descending', 'Name column exposes aria-sort=descending');
+      app.acts.bagrutWorkStep.call(app, { dataset: { step: '1' } });
+      same(app.state.bagrut.workTz, T(41), 'Next button steps according to the active sorted order');
+      click.fn({ target: sortBtn('name') });
+      same(orderNow(), defaultOrder, 'Name sort click 3 returns to default order');
+      same(sortBtn('name').closest('th').getAttribute('aria-sort'), 'none', 'Reset clears aria-sort to none');
+
+      click.fn({ target: sortBtn('class') });
+      same(orderNow(), [T(43), T(44), T(41), T(42)], 'Class sort ascending uses Hebrew natural order (יב1, יב2, יב10)');
+      click.fn({ target: sortBtn('class') });
+      same(orderNow(), [T(42), T(44), T(41), T(43)], 'Class sort descending reverses class order with name tie-breaker');
+      click.fn({ target: sortBtn('default') });
+      same(orderNow(), defaultOrder, 'Clicking list-order column header resets to default order');
+
+      click.fn({ target: sortBtn('blockers') });
+      same(orderNow().slice(0, 2), [T(41), T(43)], 'Blockers sort ascending places more severe/blocking students first');
+      click.fn({ target: sortBtn('blockers') });
+      same(orderNow().slice(-2), [T(43), T(41)], 'Blockers sort descending places eligible students first');
+
+      click.fn({ target: row(T(42)).querySelector('[data-act="bagrutPin"]') });
+      click.fn({ target: sortBtn('name') });
+      same(orderNow(), [T(44), T(41), T(43), T(42)], 'Deferred student stays grouped at the bottom even when sorted by name');
+      same(app._bagrutWorkIds, [T(44), T(41), T(43)], 'Active navigation list excludes deferred student and follows sorted order');
+      click.fn({ target: row(T(42)).querySelector('[data-act="bagrutPin"]') });
+      click.fn({ target: sortBtn('default') });
+
       windowListeners.forEach(args => window.removeEventListener(...args));
     });
 

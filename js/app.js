@@ -34,7 +34,7 @@ const App = {
     tab: 'overview',
     filters: { grade: 'all', cls: 'all', track: 'all', q: '' },
     sim: { ignoreInternals: false, plus5: false, useCurrent: true, fullMode: false },
-    bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all', sim100: false },
+    bagrut: { chip: 'all', sort: 'tier', dir: -1, drill: 'all', mxSort: 'class', mxDir: 1, targetSort: 'subject', targetDir: 1, onlyPending: false, readinessClass: '', readinessFilter: 'all', sim100: false, workSort: { key: null, dir: 'asc' } },
     /* היקף השכבות בלשונית הבגרות כשסינון השכבה הגלובלי הוא "הכל": '12' (ברירת מחדל) / '11' / '10' / 'all' */
     bagrutScope: '12',
     bagrutScopeSet: false,
@@ -1448,6 +1448,7 @@ const App = {
     modalBackdrop(el, e) { if (e.target === el) this.closeModal(); },
     mxPop(el) { return BagrutView.mxPop.call(this, el); },
     bagrutMode(el) { return BagrutView.bagrutMode.call(this, el); },
+    bagrutWorkSort(el) { return BagrutView.workSort.call(this, el); },
     bagrutWorkSelect(el) { return BagrutView.workSelect.call(this, el); },
     bagrutWorkStep(el) { return BagrutView.workStep.call(this, el); },
     bagrutWorkGrade12() { return BagrutView.workGrade12.call(this); },
