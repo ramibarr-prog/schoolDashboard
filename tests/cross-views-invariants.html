@@ -2128,6 +2128,34 @@ window.fetch = (input, options) => {
       pendingApp.renderBagrutPanel();
       check($id('bagrut-kpis').textContent.includes(`צפי לסוף השנה: ${adaptiveForecast} מתוך 2`),
         'Forecast uses adaptive mode when grade-12 exams have not yet been reported');
+
+      Config.setException(T(31), { isException: true, overrideStatus: 'twelve', reason: 'ועדה פדגוגית <בדיקה>' });
+      Config.setException(T(32), { isException: true, overrideStatus: 'eligible', reason: 'אישור עולה חדש' });
+      pendingApp.evals.clear();
+      pendingApp.state.bagrut.workTz = T(31);
+      pendingApp.renderBagrutPanel();
+      const workRowOf = tz => $id('bagrut-table').querySelector(`tr[data-act="bagrutWorkSelect"][data-tz="${tz}"]`);
+      const badgesIn = root => [...root.querySelectorAll('.bagrut-exc-badges .badge')].map(el => el.textContent.trim());
+      same(badgesIn(workRowOf(T(31))), ['12 שנות לימוד', 'מוחרג מחישוב'], '12-years and excluded-from-auto badges render without duplication in workRows');
+      same(workRowOf(T(31)).querySelector('.bagrut-exc-badge').getAttribute('title'), 'ועדה פדגוגית <בדיקה>', 'Exception reason tooltip is attached and escaped on workRows badge');
+      let workDetail = $id('bagrut-table').querySelector('.bagrut-work-detail header');
+      same(badgesIn(workDetail), ['12 שנות לימוד', 'מוחרג מחישוב'], '12-years and excluded-from-auto badges render in detail header');
+      check(workDetail.querySelector('.bagrut-exc-reason') &&
+        workDetail.querySelector('.bagrut-exc-reason').textContent.includes('ועדה פדגוגית <בדיקה>'), 'Exception reason is shown in detail header');
+      same(badgesIn(workRowOf(T(32))), ['מוחרג מחישוב', '⚡ זכאי - חריג'], 'Excluded-from-auto and decided override badges render in workRows');
+      same(workRowOf(T(32)).querySelector('.bagrut-exc-badge.is-eligible').getAttribute('title'), 'אישור עולה חדש', 'Override badge carries exception reason tooltip');
+      pendingApp.acts.bagrutWorkSelect.call(pendingApp, workRowOf(T(32)));
+      workDetail = $id('bagrut-table').querySelector('.bagrut-work-detail header');
+      same(badgesIn(workDetail), ['מוחרג מחישוב', '⚡ זכאי - חריג'], 'Excluded-from-auto and decided override badges render in detail header');
+      check(workDetail.querySelector('.bagrut-exc-reason') &&
+        workDetail.querySelector('.bagrut-exc-reason').textContent.includes('אישור עולה חדש'), 'Override reason is shown in detail header');
+      Config.setException(T(31), { isException: false, overrideStatus: '', reason: '' });
+      Config.setException(T(32), { isException: false, overrideStatus: '', reason: '' });
+      pendingApp.evals.clear();
+      pendingApp.renderBagrutPanel();
+      same([badgesIn(workRowOf(T(31))), badgesIn(workRowOf(T(32))), badgesIn($id('bagrut-table').querySelector('.bagrut-work-detail header'))],
+        [[], [], []], 'Clearing the exception removes all exception and 12-years badges from workRows and detail');
+      check(!$id('bagrut-table').querySelector('.bagrut-exc-reason'), 'Clearing the exception removes the reason from detail');
     });
 
     await group('Worklist internal subjects', async () => {

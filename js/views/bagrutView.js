@@ -429,6 +429,42 @@
   }
 
   window.BagrutView = {
+  renderExceptionBadges(t, ev, opts = {}) {
+    if (!t) return '';
+    const track = this && typeof this.trackOf === 'function'
+      ? this.trackOf(t)
+      : Config.trackFor(t.tz, t.track, t.classKey);
+    const ex = Config.getException(t.tz);
+    const isManual = Boolean((ev && ev.manual) || ex.isException);
+    const rawOverride = isManual ? ((ev && ev.overrideStatus) || ex.overrideStatus || 'atrisk') : '';
+    const ovEntry = isManual
+      ? (Config.OVERRIDE_STATUSES.find(s => s.value === rawOverride || s.short === rawOverride || s.label === rawOverride) || Config.OVERRIDE_STATUSES[1])
+      : null;
+    const isTwelve = Boolean(
+      (ev && (ev.tier === 5 || ev.paceStatus === 'twelve_years' || ev.overrideStatus === 'twelve')) ||
+      (ovEntry && (ovEntry.value === 'twelve' || ovEntry.tier === 5))
+    );
+    const reason = isManual ? String((ev && ev.exceptionReason) || ex.reason || '').trim() : '';
+    const items = [], seen = new Set();
+    const push = (text, cls, title = '') => {
+      if (!text || seen.has(text)) return;
+      seen.add(text);
+      items.push(`<span class="badge ${cls}"${title ? ` title="${E(title)}"` : ''}>${E(text)}</span>`);
+    };
+    if (track === Config.SPECIAL_ED) push(Config.SPECIAL_ED, 'tier-0 bagrut-track-badge');
+    if (isTwelve) push('12 שנות לימוד', 'tier-5 bagrut-track-badge', reason);
+    if (isManual) {
+      push('מוחרג מחישוב', 'badge-exc bagrut-exc-badge', reason);
+      if (ovEntry && ovEntry.value !== 'twelve' && ovEntry.tier !== 5) {
+        const tone = ovEntry.tier <= 2 ? ' is-eligible' : ovEntry.tier >= 4 ? ' is-bad' : '';
+        push(`⚡ ${ovEntry.short || ovEntry.label}`, `badge-exc bagrut-exc-badge${tone}`, reason);
+      }
+    }
+    const badgesHtml = items.length ? ` <span class="bagrut-exc-badges">${items.join(' ')}</span>` : '';
+    const reasonHtml = opts.showReason && reason ? ` <small class="bagrut-exc-reason">סיבת החריג: ${E(reason)}</small>` : '';
+    return badgesHtml + reasonHtml;
+  },
+
   bagrutSubjectChange(value) {
     if (this.state.bagrut.targets) return;
     Object.assign(this.state.bagrut, { drill: value, readinessClass: '', readinessFilter: 'all', targets: false });
@@ -811,8 +847,7 @@
       const offset = offsetInfo(ev);
       const summary = !b.noData && !b.isTrack12 && offset.rejected ? `${ev.manual ? 'בבדיקה האוטומטית: ' : ''}לא ניתן להחיל קיזוז או קומפנסציה` :
         !b.noData && !b.isTrack12 && offset.pending ? `${b.cellSummary} · הקיזוז או הפיצוי מותנים בציונים החסרים` : b.cellSummary;
-      const isSpecial = this.trackOf(t) === Config.SPECIAL_ED;
-      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${isSpecial ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</td>
+      return `<tr class="${t.tz === st.workTz ? 'is-selected' : ''}" data-act="bagrutWorkSelect" data-tz="${E(t.tz)}"><td><button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${BagrutView.renderExceptionBadges.call(this, t, ev)}</td>
         <td>${E(Config.classLabel(t.classKey))}</td><td>${E(summary)}</td><td>${pinButton(t)}</td></tr>`;
     }).join('');
     const selectedRow = selected.find(r => r.t.tz === st.workTz);
@@ -948,8 +983,7 @@
       }
       const position = index < 0 ? active.length + lowered.findIndex(r => r.t.tz === t.tz) + 1 : index + 1;
       const eligibility = eligible(ev);
-      const isSpecial = this.trackOf(t) === Config.SPECIAL_ED;
-      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}${isSpecial ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</h2>
+      detail = `<header><h2>${E(t.name)} · ${E(Config.classLabel(t.classKey))}${BagrutView.renderExceptionBadges.call(this, t, ev, { showReason: true })}</h2>
         <p>י״ב · ${position} מתוך ${selected.length} חניכים${index < 0 ? ' · חניך שהורד למטה' : ''}</p>
         <span class="bagrut-subject-status is-${eligibility ? 'pass' : 'bad'}">${eligibility ? 'זכאי' : 'לא זכאי כרגע'}${!eligibility && !b.noData && !b.isTrack12 && offset.rejected ? ' - לא זכאי לקיזוז או קומפנסציה' : ''}${st.sim100 ? ' (סימולציה)' : ''}</span>
         <div class="bagrut-work-actions"><button type="button" class="btn btn-ghost btn-sm" data-act="bagrutWorkStep" data-step="-1" ${index <= 0 ? 'disabled' : ''}>חניך קודם</button>
@@ -1626,7 +1660,7 @@
       const breakdown = UI.buildBagrutBreakdown(t, ev, { noData: unknown });
       return `<tr class="${pins.has(t.tz) ? 'bagrut-pinned-row' : ''}${this.state.bagrut.drawerTz === t.tz ? ' bg-drawer-row-active' : ''}" data-act="bagrutDrawerOpen" data-tz="${E(t.tz)}" tabindex="0" aria-label="${E(`פירוט זכאות: ${t.name}`)}">
         <td><div class="bagrut-student"><button type="button" class="bagrut-pin" data-act="bagrutPin" data-tz="${E(t.tz)}" aria-pressed="${pins.has(t.tz)}" aria-label="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}: ${E(t.name)}" title="${pins.has(t.tz) ? 'הסר ממעקב צמוד' : 'הוסף למעקב צמוד'}">${pins.has(t.tz) ? '★' : '☆'}</button>
-        <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${this.trackOf(t) === Config.SPECIAL_ED ? ' <span class="badge tier-0">חנ"מ</span>' : ''}</div></td>
+        <button type="button" class="bagrut-name" data-act="openProfile" data-tz="${E(t.tz)}" title="ת.ז ${E(t.tz)}">${E(t.name)}</button>${BagrutView.renderExceptionBadges.call(this, t, ev)}</div></td>
         ${showClass ? `<td>${E(Config.classLabel(t.classKey))}</td>` : ''}
         <td>${status(ev, signal)}</td><td class="bagrut-required bg-drawer-required" tabindex="0" data-breakdown-lines="${E(JSON.stringify(breakdown.tooltipLines))}"><span>${E(breakdown.cellSummary)}</span></td>
         ${cells.map(renderCell).join('')}</tr>`;
