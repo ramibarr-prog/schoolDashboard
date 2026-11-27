@@ -1319,7 +1319,7 @@ window.fetch = (input, options) => {
             const display = app.subjectDisplayCell(ev, s.id);
             check((cell.dataset.tip || '').startsWith(display.tip), `${label}/${s.name}: tooltip matches advisor details`);
             const profileValue = s.incomplete ? display.text : s.reportedScore != null && (s.pending.length || s.unresolved.length) ? Util.fmt(s.reportedScore, 0) : s.adj != null ? Util.fmt(s.adj, 0) : null;
-            if (profileValue != null && !s.exempt) check(cell360[5].includes(profileValue), `${label}/${s.name}: 360 value matches engine/advisor`);
+            if (profileValue != null && !s.exempt) check(cell360[3].includes(profileValue), `${label}/${s.name}: 360 value matches engine/advisor`);
             s.comps.forEach(c => check((cell.dataset.tip || '').includes(`שאלון ${c.code}`) && profile360.innerHTML.includes(`שאלון ${c.code}`), `${label}/${s.name}: questionnaire ${c.code} must be detailed in both views`));
           });
 
@@ -1332,7 +1332,7 @@ window.fetch = (input, options) => {
           same(breakdown.totalUnits, breakdown.noData ? null : ev.totalUnits, `${label}: units match engine`);
           const unitsLabel = breakdown.totalUnits == null ? 'לא ניתן לקבוע יח״ל' : breakdown.enforceUnits
             ? `${breakdown.totalUnits} מתוך 21 יח״ל` : `${breakdown.totalUnits} יח״ל נצברו עד כה`;
-          check(badges.includes(unitsLabel), `${label}: 360 units match engine and breakdown`);
+          check(profile360.textContent.includes(unitsLabel), `${label}: 360 units match engine and breakdown`);
           if (!breakdown.noData && !breakdown.isTrack12) {
             const internalBlockers = [...new Set(ev.blockers.filter(b => !b.info && b.gate === 3)
               .map(b => (ev.internals.find(i => b.text.includes(i.name)) || {}).name || b.text))];
@@ -1345,7 +1345,7 @@ window.fetch = (input, options) => {
                 : ev.blockers.some(b => !b.info && b.gate === 1 && b.k !== 'units' && (b.subject === subject.id || b.text.includes(subject.name)));
               if (isBlocked) check(breakdown.subjects.some(s => s.name === subject.name && s.tags.length), `${label}: breakdown includes engine blocker ${subject.name}`);
             });
-            check(badges.includes(`${breakdown.subjectCount} מקצועות חוסמים · ${breakdown.internalCount} חסמים פנימיים`), `${label}: 360 blocker counts`);
+            check(profile360.textContent.includes(`${breakdown.subjectCount} מקצועות חוסמים · ${breakdown.internalCount} חסמים פנימיים`), `${label}: 360 blocker counts`);
           }
           BagrutView.bagrutDrawerOpen.call(app, tr);
           const drawer = $id('bagrut-breakdown-drawer'), metrics = [...drawer.querySelectorAll('.bg-bd-metric strong')].map(el => el.textContent);
@@ -1746,12 +1746,17 @@ window.fetch = (input, options) => {
               if (groupsReady) {
                 checkPlacementCategories(app, am, `${label}/${showRoutineDuplicates}`);
               }
-              const t = list[0], mine = app.placementAnomaliesModel([t]);
+              const t = list[0], mapModel = app.studentMapModel(t.tz);
+              const mapIssues = mapModel ? mapModel.tiles.filter(x => x.status !== 'ok') : [];
+              const issueCount = mapIssues.length;
               app.state.profileTz = t.tz;
               app.renderTrainee360Panel();
               const placement = $id('profKpis').lastElementChild;
-              same(placement.querySelector('.v').textContent, mine.total ? mine.total === 1 ? 'חריגה אחת' : `${mine.total} חריגות` : '✓ תקין', `${label}: 360 placement count`);
-              if (mine.total) same(placement.querySelector('.s').textContent, mine.byTrainee.get(t.tz).text, `${label}: 360 placement detail`);
+              same(placement.querySelector('.v').textContent, issueCount ? issueCount === 1 ? 'חריגה אחת' : `${issueCount} חריגות` : '✓ תקין', `${label}: 360 placement count matches studentMapModel 1:1`);
+              if (issueCount) same(placement.querySelector('.s').textContent, mapIssues.map(x => `${x.label}: ${x.sub}`).join(' · '), `${label}: 360 placement detail matches studentMapModel`);
+              const sections = [...$id('profBody').querySelectorAll('details.p360-sec')];
+              check(sections.length === 4 && sections.every(d => !d.open), `${label}: all 4 collapsible 360 sections start closed by default`);
+              check($id('profBody').contains($id('excNote')) && !$id('excNote').closest('details'), `${label}: coordinator note stays always visible outside collapsible sections`);
             }
             const m = app.overviewModel(), attention = app.attentionModel(list, m.rows, m.sheet);
             same([...app.attentionTzs()].sort(), [...m.attention].sort(), `${label}: attentionTzs`);
