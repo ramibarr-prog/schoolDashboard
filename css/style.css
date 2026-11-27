@@ -101,6 +101,15 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .bagrut-work-detail h2 { color: var(--forest); font-size: 1.1rem; font-weight: 700; }
 .bagrut-work-detail h3 { margin-top: .75rem; font-weight: 700; }
 .bagrut-work-detail ul { margin: .4rem 1.2rem; list-style: disc; }
+.bagrut-internal-details { margin-top: .75rem; border: 1px solid var(--card-border); border-radius: .6rem; font-size: .8rem; }
+.bagrut-internal-details summary { padding: .55rem .7rem; color: var(--forest); font-weight: 700; cursor: pointer; }
+.bagrut-internal-details summary:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.bagrut-internal-details summary .bagrut-subject-status { margin-inline-start: .4rem; }
+.bagrut-internal-details ul, .bagrut-work-detail .bagrut-internal-details ul { margin: 0; padding: 0 .7rem .4rem; list-style: none; }
+.bagrut-internal-details li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3rem .6rem; padding: .4rem 0; border-top: 1px solid var(--card-border); }
+.bagrut-internal-result { display: inline-flex; align-items: center; gap: .5rem; }
+.bagrut-internal-hint { color: var(--muted); font-size: .7rem; font-weight: 400; }
+.bagrut-internal-details p, .bagrut-work-detail .bagrut-internal-details p { margin: .4rem .7rem; color: var(--muted); font-size: .8rem; }
 .bagrut-work-actions { margin-top: 1rem; }
 @media (min-width: 801px) {
   #panel-bagrut #bagrut-table:has(> .bagrut-work-layout) {

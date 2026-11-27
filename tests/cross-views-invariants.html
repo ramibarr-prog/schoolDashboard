@@ -2120,6 +2120,89 @@ window.fetch = (input, options) => {
         'Forecast uses adaptive mode when grade-12 exams have not yet been reported');
     });
 
+    await group('Worklist internal subjects', async () => {
+      resetConfig();
+      const roster = [201, 202, 203, 204, 205].map(n => stu(n, 'יב', 'יב1'));
+      world({ roster, bagrut: bagrutRows([
+        ...profile(T(201)),
+        ...profile(T(202), { '43183': null }),
+        ...profile(T(203), { '43183': 40 }),
+        ...profile(T(204), { '43183': null, '43351': 80 }),
+        ...profile(T(205), { '43183': 'חסם' })
+      ]) });
+      const app = newApp({ grade: 'יב' });
+      app.state.tab = 'bagrut';
+      app.renderBagrutPanel();
+      const choose = tz => app.acts.bagrutWorkSelect.call(app, $id('bagrut-table').querySelector(`[data-act="bagrutWorkSelect"][data-tz="${tz}"]`));
+      const detail = () => $id('bagrut-table').querySelector('.bagrut-work-detail');
+      const panel = () => detail().querySelector('.bagrut-internal-details');
+      const science = () => [...panel().querySelectorAll('li')].find(li => li.textContent.includes('מבוא למדעים'));
+      const hint = 'ניתן לקבל פטור אם יש 2 מגמות מדעיות';
+      choose(T(201));
+      check(panel() && !panel().open && panel().querySelector('summary').textContent.includes('עובר (4/4)') &&
+        panel().querySelectorAll('li').length === 4 && science().textContent.includes('70') &&
+        science().textContent.includes('עובר') && !science().textContent.includes(hint),
+        'All passing internals appear in a collapsed panel with their grades');
+      [T(202), T(203), T(205)].forEach((tz, index) => {
+        choose(tz);
+        const status = index === 0 ? 'חסר' : 'נכשל';
+        const heading = [...detail().querySelectorAll('h3')].find(h => h.textContent === 'מה עוד חוסם או חסר');
+        const issue = [...heading.nextElementSibling.querySelectorAll('li')].find(li => li.textContent.includes('מבוא למדעים'));
+        check(panel().previousElementSibling === heading.nextElementSibling &&
+          panel().querySelector('summary').textContent.includes('חסר / נכשל (3/4)') &&
+          science().querySelector('.bagrut-subject-status').textContent === status &&
+          science().textContent.includes(hint) && issue.textContent.includes(hint),
+          `${tz}: ${status} science shows its status and both hints`);
+      });
+      choose(T(204));
+      check(panel().querySelector('summary').textContent.includes('עובר (4/4)') &&
+        science().querySelector('.bagrut-subject-status').textContent === 'פטור' &&
+        !detail().textContent.includes(hint), 'Science exemption is counted as passing without a hint');
+      choose(T(202));
+      app.state.bagrut.ignoreInternals = true;
+      app.renderBagrutPanel();
+      check(panel().querySelector('summary').textContent.includes('חסר / נכשל (3/4)') &&
+        panel().textContent.includes('מוצגים הציונים בפועל'), 'Ignoring internals does not hide their actual status');
+      world({ roster: [stu(206, 'יב', 'יב1')] });
+      const unknownApp = newApp({ grade: 'יב' });
+      unknownApp.state.tab = 'bagrut';
+      unknownApp.renderBagrutPanel();
+      check(panel() && panel().querySelector('summary').textContent.includes('לא ניתן לקבוע') &&
+        !panel().textContent.includes(hint), 'Missing source data is not presented as a failed internal');
+
+      world({ roster: [stu(211, 'יא', 'יא1'), stu(212, 'יא', 'יא1')], bagrut: bagrutRows([
+        ...profile(T(211)),
+        ...profile(T(212), { '43183': null })
+      ]) });
+      const juniorApp = newApp({ grade: 'יא' });
+      juniorApp.state.tab = 'bagrut';
+      juniorApp.state.sim = { ...ADAPTIVE };
+      juniorApp.state.bagrut.overviewEntry = true;
+      juniorApp.renderBagrutPanel();
+      const openJunior = tz => BagrutView.bagrutDrawerOpen.call(juniorApp,
+        $id('bagrut-table').querySelector(`tr[data-act="bagrutDrawerOpen"][data-tz="${tz}"]`));
+      openJunior(T(211));
+      let drawer = $id('bagrut-breakdown-drawer');
+      check(drawer.querySelector('.bagrut-internal-details summary').textContent.includes('תקין לשלב בשנה'),
+        'Junior drawer reports internals according to the stage of the year');
+      openJunior(T(212));
+      drawer = $id('bagrut-breakdown-drawer');
+      check(drawer.querySelector('.bagrut-internal-details summary').textContent.includes('חסר / נכשל') &&
+        drawer.querySelectorAll('.bagrut-internal-hint').length === 2,
+        'Junior drawer shows a due missing science subject and both hints');
+      BagrutView.bagrutDrawerClose.call(juniorApp);
+
+      resetConfig();
+      Config.rulesForGrade('יב').internals.push({ id: 'extra', name: 'פנימי נוסף', codes: ['99983'], expectedGrade: 'יב' });
+      world({ roster: [stu(213, 'יב', 'יב1')], bagrut: bagrutRows(profile(T(213))) });
+      const extraApp = newApp({ grade: 'יב' });
+      extraApp.state.tab = 'bagrut';
+      extraApp.renderBagrutPanel();
+      check(panel().querySelectorAll('li').length === 5 &&
+        panel().querySelector('summary').textContent.includes('חסר / נכשל (4/5)'),
+        'The summary and list use the configured number of internal subjects');
+    });
+
     await group('Worklist row selection and splitter', async () => {
       resetConfig();
       const roster = [1, 2, 3].map(n => stu(n, 'יב', 'יב1')).concat(stu(21, 'יא', 'יא1'));
@@ -2341,7 +2424,9 @@ window.fetch = (input, options) => {
         'Fixture demonstrates the effect of ignoring internal units');
       toggle('ignoreInternals', true);
       check($id('bagrut-kpis').textContent.includes('מתעלמת מיחידות פנימיות') &&
-        !detail().textContent.includes('מעורבות חברתית'), 'Local evaluation and label reflect ignoring internal units');
+        detail().querySelector('.bagrut-internal-details').textContent.includes('מעורבות חברתית') &&
+        ![...detail().querySelectorAll('h3')].some(h => h.textContent === 'מה עוד חוסם או חסר' &&
+          h.nextElementSibling.textContent.includes('מעורבות חברתית')), 'Local evaluation ignores the blocker while retaining the actual internal status');
       same(JSON.stringify(app.state.sim), simBefore, 'Global mode is unchanged by both controls');
       same(JSON.stringify(app.overviewModel()), overviewBefore, 'Overview is unchanged by local controls');
       app.renderTrainee360Panel();

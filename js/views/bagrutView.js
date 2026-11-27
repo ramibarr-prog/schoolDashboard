@@ -9,6 +9,39 @@
     !signal.prereqs.hasBagrut && !(sim.useCurrent && signal.prereqs.hasSadin);
 
   const finalOptions = { fullMode: true, useCurrent: false, ignoreInternals: false, plus5: false };
+  const scienceHint = '<small class="bagrut-internal-hint">(ניתן לקבל פטור אם יש 2 מגמות מדעיות)</small>';
+
+  function internalStatus(item, ev, noData) {
+    if (noData) return 'לא ידוע';
+    if (item.exempt) return 'פטור';
+    if (item.done) return 'עובר';
+    if (item.explicitFail || typeof item.value === 'number' ||
+        ev.blockers.some(b => b.gate === 3 && b.k === 'bagrut-block' && b.text.includes(item.name))) return 'נכשל';
+    return 'חסר';
+  }
+
+  function renderInternalDetails(ev, noData) {
+    const items = ev.internals.map(item => ({ ...item, status: internalStatus(item, ev, noData) }));
+    const adaptive = ev.rank < 12 && ev.adaptive;
+    const due = adaptive ? items.filter(item => item.required) : items;
+    const passed = due.filter(item => item.status === 'עובר' || item.status === 'פטור').length;
+    const ok = passed === due.length;
+    const summary = noData || !items.length ? 'לא ניתן לקבוע' :
+      adaptive ? (ok ? 'תקין לשלב בשנה' : 'חסר / נכשל') :
+        `${ok ? 'עובר' : 'חסר / נכשל'} (${passed}/${due.length})`;
+    const statusClass = noData || !items.length ? 'neutral' : ok ? 'pass' : 'bad';
+    const rows = items.map(item => {
+      const state = item.status === 'עובר' || item.status === 'פטור' ? 'pass' : item.status === 'לא ידוע' ? 'neutral' : 'bad';
+      const value = typeof item.value === 'number' ? Util.fmt(item.value, 1) :
+        item.value === 'pass' ? 'עבר' : item.value === 'fail' ? 'נכשל' : '—';
+      return `<li><span><strong>${E(item.name)}</strong>${!noData && adaptive && !item.required && !item.done && !item.exempt ? ' <small class="bagrut-internal-hint">(טרם נדרש לשלב בשנה)</small>' : ''}${item.id === 'science' && (item.status === 'נכשל' || item.status === 'חסר') ? ` ${scienceHint}` : ''}</span>
+        <span class="bagrut-internal-result"><span>ציון: <bdi>${E(value)}</bdi></span><span class="bagrut-subject-status is-${state}">${E(item.status)}</span></span></li>`;
+    }).join('');
+    return `<details class="bagrut-internal-details"><summary><span>מקצועות פנימיים (שער 3)</span> <span class="bagrut-subject-status is-${statusClass}">${E(summary)}</span></summary>
+      ${items.length ? `<ul>${rows}</ul>` : '<p>אין מקצועות פנימיים מוגדרים.</p>'}
+      ${items.some(item => item.ignored) ? '<p>הבדיקה מתעלמת מהיחידות הפנימיות; מוצגים הציונים בפועל.</p>' : ''}
+    </details>`;
+  }
 
   const PINS_KEY = 'schoolDashboard.bagrut.pins.v1';
   const DEFERRED_KEY = 'sd.bagrut.deferred.v1';
@@ -251,8 +284,9 @@
     }
     const options = row.t.gradeKey === 'יב' && app.state.bagrut.overviewEntry && app.state.filters.grade === 'all'
       ? finalOptions : app.state.sim;
+    const noData = noBagrutData(signals.get(tz), options);
     const breakdown = UI.buildBagrutBreakdown(row.t, row.ev, {
-      className: Config.classLabel(row.t.classKey), noData: noBagrutData(signals.get(tz), options)
+      className: Config.classLabel(row.t.classKey), noData
     });
     const cells = app._bagrutMatrixRows && app._bagrutMatrixRows.get(tz);
     if (!cells) throw new Error('חסרים נתוני שורת הזכאות למגירת החניך');
@@ -270,6 +304,15 @@
         forecastOnly: cell.forecastOnly };
     });
     drawer.innerHTML = `<button type="button" class="bg-drawer-close" data-act="bagrutDrawerClose" aria-label="סגירת פירוט זכאות">✕</button>${UI.renderBagrutBreakdown(breakdown, { showHeader: true, showPin: true, pinned: loadPins().has(tz), showOpen360: true, matrixSubjects })}`;
+    const internalSection = [...drawer.querySelectorAll('.bg-drawer-body > section')]
+      .find(section => section.querySelector('h3').textContent === 'חסמים במקצועות פנימיים');
+    if (!internalSection) throw new Error('חסר אזור החסמים הפנימיים במגירת הזכאות');
+    const science = row.ev.internals.find(item => item.id === 'science');
+    if (science && ['חסר', 'נכשל'].includes(internalStatus(science, row.ev, noData))) {
+      const tag = [...internalSection.querySelectorAll('.bg-bd-tag')].find(el => el.textContent === science.name);
+      if (tag) tag.insertAdjacentHTML('afterend', ` ${scienceHint}`);
+    }
+    internalSection.insertAdjacentHTML('afterend', renderInternalDetails(row.ev, noData));
     table.querySelectorAll('tr[data-act="bagrutDrawerOpen"]').forEach(el => el.classList.toggle('bg-drawer-row-active', el.dataset.tz === tz));
   }
 
@@ -859,6 +902,8 @@
       }).join('');
       const other = !b.noData && !b.isTrack12 ? issues.filter(x =>
         !(x.gate === 1 && x.k !== 'units' && ev.subjects.some(s => x.subject === s.id || x.text.includes(s.name)))) : [];
+      const science = ev.internals.find(item => item.id === 'science');
+      const scienceNeedsHint = science && ['נכשל', 'חסר'].includes(internalStatus(science, ev, noData));
       const impossibleSubjects = actualEv.subjects.filter(s => s.reverse && s.reverse.required30 > 100 &&
         s.unresolved.concat(s.pending).every(c => c.internal) && target30(s, actualEv, rules));
       const singleImpossible = impossibleSubjects.length === 1 ? impossibleSubjects[0] : null;
@@ -908,8 +953,9 @@
         ${pinButton(t)}<button type="button" class="btn btn-primary btn-sm" data-act="openProfile" data-tz="${E(t.tz)}">פתח כרטיס חניך 360°</button></div></header>
         ${ev.manual ? '<p>קיימת הכרעה ידנית; הפרטים מציגים גם את החישוב האוטומטי.</p>' : ''}
         <div class="bagrut-work-subject-scroll"><table class="bagrut-work-subjects" data-width-group="subjects" style="width:${subjectColumns.width};min-width:100%"><colgroup>${subjectColumns.cols}</colgroup><thead><tr>${subjectColumns.headers}</tr></thead><tbody>${subjects}${majors}</tbody></table></div>
-        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint || offsetExplanation ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}${offsetExplanation ? `<li>${E(offsetExplanation)}</li>` : ''}</ul>` : ''}
-        ${review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}`}
+        ${b.noData || b.isTrack12 ? `<p>${E(b.cellSummary)}</p>` : `${other.length || compensationHint || offsetExplanation ? `<h3>מה עוד חוסם או חסר</h3><ul>${other.map(x => `<li>${E(x.text)}${scienceNeedsHint && x.gate === 3 && x.text.includes(science.name) ? ` ${scienceHint}` : ''}</li>`).join('')}${compensationHint ? `<li>${E(compensationHint)}</li>` : ''}${offsetExplanation ? `<li>${E(offsetExplanation)}</li>` : ''}</ul>` : ''}`}
+        ${renderInternalDetails(ev, noData)}
+        ${!b.noData && !b.isTrack12 && review.length ? `<h3>נדרשת בדיקת רכזת</h3><ul>${review.map(x => `<li>${E(x)}</li>`).join('')}</ul>` : ''}
         ${simulation}`;
     }
     const workSplit = loadWorkSplit();
