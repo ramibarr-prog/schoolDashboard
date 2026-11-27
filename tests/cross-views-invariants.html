@@ -885,27 +885,27 @@ window.fetch = (input, options) => {
         listeners.forEach(({ type, fn, options }) => $id('stage').addEventListener(type, fn, options));
         const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         const pop = () => $id('groups-student-map').querySelector('.student-map-popover');
-        const trigger = tz => $id('groups-table').querySelector(`[data-act="studentMap"][data-tz="${tz}"]`);
+        const rowEl = tz => $id('groups-table').querySelector(`tr[data-act="studentMap"][data-tz="${tz}"]`);
         const modalOpen = () => !!($id('modal-root') && $id('modal-root').children.length);
         try {
           app.renderGroupsPanel();
-          const sample = trigger(T(109));
-          check(sample && sample.textContent.trim() === 'מפת שיבוצים' && !$id('groups-table').textContent.includes('מפת חניך'), 'The table action is named "מפת שיבוצים"');
-          click(sample);
-          check(!!pop() && !$id('groups-student-map').classList.contains('hidden'), 'The placement map opens as a floating popover');
+          const row109 = rowEl(T(109));
+          check(!!row109 && !$id('groups-table').querySelector('button[data-act="studentMap"]') && !$id('groups-table').textContent.includes('מפת חניך'), 'Anomaly table rows are clickable directly with no redundant map button');
+          click(row109.children[1]);
+          check(!!pop() && !$id('groups-student-map').classList.contains('hidden'), 'Clicking the homeroom cell on a row opens the floating placement map popover');
           check(!$id('groups-table').classList.contains('hidden') && tzsIn($id('groups-table')).includes(T(109)) && tzsIn($id('groups-table')).includes(T(110)), 'The placement anomalies table stays visible and unfiltered behind the popover');
           check(app.state.selectedSearchTz === null && $id('globalSearch').value === '' && app.state.filters.q === '', 'Opening the map neither locks the student nor changes the global search');
           check(pop().querySelectorAll('.sm-count').length === 3 && pop().textContent.includes('תקינים') && pop().textContent.includes('לבדיקה') && pop().textContent.includes('ללא שיבוץ'), 'The popover shows exactly three counters');
           check(!pop().querySelector('table') && !/ממוצע|סדין|זכאות|בגרות/.test(pop().textContent), 'The popover shows no grades, sadin data, eligibility data or tables');
           const missing = pop().querySelector('.sm-tile-missing');
-          check(missing && missing.dataset.subject === histName() && missing.querySelector('.sm-icon').textContent === '−' && missing.querySelector('.sm-tile-sub').textContent === 'אין קבוצה', 'A missing subject is a quiet tile with a "-" icon and "אין קבוצה"');
-          check(pop().querySelector('.sm-attention') && pop().querySelector('.sm-attention').textContent.includes('לא נמצא שיבוץ') && pop().querySelector('.sm-verdict-attention'), 'The attention list and the "דורש טיפול" status appear when a subject is missing');
-          check(pop().querySelectorAll('.sm-tile [data-act]').length === 0 && pop().querySelectorAll('button[data-act="inspectGroups"]').length === pop().querySelectorAll('.sm-tile, .sm-issue').length, 'There are no repeated compare buttons: only the tiles and attention rows open the comparison');
+          check(missing && missing.dataset.subject === histName() && missing.querySelector('.sm-icon').textContent === '−' && missing.querySelector('.sm-tile-sub').textContent === 'אין קבוצה', 'A missing subject is a highlighted tile with a "-" icon and "אין קבוצה"');
+          check(!pop().querySelector('.sm-attention') && !pop().textContent.includes('דורש תשומת לב') && pop().querySelector('.sm-verdict-attention'), 'No duplicate "דורש תשומת לב" section is rendered while the status badge reflects attention needed');
+          check(pop().querySelectorAll('.sm-tile [data-act]').length === 0 && pop().querySelectorAll('button[data-act="inspectGroups"]').length === pop().querySelectorAll('.sm-tile').length, 'Only the subject tiles open the group comparison');
 
           app.acts.studentMap.call(app, { dataset: { tz: T(101) } });
-          check(pop().dataset.tz === T(101) && pop().querySelector('.sm-tile-ok .sm-icon').textContent === '✓' && !pop().querySelector('.sm-attention') && pop().querySelector('.sm-verdict-ok'), 'A fully placed student shows a ✓ tile, no attention list and "הכול תקין"');
+          check(pop().dataset.tz === T(101) && pop().querySelector('.sm-tile-ok .sm-icon').textContent === '✓' && pop().querySelector('.sm-verdict-ok'), 'A fully placed student shows a ✓ tile and "הכול תקין"');
 
-          click(trigger(T(109)));
+          click(rowEl(T(109)).children[1]);
           click(pop().querySelector('.sm-tile-missing'));
           check(modalOpen() && $id('modal-root').textContent.includes('בדיקת קבוצות יעד במקצוע') && !!pop(), 'Clicking a tile opens the group comparison above the map without closing it');
           $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -913,13 +913,20 @@ window.fetch = (input, options) => {
           $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           check(!pop() && app.state.studentMapTz === null && $id('groups-student-map').classList.contains('hidden'), 'A second Escape closes the floating map');
 
-          click(trigger(T(109)));
-          click($id('groups-table'));
+          click(rowEl(T(109)).querySelector('[data-groups-treated]'));
+          check(!pop(), 'Clicking "הורד לסוף" does not open the placement map');
+          click(rowEl(T(109)).querySelector('[data-groups-treated]'));
+          click(rowEl(T(109)).querySelector('[data-act="openProfile"]'));
+          check(app.state.tab === 'profile' && app.state.profileTz === T(109) && !pop(), 'Clicking the student name opens 360 profile and does not open the placement map');
+          app.showTab('groups');
+
+          click(rowEl(T(109)).children[1]);
+          click($id('groups-table').querySelector('thead'));
           check(!pop(), 'Clicking outside the popover closes it');
-          click(trigger(T(109)));
+          click(rowEl(T(109)).children[1]);
           click(pop().querySelector('.sm-close'));
           check(!pop(), 'The ✕ button closes the popover');
-          click(trigger(T(109)));
+          click(rowEl(T(109)).children[1]);
           click(pop().querySelector('.sm-foot [data-act="studentMapClose"]'));
           check(!pop(), 'The footer close button closes the popover');
 
@@ -940,13 +947,16 @@ window.fetch = (input, options) => {
         }
       });
 
-      await part('Placement map accuracy: reinforcement is not a duplicate and routine duplicates stay quiet', async () => {
+      await part('Placement map accuracy: outlier reason in tile, fixed subject order, reinforcement and routine duplicates', async () => {
         resetConfig();
         const grp = (n, gid, cls = 'יב1') => ({ tz: T(n), grade: 'יב', cls, gid });
-        world({ roster: [stu(331, 'יב', 'יב1'), stu(332, 'יב', 'יב1'), stu(333, 'יב', 'יב2')], groups: groupRows([
+        world({ roster: [stu(331, 'יב', 'יב1'), stu(332, 'יב', 'יב1'), stu(333, 'יב', 'יב3'), stu(334, 'יב', 'יב1'), stu(335, 'יב', 'יב1'), stu(337, 'יב', 'יב1'), stu(338, 'יב', 'יב1'), stu(336, 'יב', 'יב2')], groups: groupRows([
           grp(331, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'), grp(331, 'תגבור מתמטיקה 4 יח"ל יב1 מורה בדיקה [7932]'),
           grp(332, 'מתמטיקה 4 יח"ל יב1 מורה א [7933]'), grp(332, 'מתמטיקה 4 יח"ל יב1 מורה ב [7934]'),
-          grp(333, 'חינוך יב2 מורה א [7935]', 'יב2'), grp(333, 'חינוך יב2 מורה ב [7936]', 'יב2')
+          grp(333, 'חינוך יב3 מורה א [7935]', 'יב3'), grp(333, 'חינוך יב3 מורה ב [7936]', 'יב3'),
+          grp(334, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'), grp(335, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'),
+          grp(337, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'), grp(338, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]'),
+          grp(336, 'היסטוריה יב2 מורה יוסי [7937]', 'יב2'), grp(336, 'מתמטיקה 4 יח"ל יב1 מורה בדיקה [7931]', 'יב2')
         ]) });
         const app = newApp({ grade: 'יב' });
         const mathOf = n => GroupAnalyzer.studentPlacementMap(T(n)).rows.find(r => r.kind === 'core' && r.enrolled.length);
@@ -963,6 +973,13 @@ window.fetch = (input, options) => {
         check(routineTile().status === 'warn' && routineTile().sub === 'כפול (2 קבוצות)', 'The same routine duplicate is flagged once routine subjects are shown');
         app.state.showRoutineDuplicates = false;
         check(app.studentMapModel(T(333)).counts.warn === 0 && app.studentMapModel(T(333)).verdict.text === 'הכול תקין', 'The counters and status ignore hidden routine duplicates');
+        app.acts.studentMap.call(app, { dataset: { tz: T(336) } });
+        const pop336 = $id('groups-student-map').querySelector('.student-map-popover');
+        const tiles336 = [...pop336.querySelectorAll('.sm-tile')];
+        same(tiles336.map(el => el.querySelector('.sm-tile-name').textContent), GroupAnalyzer.studentPlacementMap(T(336)).rows.map(r => r.label), 'Tile order preserves the fixed subject order without hoisting anomalies');
+        const outlierTile = tiles336.find(el => el.dataset.subject.includes('מתמטיקה'));
+        check(outlierTile && outlierTile.classList.contains('sm-tile-warn') && outlierTile.querySelector('.sm-tile-sub').textContent === 'בודד מכיתתו' && outlierTile.title.includes('מורה בדיקה'), 'Outlier tile shows "בודד מכיתתו" inside the tile, has warning class and keeps teacher name in tooltip');
+        check(!pop336.querySelector('.sm-attention') && !pop336.textContent.includes('דורש תשומת לב'), 'No duplicate attention section in popover');
       });
     });
 

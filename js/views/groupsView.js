@@ -288,12 +288,12 @@
           <button type="button" class="ga-subject-chip" data-act="inspectGroups" data-tz="${E(r.tz)}" data-subject="${E(key)}" title="${E(title)}" aria-label="${E(`${title} עבור ${r.t.name}`)}">${E(label)}</button>${findingDetails ? ` <span class="ga-finding-details">${findingDetails}</span>` : ''}
           </span>`;
       }).join('');
-      return `<tr${treated.has(r.tz) ? ' class="ga-treated"' : ''}>
+      return `<tr class="ga-clickable-row${treated.has(r.tz) ? ' ga-treated' : ''}" data-act="studentMap" data-tz="${E(r.tz)}">
         <td class="text-right"><button type="button" class="ga-student" data-act="openProfile" data-tz="${E(r.tz)}" title="ת.ז ${E(r.tz)}">${E(r.t.name)}</button></td>
         <td class="text-right whitespace-nowrap">${E(Config.classLabel(r.t.classKey))}${this.overrideBadge(r.tz)}</td>
         <td class="text-right">${details}</td>
         <td class="text-right whitespace-nowrap">${items.length} חריגות</td>
-        <td class="text-right"><div class="ga-row-actions"><button type="button" class="ga-row-button" data-act="studentMap" data-tz="${E(r.tz)}">מפת שיבוצים</button>
+        <td class="text-right"><div class="ga-row-actions">
           <button type="button" class="ga-row-button" data-groups-treated="${E(r.tz)}" aria-pressed="${treated.has(r.tz)}">${treated.has(r.tz) ? 'החזר ↑' : 'הורד לסוף ↓'}</button></div></td></tr>`;
     };
     const body = pending.slice(0, 1500).map(renderRow).join('') +
@@ -312,7 +312,8 @@
       <table class="grid w-full" data-category="${E(cat)}" aria-label="טבלת חריגי שיבוץ לטיפול"><thead><tr>
         ${th('name', 'שם החניך')}${th('cls', 'כיתת אם')}<th class="text-right">ממצאים ופעולות <span class="text-xs font-normal">· מיון לפי ${sortFinding('subject', 'מקצוע')} / ${sortFinding('kind', 'סוג')} / ${sortFinding('current', 'קבוצה')}</span></th><th class="text-right">מספר חריגות</th><th class="text-right">פעולות</th></tr></thead>
         <tbody>${body || '<tr><td colspan="5" class="text-center text-[#355747] py-8">לא נמצאו חריגות שיבוץ בסינון הנוכחי</td></tr>'}</tbody></table>${signals}`);
-    $('groups-table').querySelectorAll('[data-groups-treated]').forEach(button => button.addEventListener('click', () => {
+    $('groups-table').querySelectorAll('[data-groups-treated]').forEach(button => button.addEventListener('click', e => {
+      e.stopPropagation();
       const tz = button.dataset.groupsTreated;
       if (treated.has(tz)) treated.delete(tz); else treated.add(tz);
       this.dirty.add('groups');
@@ -424,26 +425,28 @@
     const m = GroupAnalyzer.studentPlacementMap(tz);
     if (!m) return null;
     const showRoutine = !!this.state.showRoutineDuplicates;
+    const REASON = { missing: 'אין קבוצה', nomajor: 'ללא מגמה', dup: i => `כפול (${i.count} קבוצות)`, grade: 'חריגת שכבה', outlier: 'בודד מכיתתו' };
+    const reasonOf = i => typeof REASON[i.kind] === 'function' ? REASON[i.kind](i) : (REASON[i.kind] || i.text);
     const tiles = [];
     m.rows.forEach(r => {
       const groups = r.enrolled.filter(g => g.inFile);
       const issues = r.issues.filter(i => i.kind !== 'sadin' && !(i.kind === 'dup' && r.routine && !showRoutine));
       const status = issues.some(i => i.kind === 'missing' || i.kind === 'nomajor') ? 'missing' : issues.length ? 'warn' : groups.length ? 'ok' : '';
       if (!status) return;
-      const dup = issues.find(i => i.kind === 'dup');
       const main = groups.find(g => !g.reinforcement) || groups[0];
-      const sub = status === 'missing' ? 'אין קבוצה' : dup ? `כפול (${dup.count} קבוצות)` : (main && main.teacher) || 'ללא מורה';
-      tiles.push({ key: r.key, label: r.label, subject: r.key === 'major:none' ? GroupAnalyzer.MAJOR_KEY : r.label, status, sub, issues });
+      const teacher = (main && main.teacher) || '';
+      const sub = status === 'ok' ? (teacher || 'ללא מורה') : issues.map(reasonOf).join(' · ');
+      tiles.push({ key: r.key, label: r.label, subject: r.key === 'major:none' ? GroupAnalyzer.MAJOR_KEY : r.label, status, sub, teacher, issues });
     });
     const counts = { ok: 0, warn: 0, missing: 0 };
     tiles.forEach(x => { counts[x.status]++; });
     const problems = counts.warn + counts.missing;
     const verdict = !tiles.length ? null : !problems ? { cls: 'ok', text: 'הכול תקין' } :
       !counts.missing && counts.ok >= counts.warn ? { cls: 'mostly', text: 'רוב השיבוצים תקינים' } : { cls: 'attention', text: 'דורש טיפול' };
-    return { t: m.t, tiles, counts, verdict, attention: tiles.filter(x => x.status !== 'ok') };
+    return { t: m.t, tiles, counts, verdict };
   },
 
-  /** חלונית צפה "מפת שיבוצים" (בסגנון חלונית יצוא ה-30%): כותרת, שלושה מונים, אריחי מקצועות ורשימת "דורש תשומת לב" */
+  /** חלונית צפה קומפקטית "מפת שיבוצים": כותרת, שלושה מונים ורשת אריחי מקצועות (בסדר קבוע) */
   renderStudentMapPopover(focus = false) {
     const box = $('groups-student-map');
     if (!box) return;
@@ -451,28 +454,25 @@
     if (!t) { this.state.studentMapTz = null; box.innerHTML = ''; box.classList.add('hidden'); return; }
     const ICON = { ok: '✓', warn: '!', missing: '−' };
     const STATUS_TEXT = { ok: 'משובץ כראוי', warn: 'לבדיקה', missing: 'ללא שיבוץ' };
-    const ISSUE_TEXT = { missing: 'לא נמצא שיבוץ', nomajor: 'לא נמצאה קבוצת מגמה', dup: i => `רשום ב-${i.count} קבוצות`, grade: 'חריג שכבה', outlier: 'בודד מכיתתו' };
-    const issueText = i => typeof ISSUE_TEXT[i.kind] === 'function' ? ISSUE_TEXT[i.kind](i) : (ISSUE_TEXT[i.kind] || i.text);
     const unknown = !SignalEngine.prerequisitesFor(t.gradeKey).hasGroups;
     const m = unknown ? null : GroupsView.studentMapModel.call(this, tz);
     let body;
     if (unknown) body = `<p class="sm-note">${UI.signalBadge('placement.unknown')}</p>`;
     else if (!m || !m.tiles.length) body = '<p class="sm-note">לא נמצאו שיבוצים לחניך זה</p>';
     else {
-      const attrs = x => `data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(x.subject)}"`;
-      const tile = x => `<button type="button" class="sm-tile sm-tile-${x.status}" ${attrs(x)} title="${E(`השוואת קבוצות במקצוע ${x.label}`)}" aria-label="${E(`${x.label}: ${STATUS_TEXT[x.status]} · ${x.sub}`)}">
+      const tile = x => {
+        const tip = x.status !== 'ok' && x.teacher ? `השוואת קבוצות במקצוע ${x.label} · מורה: ${x.teacher}` : `השוואת קבוצות במקצוע ${x.label}`;
+        return `<button type="button" class="sm-tile sm-tile-${x.status}" data-act="inspectGroups" data-tz="${E(t.tz)}" data-subject="${E(x.subject)}" title="${E(tip)}" aria-label="${E(`${x.label}: ${STATUS_TEXT[x.status]} · ${x.sub}`)}">
           <span class="sm-tile-top"><span class="sm-tile-name">${E(x.label)}</span><span class="sm-icon sm-icon-${x.status}" aria-hidden="true">${ICON[x.status]}</span></span>
           <span class="sm-tile-sub">${E(x.sub)}</span></button>`;
-      const issue = x => `<li><button type="button" class="sm-issue" ${attrs(x)} title="${E(`השוואת קבוצות במקצוע ${x.label}`)}">
-          <span class="sm-icon sm-icon-${x.status}" aria-hidden="true">${ICON[x.status]}</span><strong>${E(x.label)}</strong><span>${E(x.issues.filter(i => i.kind !== 'sadin').map(issueText).join(' · '))}</span></button></li>`;
+      };
       const c = m.counts;
       body = `<div class="sm-counts" role="group" aria-label="סיכום שיבוצים">
           <div class="sm-count sm-count-ok"><strong>${c.ok}</strong><span>תקינים</span></div>
           <div class="sm-count sm-count-warn"><strong>${c.warn}</strong><span>לבדיקה</span></div>
           <div class="sm-count sm-count-missing"><strong>${c.missing}</strong><span>ללא שיבוץ</span></div></div>
         <h3 class="sm-section">מפת שיבוצים</h3>
-        <div class="sm-grid">${m.tiles.map(tile).join('')}</div>
-        ${m.attention.length ? `<section class="sm-attention" aria-label="דורש תשומת לב"><h3 class="sm-section">דורש תשומת לב</h3><ul>${m.attention.map(issue).join('')}</ul></section>` : ''}`;
+        <div class="sm-grid">${m.tiles.map(tile).join('')}</div>`;
     }
     const verdict = m && m.verdict ? `<span class="sm-verdict sm-verdict-${m.verdict.cls}">${m.verdict.text}</span>` : '';
     box.innerHTML = `<div class="card student-map-popover" role="dialog" aria-label="${E(`מפת שיבוצים · ${t.name}`)}" tabindex="-1" data-tz="${E(t.tz)}">
