@@ -83,7 +83,7 @@ const Store = {
       T.set(r.tz, {
         tz: r.tz, firstName: r.firstName, lastName: r.lastName, name, nameKey: Util.norm(name).toLocaleLowerCase(),
         gradeKey: r.grade, classKey: r.homeroom, classNum: Util.parseClass(r.grade, r.homeroom).num, track: r.track,
-        inRoster: true, inGroups: false, inGrades: false, inBagrut: false, majorName: ''
+        inRoster: true, added: !!r.added, manual: !!r.manual, inGroups: false, inGrades: false, inBagrut: false, majorName: ''
       });
     });
     this._groupGrades = new Set();
@@ -262,7 +262,8 @@ const Store = {
     this._groupsByTz = gbt;
     this._current = current;
     this._bagrut = bagrut;
-    this._classes = [...new Set([...T.values()].map(t => t.classKey).filter(Boolean))]
+    const ghostClasses = typeof Config.activeGhostClasses === 'function' ? Config.activeGhostClasses() : [];
+    this._classes = [...new Set([...[...T.values()].map(t => t.classKey), ...ghostClasses].filter(Boolean))]
       .sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || a.localeCompare(b, 'he', { numeric: true }));
     this.missed = GroupAnalyzer.detectMissed(gradesByTz);
   },
@@ -306,7 +307,10 @@ const Store = {
   sortedTrainees() { return this._sortedTrainees.slice(); },
   classes() { return this._classes; },
   gradeKeys() {
-    const set = new Set([...this.trainees.values()].map(t => t.gradeKey));
+    const set = new Set([
+      ...[...this.trainees.values()].map(t => t.gradeKey),
+      ...this._classes.map(c => Util.parseClass('', c).gradeKey)
+    ]);
     return Util.GRADE_KEYS.filter(k => set.has(k));
   },
   groupsOf(tz) { return this._groupsByTz.get(tz) || []; },

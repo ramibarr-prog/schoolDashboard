@@ -51,15 +51,25 @@ function sanitizeState(s) {
   if (s.rosterOverrides !== undefined) result.rosterOverrides = records(s.rosterOverrides, (v, tz) => ({
     tz, grade: Util.GRADE_KEYS.includes(v.grade) ? v.grade : '',
     homeroom: text(v.homeroom), track: Config.TRACKS.includes(v.track) ? v.track : '',
-    hidden: v.hidden === true, name: text(v.name), note: text(v.note).slice(0, 200), updatedAt: number(v.updatedAt)
+    hidden: v.hidden === true, ...(v.manual === true ? { manual: true } : {}),
+    name: text(v.name), note: text(v.note).slice(0, 200), updatedAt: number(v.updatedAt)
   }));
+  if (s.ghostClasses !== undefined) {
+    result.ghostClasses = Object.fromEntries(Object.entries(obj(s.ghostClasses) ? s.ghostClasses : {})
+      .map(([k, v]) => {
+        if (!obj(v) || ['__proto__', 'prototype', 'constructor'].includes(k)) return null;
+        const p = Util.parseClass(v.grade || '', v.classKey || k);
+        if (!p.classKey || !Util.GRADE_KEYS.includes(p.gradeKey)) return null;
+        return [p.classKey, { classKey: p.classKey, grade: p.gradeKey, dormant: v.dormant === true, updatedAt: number(v.updatedAt) }];
+      }).filter(Boolean));
+  }
   if (s.studentMeta !== undefined) result.studentMeta = records(s.studentMeta, v => ({
     isException: v.isException === true,
     overrideStatus: Config.OVERRIDE_STATUSES.some(status => status.value === v.overrideStatus) ? v.overrideStatus : '',
     trackOverride: Config.TRACKS.includes(v.trackOverride) ? v.trackOverride : '',
     reason: text(v.reason), note: text(v.note)
   }));
-  for (const [key, type] of [['classNicknames', 'string'], ['specialEdClasses', 'boolean'], ['rosterMismatchDismissed', 'string']]) {
+  for (const [key, type] of [['classNicknames', 'string'], ['specialEdClasses', 'boolean'], ['rosterMismatchDismissed', 'string'], ['classReviews', 'boolean']]) {
     if (s[key] === undefined) continue;
     result[key] = Object.fromEntries(Object.entries(obj(s[key]) ? s[key] : {})
       .filter(([k, v]) => !['__proto__', 'prototype', 'constructor'].includes(k) && typeof v === type)
@@ -231,6 +241,8 @@ const CloudSync = {
       rosterData: Config.getRosterEntry(),
       bagrutData: ds('bagrutData'), groupsData: ds('groupsData'), sadinData: ds('sadinData'),
       rosterOverrides: Config.data.rosterOverrides,
+      ghostClasses: Config.data.ghostClasses,
+      classReviews: Config.data.classReviews,
       studentMeta: Config.data.traineeExceptions,
       customQuestionnaires: Config.rulesForGrade('12'),
       cohortProfiles: Config.data.cohortProfiles, gradeCohortMap: Config.data.gradeCohortMap,
@@ -281,6 +293,8 @@ const CloudSync = {
         Config.data = Util.clone(previous);
         const d = Config.data;
         if (s.rosterOverrides !== undefined) d.rosterOverrides = s.rosterOverrides;
+        if (s.ghostClasses !== undefined) d.ghostClasses = s.ghostClasses;
+        if (s.classReviews !== undefined) d.classReviews = s.classReviews;
         if (s.studentMeta !== undefined) d.traineeExceptions = s.studentMeta;
         if (s.classNicknames !== undefined) d.classNicknames = s.classNicknames;
         if (s.specialEdClasses !== undefined) d.specialEdClasses = s.specialEdClasses;

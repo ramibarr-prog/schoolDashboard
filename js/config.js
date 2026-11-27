@@ -330,7 +330,8 @@ const Config = {
     return {
       version: 2, classNicknames: {}, specialEdClasses: {}, mappingProfiles: {},
       cohortProfiles: defaultCohortProfiles(defaultBagrutRules()), gradeCohortMap: defaultGradeCohortMap(),
-      traineeExceptions: {}, rosterOverrides: {}, rosterMismatchDismissed: {}
+      traineeExceptions: {}, rosterOverrides: {}, rosterMismatchDismissed: {},
+      ghostClasses: {}, classReviews: {}
     };
   },
 
@@ -368,6 +369,9 @@ const Config = {
       d.traineeExceptions = stored.traineeExceptions && typeof stored.traineeExceptions === 'object' ? stored.traineeExceptions : {};
       d.rosterOverrides = stored.rosterOverrides && typeof stored.rosterOverrides === 'object' ? stored.rosterOverrides : {};
       d.rosterMismatchDismissed = stored.rosterMismatchDismissed && typeof stored.rosterMismatchDismissed === 'object' ? stored.rosterMismatchDismissed : {};
+      d.ghostClasses = this._normalizeGhostClasses(stored.ghostClasses);
+      d.classReviews = stored.classReviews && typeof stored.classReviews === 'object'
+        ? Object.fromEntries(Object.entries(stored.classReviews).filter(([k, v]) => k && typeof v === 'boolean')) : {};
       const cohorts = this.normalizeCohorts(stored.cohortProfiles, stored.gradeCohortMap, stored.bagrutRules);
       d.cohortProfiles = cohorts.profiles;
       d.gradeCohortMap = cohorts.map;
@@ -481,8 +485,96 @@ const Config = {
     if (!res.ok) return res;
     this._cache.masterRoster = entry;
     this.setRosterCleared(false);
+    const reconciled = this.reconcileAfterRosterImport(norm.rows);
+    this._invalidateRoster();
     this.emit('roster-changed');
-    return { ok: true, count: norm.rows.length, skipped: norm.skipped, duplicates: norm.duplicates, ignored: ignoredIds.length };
+    return { ok: true, count: norm.rows.length, skipped: norm.skipped, duplicates: norm.duplicates, ignored: ignoredIds.length, reconciled };
+  },
+
+  /**
+   * התמזגות וניקוי חכם בעת קליטת מצבת חדשה:
+   * 1. דריסת כיתה/שכבה או מסלול שכבר תואמת בפועל למצבת החדשה מנוקה אוטומטית (דריסה שונה אינה נוגעת כלל).
+   * 2. חניך רפאים (manual: true) שהופיע במצבת החדשה: באותה כיתה – מתמזג לחניך מצבת רגיל; בכיתה שונה – מומר לדריסת כיתה רגילה.
+   * 3. כיתת רפאים: אם במצבת החדשה שובצו אליה חניכים – מתמזגת ללא כפילות; אם נותרה ריקה לחלוטין – מסומנת כרדומה (מוסתרת ממסכי העבודה וזמינה למחיקה נקייה).
+   */
+  reconcileAfterRosterImport(incomingRows) {
+    const rows = Array.isArray(incomingRows) ? incomingRows : [];
+    const byTz = new Map(rows.map(r => [r.tz, r]));
+    const nextOv = { ...(this.data.rosterOverrides || {}) };
+    let ovChanged = false, cleanedOverrides = 0, mergedManual = 0, convertedManual = 0;
+
+    Object.entries(nextOv).forEach(([tz, o]) => {
+      const rawRow = byTz.get(tz);
+      if (!rawRow || !o) return;
+      if (o.manual) {
+        const sameClass = (!o.homeroom || o.homeroom === rawRow.homeroom) && (!o.grade || o.grade === rawRow.grade);
+        const effHomeroom = sameClass ? rawRow.homeroom : (o.homeroom || rawRow.homeroom);
+        const nextTrack = o.track && o.track !== this.defaultTrack(rawRow.track, effHomeroom) ? o.track : '';
+        const note = String(o.note || '').trim().slice(0, 200);
+        if (sameClass) {
+          if (!nextTrack && !o.hidden && !note) delete nextOv[tz];
+          else nextOv[tz] = { tz, grade: '', homeroom: '', track: nextTrack, hidden: !!o.hidden, note, updatedAt: Date.now() };
+          mergedManual++;
+        } else {
+          const grade = o.grade || Util.parseClass('', o.homeroom).gradeKey || rawRow.grade;
+          nextOv[tz] = { tz, grade, homeroom: o.homeroom, track: nextTrack, hidden: !!o.hidden, note, updatedAt: Date.now() };
+          convertedManual++;
+        }
+        ovChanged = true;
+        return;
+      }
+      const hadPlacement = !!(o.grade || o.homeroom);
+      const matchesPlacement = hadPlacement && (!o.homeroom || o.homeroom === rawRow.homeroom) && (!o.grade || o.grade === rawRow.grade);
+      const effHomeroom = matchesPlacement ? rawRow.homeroom : (o.homeroom || rawRow.homeroom);
+      const matchesTrack = !!o.track && o.track === this.defaultTrack(rawRow.track, effHomeroom);
+      const hadName = !!o.name;
+      if (!matchesPlacement && !matchesTrack && !hadName) return;
+      const grade = matchesPlacement ? '' : (o.grade || '');
+      const homeroom = matchesPlacement ? '' : (o.homeroom || '');
+      const track = matchesTrack ? '' : (o.track || '');
+      const note = String(o.note || '').trim().slice(0, 200);
+      if (!grade && !homeroom && !track && !o.hidden && !note) delete nextOv[tz];
+      else nextOv[tz] = { tz, grade, homeroom, track, hidden: !!o.hidden, note, updatedAt: Date.now() };
+      cleanedOverrides++;
+      ovChanged = true;
+    });
+
+    const rawClasses = new Set(rows.map(r => r.homeroom).filter(Boolean));
+    const activeClasses = new Set();
+    rows.forEach(r => {
+      const o = nextOv[r.tz];
+      if (o && o.hidden) return;
+      activeClasses.add((o && o.homeroom) || r.homeroom);
+    });
+    Object.values(nextOv).forEach(o => {
+      if (!byTz.has(o.tz) && !o.hidden && o.grade && o.homeroom) activeClasses.add(o.homeroom);
+    });
+
+    const nextGhost = { ...(this.data.ghostClasses || {}) };
+    let ghostChanged = false, mergedGhostClasses = 0, dormantGhostClasses = 0;
+    Object.entries(nextGhost).forEach(([classKey, g]) => {
+      if (rawClasses.has(classKey)) {
+        delete nextGhost[classKey];
+        mergedGhostClasses++;
+        ghostChanged = true;
+      } else {
+        const shouldBeDormant = !activeClasses.has(classKey);
+        if (!!g.dormant !== shouldBeDormant) {
+          nextGhost[classKey] = { ...g, dormant: shouldBeDormant, updatedAt: Date.now() };
+          if (shouldBeDormant) dormantGhostClasses++;
+          ghostChanged = true;
+        }
+      }
+    });
+
+    if (ovChanged || ghostChanged) {
+      this.data.rosterOverrides = nextOv;
+      this.data.ghostClasses = nextGhost;
+      this.rev++;
+      const saved = this._write(this.KEYS.config, this.data);
+      if (saved.ok) this.emit('config-changed');
+    }
+    return { cleanedOverrides, mergedManual, convertedManual, mergedGhostClasses, dormantGhostClasses };
   },
 
   /**
@@ -521,17 +613,18 @@ const Config = {
    */
   getRosterAll() {
     const e = this.getRosterEntry();
-    if (!e) return [];
-    if (this._rosterAll && this._rosterAll.src === e.data) return this._rosterAll.rows;
     const ov = this.data.rosterOverrides || {};
-    const raw = e.data.filter(r => !Util.isJunior(r.grade));
+    if (!e && (this.isRosterCleared() || !Object.values(ov).some(o => o && o.grade && o.homeroom))) return [];
+    const src = e ? e.data : null;
+    if (this._rosterAll && this._rosterAll.src === src) return this._rosterAll.rows;
+    const raw = (e ? e.data : []).filter(r => !Util.isJunior(r.grade));
     const classNames = {};
     raw.forEach(r => { if (r.className && !classNames[r.homeroom]) classNames[r.homeroom] = r.className; });
     const inRaw = new Set();
     const rows = raw.map(r => {
       inRaw.add(r.tz);
       const o = ov[r.tz] || null;
-      const rec = { ...r, rawGrade: r.grade, rawHomeroom: r.homeroom, rawTrack: r.track, rawClassName: r.className, override: o, hidden: false };
+      const rec = { ...r, rawGrade: r.grade, rawHomeroom: r.homeroom, rawTrack: r.track, rawClassName: r.className, override: o, hidden: false, manual: false };
       if (o) {
         if (o.homeroom) {
           rec.homeroom = o.homeroom;
@@ -547,17 +640,20 @@ const Config = {
       if (inRaw.has(o.tz) || !o.grade || !o.homeroom) return;
       rows.push({
         tz: o.tz, firstName: o.name || o.tz, lastName: '', grade: o.grade, homeroom: o.homeroom, track: o.track || 'רגילה',
-        className: classNames[o.homeroom] || '', rawGrade: '', rawHomeroom: '', rawTrack: '', rawClassName: '', override: o, hidden: !!o.hidden, added: true
+        className: classNames[o.homeroom] || '', rawGrade: '', rawHomeroom: '', rawTrack: '', rawClassName: '',
+        override: o, hidden: !!o.hidden, added: true, manual: !!o.manual
       });
     });
-    this._rosterAll = { src: e.data, rows };
+    this._rosterAll = { src, rows };
     return rows;
   },
   /** חניכים פעילים בלבד: ללא ז-ט וללא מוסתרים, עם הדריסות מוחלות */
   getRoster() {
     const e = this.getRosterEntry();
-    if (!e) return [];
-    if (!this._rosterView || this._rosterView.src !== e.data) this._rosterView = { src: e.data, rows: this.getRosterAll().filter(r => !r.hidden) };
+    const ov = this.data.rosterOverrides || {};
+    if (!e && (this.isRosterCleared() || !Object.values(ov).some(o => o && !o.hidden && o.grade && o.homeroom))) return [];
+    const src = e ? e.data : null;
+    if (!this._rosterView || this._rosterView.src !== src) this._rosterView = { src, rows: this.getRosterAll().filter(r => !r.hidden) };
     return this._rosterView.rows;
   },
   /** ת.ז של חניכים שהוסתרו ידנית (עזב / לא פעיל): אינם "לא במצבת", והנתונים שלהם נשמרים לשחזור */
@@ -579,13 +675,18 @@ const Config = {
     if (!c.ok) return c;
     const { id, entry, empty } = c;
     const previous = this.data.rosterOverrides[id], dismissed = this.data.rosterMismatchDismissed[id];
+    const prevGhost = this.data.ghostClasses;
     if (empty) delete this.data.rosterOverrides[id]; else this.data.rosterOverrides[id] = entry;
+    if (!empty && !entry.hidden && entry.homeroom && this.data.ghostClasses[entry.homeroom]?.dormant) {
+      this.data.ghostClasses = { ...prevGhost, [entry.homeroom]: { ...prevGhost[entry.homeroom], dormant: false, updatedAt: Date.now() } };
+    }
     delete this.data.rosterMismatchDismissed[id];
     this._invalidateRoster();
     const res = this.save();
     if (res.ok === false) {
       if (previous) this.data.rosterOverrides[id] = previous; else delete this.data.rosterOverrides[id];
       if (dismissed !== undefined) this.data.rosterMismatchDismissed[id] = dismissed;
+      this.data.ghostClasses = prevGhost;
       this._invalidateRoster();
       return res;
     }
@@ -599,26 +700,33 @@ const Config = {
    */
   setRosterOverridesBatch(items) {
     const denied = this.requireEdit(); if (denied) return denied;
-    const prevOv = this.data.rosterOverrides, prevDismissed = this.data.rosterMismatchDismissed;
+    const prevOv = this.data.rosterOverrides, prevDismissed = this.data.rosterMismatchDismissed, prevGhost = this.data.ghostClasses;
     this.data.rosterOverrides = { ...prevOv };
     this.data.rosterMismatchDismissed = { ...prevDismissed };
+    this.data.ghostClasses = { ...prevGhost };
     let applied = 0, failed = 0, error = '';
     items.forEach(({ tz, patch }) => {
       const c = this._composeOverride(tz, patch);
       if (!c.ok) { failed++; error = error || c.error; return; }
-      if (c.empty) delete this.data.rosterOverrides[c.id]; else this.data.rosterOverrides[c.id] = c.entry;
+      if (c.empty) delete this.data.rosterOverrides[c.id];
+      else {
+        this.data.rosterOverrides[c.id] = c.entry;
+        if (!c.entry.hidden && c.entry.homeroom && this.data.ghostClasses[c.entry.homeroom]?.dormant) {
+          this.data.ghostClasses[c.entry.homeroom] = { ...this.data.ghostClasses[c.entry.homeroom], dormant: false, updatedAt: Date.now() };
+        }
+      }
       delete this.data.rosterMismatchDismissed[c.id];
       applied++;
       this._invalidateRoster();
     });
     if (!applied) {
-      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed;
+      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed; this.data.ghostClasses = prevGhost;
       this._invalidateRoster();
       return { ok: true, applied, failed, error };
     }
     const res = this.save();
     if (res.ok === false) {
-      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed;
+      this.data.rosterOverrides = prevOv; this.data.rosterMismatchDismissed = prevDismissed; this.data.ghostClasses = prevGhost;
       this._invalidateRoster();
       return res;
     }
@@ -648,7 +756,11 @@ const Config = {
     if (next.track && !track) return { ok: false, error: 'מסלול לא תקין' };
     if (rawRow && track === this.defaultTrack(rawRow.track, homeroom || rawRow.homeroom)) track = '';
     const entry = { tz: id, grade, homeroom, track, hidden: !!next.hidden, note: String(next.note || '').trim().slice(0, 200), updatedAt: Date.now() };
-    if (!rawRow) entry.name = String(next.name || '').trim();
+    if (!rawRow) {
+      entry.name = String(next.name || '').trim();
+      const isManual = next.manual !== undefined ? !!next.manual : !!(grade && homeroom);
+      if (isManual) entry.manual = true;
+    }
     const empty = !entry.grade && !entry.homeroom && !entry.track && !entry.hidden && !entry.note;
     return { ok: true, id, entry, empty };
   },
@@ -1032,7 +1144,100 @@ const Config = {
     this.data.mappingProfiles[type] = mapping; return this.save({ localOnly: true });
   },
 
-  /* ---------- כינויי כיתות ---------- */
+  /* ---------- כינויי כיתות, כיתות רפאים וסימון בדיקה ---------- */
+  _normalizeGhostClasses(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    const out = {};
+    Object.entries(raw).forEach(([k, v]) => {
+      if (!v || typeof v !== 'object') return;
+      const p = Util.parseClass(v.grade || '', v.classKey || k);
+      if (!p.classKey || !Util.GRADE_KEYS.includes(p.gradeKey)) return;
+      out[p.classKey] = { classKey: p.classKey, grade: p.gradeKey, dormant: !!v.dormant, updatedAt: Number(v.updatedAt) || Date.now() };
+    });
+    return out;
+  },
+  getGhostClasses() { return this.data.ghostClasses || {}; },
+  isGhostClass(classKey) { return !!(this.data.ghostClasses && this.data.ghostClasses[classKey]); },
+  isDormantGhostClass(classKey) { return !!(this.data.ghostClasses && this.data.ghostClasses[classKey] && this.data.ghostClasses[classKey].dormant); },
+  /** כיתות רפאים פעילות להזרקה למאגר ולכל סינוני המסכים (כיתות רדומות שנותרו ריקות אחרי קליטת מצבת מוסתרות ממסכי העבודה) */
+  activeGhostClasses() {
+    return Object.values(this.getGhostClasses()).filter(g => !g.dormant).map(g => g.classKey);
+  },
+  allHomeroomClasses({ includeDormant = false } = {}) {
+    const raw = (this.getRosterEntry()?.data || []).filter(r => !Util.isJunior(r.grade)).map(r => r.homeroom);
+    const active = this.getRoster().map(r => r.homeroom);
+    const ghosts = Object.values(this.getGhostClasses()).filter(g => includeDormant || !g.dormant).map(g => g.classKey);
+    return [...new Set([...raw, ...active, ...ghosts].filter(Boolean))]
+      .sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || a.localeCompare(b, 'he', { numeric: true }));
+  },
+  upsertGhostClass(gradeRaw, classRaw, opts = {}) {
+    const denied = this.requireEdit(); if (denied) return denied;
+    const gradeHint = Util.normGrade(gradeRaw);
+    const p = Util.parseClass(gradeHint, String(classRaw ?? '').trim());
+    if (!p.classKey || !Util.GRADE_KEYS.includes(p.gradeKey)) {
+      return { ok: false, error: 'יש להזין מספר או קוד כיתה תקין בשכבות י-יב (למשל 5 או יא5).' };
+    }
+    if (gradeHint && p.gradeKey !== gradeHint) {
+      return { ok: false, error: `הכיתה ${p.classKey} שייכת לשכבה ${Util.gl(p.gradeKey)} ולא לשכבה ${Util.gl(gradeHint)}.` };
+    }
+    const inRaw = (this.getRosterEntry()?.data || []).some(r => r.homeroom === p.classKey);
+    if (inRaw) return { ok: false, error: `הכיתה ${p.classKey} כבר קיימת בקובץ המצבת.` };
+    const prevGhost = this.data.ghostClasses, prevNick = this.data.classNicknames, prevRev = this.data.classReviews;
+    this.data.ghostClasses = { ...prevGhost, [p.classKey]: { classKey: p.classKey, grade: p.gradeKey, dormant: false, updatedAt: Date.now() } };
+    if (opts.nickname !== undefined) {
+      const nick = String(opts.nickname ?? '').trim();
+      this.data.classNicknames = { ...prevNick };
+      if (nick) this.data.classNicknames[p.classKey] = nick; else delete this.data.classNicknames[p.classKey];
+    }
+    if (opts.review !== undefined) {
+      this.data.classReviews = { ...prevRev };
+      if (opts.review) this.data.classReviews[p.classKey] = true; else delete this.data.classReviews[p.classKey];
+    }
+    const res = this.save();
+    if (res.ok === false) {
+      this.data.ghostClasses = prevGhost; this.data.classNicknames = prevNick; this.data.classReviews = prevRev;
+      return res;
+    }
+    this._invalidateRoster();
+    this.emit('roster-changed');
+    return { ok: true, classKey: p.classKey, grade: p.gradeKey };
+  },
+  removeGhostClass(classKey) {
+    const denied = this.requireEdit(); if (denied) return denied;
+    if (!this.isGhostClass(classKey)) return { ok: false, error: 'ניתן למחוק רק כיתת רפאים שנוצרה ידנית.' };
+    const activeCount = this.getRoster().filter(r => r.homeroom === classKey).length;
+    if (activeCount > 0) return { ok: false, error: `בכיתה ${classKey} עדיין משובצים ${activeCount} חניכים פעילים. יש להעבירם או להסתירם תחילה.` };
+    const prevGhost = this.data.ghostClasses, prevNick = this.data.classNicknames, prevSpec = this.data.specialEdClasses, prevRev = this.data.classReviews, prevOv = this.data.rosterOverrides;
+    this.data.ghostClasses = { ...prevGhost }; delete this.data.ghostClasses[classKey];
+    this.data.classNicknames = { ...prevNick }; delete this.data.classNicknames[classKey];
+    this.data.specialEdClasses = { ...prevSpec }; delete this.data.specialEdClasses[classKey];
+    this.data.classReviews = { ...prevRev }; delete this.data.classReviews[classKey];
+    /* ניקוי הפניה לכיתה שנמחקה מרשומות מוסתרות בלבד אם נותרו כאלה */
+    const nextOv = { ...prevOv };
+    Object.entries(nextOv).forEach(([tz, o]) => {
+      if (o && o.hidden && o.homeroom === classKey) nextOv[tz] = { ...o, grade: '', homeroom: '', updatedAt: Date.now() };
+    });
+    this.data.rosterOverrides = nextOv;
+    this._invalidateRoster();
+    const res = this.save();
+    if (res.ok === false) {
+      this.data.ghostClasses = prevGhost; this.data.classNicknames = prevNick; this.data.specialEdClasses = prevSpec; this.data.classReviews = prevRev; this.data.rosterOverrides = prevOv;
+      this._invalidateRoster();
+      return res;
+    }
+    this.emit('roster-changed');
+    return { ok: true };
+  },
+  isClassReview(classKey) { return !!(this.data.classReviews && this.data.classReviews[classKey]); },
+  setClassReview(classKey, value) {
+    const denied = this.requireEdit(); if (denied) return denied;
+    const prev = this.data.classReviews;
+    this.data.classReviews = { ...(prev || {}) };
+    if (value) this.data.classReviews[classKey] = true; else delete this.data.classReviews[classKey];
+    const res = this.save();
+    if (res.ok === false) this.data.classReviews = prev;
+    return res;
+  },
   nickname(classKey) { return this.data.classNicknames[classKey] || ''; },
   setNickname(classKey, value) {
     const denied = this.requireEdit(); if (denied) return denied;
@@ -1618,6 +1823,7 @@ const Config = {
       /* שדה תאימות לגרסאות קודמות: כללי מחזור י"ב */
       bagrutRules: this.rulesForGrade('12'), traineeExceptions: this.data.traineeExceptions,
       rosterOverrides: this.data.rosterOverrides, rosterMismatchDismissed: this.data.rosterMismatchDismissed,
+      ghostClasses: this.data.ghostClasses, classReviews: this.data.classReviews,
       masterRoster: this.getRosterEntry()
     };
   },
@@ -1674,9 +1880,14 @@ const Config = {
         const track = this.TRACKS.includes(o.track) ? o.track : '';
         const entry = { tz: id, grade, homeroom, track, hidden: !!o.hidden, note: String(o.note || '').slice(0, 200), updatedAt: Number(o.updatedAt) || Date.now() };
         if (o.name) entry.name = String(o.name).trim();
+        if (o.manual) entry.manual = true;
         if (entry.grade || entry.homeroom || entry.track || entry.hidden || entry.note) overrides[id] = entry;
       });
       d.rosterOverrides = overrides;
+    }
+    if (obj.ghostClasses && typeof obj.ghostClasses === 'object') d.ghostClasses = this._normalizeGhostClasses(obj.ghostClasses);
+    if (obj.classReviews && typeof obj.classReviews === 'object') {
+      d.classReviews = Object.fromEntries(Object.entries(obj.classReviews).filter(([k, v]) => k && typeof v === 'boolean'));
     }
     if (obj.rosterMismatchDismissed && typeof obj.rosterMismatchDismissed === 'object') {
       d.rosterMismatchDismissed = Object.fromEntries(Object.entries(obj.rosterMismatchDismissed).map(([tz, s]) => [Util.normId(tz), String(s)]).filter(([tz]) => tz));

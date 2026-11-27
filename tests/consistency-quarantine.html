@@ -177,6 +177,15 @@
       assert(specialAudit.ok && app.overviewModel().stats.counted === beforeSpecial - 1,
         'Special-ed override reduces eligibility denominator by 1 and stays consistent');
       Config.setException(T(2), { trackOverride: '' });
+      /* חניך רפאים בכיתת רפאים משתלב במודלי העקביות ללא סתירות ויוצא מרשימת החניכים שמחוץ למצבת */
+      assert(Config.upsertGhostClass('יב', '9', { nickname: 'רפאים' }).ok, 'Ghost class created');
+      assert(Config.setRosterOverride(T(999), { grade: 'יב', homeroom: 'יב9', name: 'חניך משוחזר', manual: true }).ok, 'Ghost student promoted');
+      Store.refresh(); app.evals.clear(); SignalEngine.invalidate();
+      const ghostAudit = ImportQuarantine.auditConsistency(app);
+      assert(ghostAudit.ok && !GroupAnalyzer.unmatchedIds().some(u => u.tz === T(999)), 'Ghost class and manual student pass full consistency audit: ' + JSON.stringify(ghostAudit.issues));
+      Config.removeRosterOverride(T(999));
+      Config.removeGhostClass('יב9');
+      Store.refresh();
       app.state.sim.fullMode = false;
       app.state.sim.useCurrent = false;
       app.evals.clear(); SignalEngine.invalidate();

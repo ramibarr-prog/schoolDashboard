@@ -597,3 +597,164 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
   #localControls:has(> .bagrut-toolbar:not(.hidden)) { flex-wrap: wrap; overflow-x: visible; }
   #localControls:has(> .bagrut-toolbar:not(.hidden)) .bagrut-title { width: 100%; }
 }
+
+/* =====================================================================
+   ארגון כיתות אם – מסלולי שכבה אורגניים ("שלוליות"), תאי כיתה ("חלוקי נחל"),
+   בנק חניכים עם בחירה מרובה וחלונית כיתה צפה
+   ===================================================================== */
+.hr-workspace {
+  display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(20rem, 1fr);
+  gap: 1rem; align-items: start;
+}
+.hr-workspace[hidden], #rosterOverridesCard[hidden] { display: none !important; }
+@media (max-width: 1120px) {
+  .hr-workspace { grid-template-columns: minmax(0, 1fr); }
+}
+.hr-lanes { display: flex; flex-direction: column; gap: .95rem; }
+.hr-pool {
+  position: relative; padding: 1.05rem 1.25rem 1.2rem;
+  border: 1px solid var(--card-border);
+  border-radius: 30px 38px 28px 34px / 24px 30px 26px 32px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .65), 0 3px 12px -6px rgba(53, 87, 71, .12);
+  transition: box-shadow .18s ease, border-color .18s ease;
+}
+/* שכבת י' – טורקיז-אקליפטוס מעושן */
+.hr-pool-10 {
+  background: linear-gradient(135deg, #E5F0EE 0%, #D9E8E5 100%);
+  border-color: #B6CFCA; --hr-pool-ink: #284E4A; --hr-pool-muted: #4C6E6A; --hr-pool-accent: #4E7F79;
+}
+/* שכבת י"א (באמצע) – דבש-חול חמים להפרדה ברורה */
+.hr-pool-11 {
+  background: linear-gradient(135deg, #FBF2DF 0%, #F4E5C6 100%);
+  border-color: #DFC38D; --hr-pool-ink: #6A4B1B; --hr-pool-muted: #846433; --hr-pool-accent: #C7953D;
+}
+/* שכבת י"ב – ירוק מרווה בוגר */
+.hr-pool-12 {
+  background: linear-gradient(135deg, #EAF2EB 0%, #DDEADF 100%);
+  border-color: #B4CBB6; --hr-pool-ink: #355747; --hr-pool-muted: #557062; --hr-pool-accent: #6E9176;
+}
+.hr-pool-other {
+  background: linear-gradient(135deg, #F4F2EC 0%, #EAE6DC 100%);
+  border-color: #D5CFC2; --hr-pool-ink: #3E4842; --hr-pool-muted: #66706A; --hr-pool-accent: #7D8780;
+}
+.hr-pool-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: .5rem; margin-bottom: .8rem;
+}
+.hr-pool-title { display: flex; align-items: baseline; gap: .55rem; }
+.hr-pool-title h3 { margin: 0; color: var(--hr-pool-ink); font-size: 1.02rem; font-weight: 700; }
+.hr-pool-meta { color: var(--hr-pool-muted); font-size: .78rem; font-weight: 500; }
+.hr-add-class-btn {
+  display: inline-flex; align-items: center; gap: .3rem; padding: .28rem .7rem;
+  border-radius: 999px; border: 1px solid rgba(53, 87, 71, .22);
+  background: rgba(255, 255, 255, .82); color: var(--hr-pool-ink);
+  font-size: .78rem; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.hr-add-class-btn:hover { background: #fff; border-color: var(--hr-pool-accent); }
+
+.hr-pebbles { display: flex; flex-wrap: wrap; gap: .7rem; align-items: stretch; }
+.hr-pebble {
+  position: relative; display: flex; flex-direction: column; justify-content: space-between;
+  min-width: 8.6rem; max-width: 12.5rem; flex: 0 1 auto; padding: .68rem .95rem .72rem;
+  background: rgba(255, 255, 255, .94); border: 1.5px solid rgba(53, 87, 71, .16);
+  border-radius: 24px 30px 22px 28px / 22px 26px 28px 22px;
+  box-shadow: 0 2px 8px -3px rgba(43, 59, 51, .12);
+  text-align: right; cursor: pointer; transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease, background .14s ease;
+}
+.hr-pebble:hover { transform: translateY(-1px); border-color: var(--hr-pool-accent); box-shadow: 0 6px 14px -5px rgba(43, 59, 51, .18); background: #fff; }
+.hr-pebble:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.hr-pebble.is-selected { border-color: var(--forest); box-shadow: 0 0 0 2px rgba(53, 87, 71, .2), 0 8px 18px -6px rgba(53, 87, 71, .25); background: #fff; }
+.hr-pebble.is-ghost { border-style: dashed; border-color: #7A9482; background: rgba(255, 255, 255, .82); }
+.hr-pebble.is-dormant { opacity: .78; }
+.hr-pebble.is-review { border-color: #D89B3C; }
+.hr-pebble.is-dragover, .hr-hide-zone.is-dragover {
+  border-color: var(--forest) !important; border-style: solid !important;
+  background: #F4FAF5 !important; box-shadow: 0 0 0 3px rgba(117, 151, 125, .32) !important;
+}
+.hr-pebble-top { display: flex; align-items: flex-start; justify-content: space-between; gap: .4rem; }
+.hr-pebble-name { color: var(--ink); font-size: .95rem; font-weight: 700; line-height: 1.2; }
+.hr-pebble-sub { display: block; margin-top: .1rem; color: var(--muted); font-size: .73rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 9.5rem; }
+.hr-pebble-del {
+  display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 999px; color: var(--muted); font-size: .78rem; line-height: 1;
+  background: transparent; cursor: pointer; flex-shrink: 0;
+}
+.hr-pebble-del:hover { background: rgba(200, 100, 50, .12); color: var(--terracotta); }
+.hr-pebble-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem; margin-top: .5rem; }
+.hr-pebble-count { color: var(--forest); font-size: .78rem; font-weight: 600; }
+.hr-status {
+  display: inline-flex; align-items: center; padding: .1rem .48rem; border-radius: 999px;
+  font-size: .68rem; font-weight: 700; line-height: 1.3; white-space: nowrap;
+}
+.hr-status.is-ok { background: var(--sage-tint); color: var(--forest); }
+.hr-status.is-warn { background: rgba(232, 185, 95, .26); color: var(--amber-dark); }
+.hr-status.is-ghost { background: #EEF3EF; color: #3D6251; border: 1px dashed #92AE9B; }
+.hr-status.is-spec { background: var(--cream-bg); color: var(--muted); border: 1px solid var(--sage-soft); }
+.hr-empty-lane { color: var(--hr-pool-muted); font-size: .82rem; padding: .35rem .15rem; }
+
+/* סיידבר בנק חניכים */
+.hr-bank { display: flex; flex-direction: column; gap: .7rem; padding: .95rem 1rem; }
+.hr-bank-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.hr-bank-head h3 { margin: 0; color: var(--forest); font-size: 1rem; font-weight: 700; }
+.hr-bank-pills { display: flex; flex-wrap: wrap; gap: .3rem; }
+.hr-pill {
+  display: inline-flex; align-items: center; gap: .3rem; padding: .22rem .6rem;
+  border-radius: 999px; border: 1px solid var(--card-border); background: var(--cream-bg);
+  color: var(--muted); font-size: .75rem; font-weight: 600; cursor: pointer;
+}
+.hr-pill[aria-pressed="true"] { background: var(--forest); color: var(--cream-bg); border-color: var(--forest); }
+.hr-pill.has-alert:not([aria-pressed="true"]) { border-color: var(--mustard); background: #FDF6E7; color: var(--amber-dark); }
+.hr-batch-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .4rem;
+  padding: .5rem .65rem; border-radius: .75rem; background: var(--sage-tint);
+  border: 1px solid var(--sage-soft); font-size: .78rem;
+}
+.hr-batch-bar.hidden { display: none; }
+.hr-bank-wrap { max-height: 25rem; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 12px; background: #fff; }
+.hr-bank-tbl { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.hr-bank-tbl thead th {
+  position: sticky; top: 0; z-index: 5; background: #F6F8F5; color: var(--forest);
+  padding: .45rem .5rem; border-bottom: 1px solid var(--card-border); font-size: .73rem; font-weight: 700; white-space: nowrap;
+}
+.hr-bank-tbl thead th[data-act="hrBankSort"] { cursor: pointer; user-select: none; }
+.hr-bank-tbl thead th[data-act="hrBankSort"]:hover { background: var(--sage-tint); }
+.hr-bank-tbl td { padding: .42rem .5rem; border-bottom: 1px solid #F1F4F1; vertical-align: middle; }
+.hr-bank-tbl tbody tr { cursor: grab; }
+.hr-bank-tbl tbody tr:hover td { background: var(--cream-bg); }
+.hr-bank-tbl tbody tr.is-checked td { background: #EEF5EF; }
+.hr-chk-col { width: 28px; text-align: center !important; padding-inline: .35rem !important; }
+.hr-stu-name { display: block; color: var(--ink); font-weight: 600; line-height: 1.2; }
+.hr-stu-sub { display: block; color: var(--muted); font-size: .69rem; }
+.hr-roster-tag { display: inline-block; font-size: .73rem; color: var(--forest); font-weight: 600; }
+.hr-roster-tag.is-ghost { color: var(--amber-dark); }
+.hr-roster-tag.is-moved { color: #3D6251; }
+.hr-roster-tag.is-hidden { color: var(--terracotta); }
+
+.hr-hide-zone {
+  padding: .75rem .85rem; border: 1.5px dashed #C7B9A5; border-radius: 14px;
+  background: #FAF6EE; text-align: center; color: #6B5B45; font-size: .79rem;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.hr-hide-zone strong { display: block; color: #54442F; font-size: .83rem; margin-bottom: .15rem; }
+
+/* חלונית כיתה צפה */
+.hr-class-popover {
+  position: fixed; top: 92px; left: 24px; z-index: 45; box-sizing: border-box;
+  width: min(23.5rem, calc(100vw - 24px)); max-height: calc(100vh - 116px);
+  display: flex; flex-direction: column; gap: .65rem; padding: .9rem 1rem;
+  text-align: right; overscroll-behavior: contain;
+  box-shadow: 0 14px 36px -10px rgba(53, 87, 71, .3);
+}
+.hr-class-popover.hidden { display: none !important; }
+.hr-class-popover:focus { outline: none; }
+.hr-pop-list {
+  list-style: none; margin: 0; padding: 0; max-height: 19rem; overflow-y: auto;
+  border: 1px solid var(--card-border); border-radius: 10px; background: #fff;
+}
+.hr-pop-row {
+  display: flex; align-items: center; justify-content: space-between; gap: .45rem;
+  padding: .42rem .6rem; border-bottom: 1px solid #F1F4F1; font-size: .81rem; cursor: grab;
+}
+.hr-pop-row:last-child { border-bottom: none; }
+.hr-pop-row:hover { background: var(--cream-bg); }
+.hr-grip { color: #9AA8A0; font-size: .85rem; user-select: none; flex-shrink: 0; }

@@ -1266,6 +1266,14 @@ window.fetch = () => { throw new Error('Outbound network blocked by engine invar
         same(Store.trainees.get(id(22)), traineeBefore, 'Original roster identity is restored');
         same(Config.data.traineeExceptions, exceptionsBefore, 'No residual manual decision');
         same(Config.getRosterOverrides(), overridesBefore, 'No residual roster override');
+        const classesBefore = Store.classes().slice();
+        check(Config.upsertGhostClass('יא', '8').ok && Config.setRosterOverride(T(888), { grade: 'יא', homeroom: 'יא8', name: 'חניך רפאים', manual: true }).ok, 'Create ghost class and manual student');
+        Store.refresh();
+        check(Store.classes().includes('יא8') && Store.trainees.has(T(888)) && Store.trainees.get(T(888)).manual === true, 'Ghost class and manual student enter Store');
+        check(Config.removeRosterOverride(T(888)).ok && Config.removeGhostClass('יא8').ok, 'Remove manual student and empty ghost class');
+        Store.refresh();
+        same(Store.classes(), classesBefore, 'Removing ghost class restores exact class list');
+        check(!Store.trainees.has(T(888)) && Object.keys(Config.getGhostClasses()).length === 0, 'No residual ghost state');
       });
       same([...evaluated].sort((a, b) => a - b), Array.from({ length: 22 }, (_, i) => i + 1), 'All 22 distinct golden profiles were evaluated in fullMode');
       resetConfig();

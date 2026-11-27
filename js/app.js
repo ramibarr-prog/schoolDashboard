@@ -55,7 +55,14 @@ const App = {
     selectedSearchTz: null,
     /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
     studentMapTz: null,
-    settingsView: 'roster'
+    settingsView: 'roster',
+    ovMode: 'organize',
+    hrOpenClass: null,
+    hrBankFilter: 'all',
+    hrBankSearch: '',
+    hrBankSort: { col: 'name', dir: 1 },
+    hrBankShowAll: false,
+    hrPopSearch: ''
   },
   evals: new Map(),
   lastFiles: {},
@@ -698,8 +705,18 @@ const App = {
     setText('statusLine', `${Store.trainees.size} חניכים במצבת · ${Store.groups.size} קבוצות${ex ? ` · ⚡ ${ex} במסלול חריג` : ''}`);
     this._rosterByTz = new Map(Config.getRosterAll().map(r => [r.tz, r]));
     const count = Object.keys(Config.getRosterOverrides()).length;
+    const ghostCount = Config.activeGhostClasses().length;
+    const unmatchedCount = Store.hasData() ? GroupAnalyzer.unmatchedIds().length : 0;
     const banner = $('overridesBanner');
-    if (banner) { banner.classList.toggle('hidden', !count); banner.textContent = `🔀 ${count} דריסות שיוך פעילות`; }
+    if (banner) {
+      const show = count > 0 || ghostCount > 0 || unmatchedCount > 0;
+      banner.classList.toggle('hidden', !show);
+      const parts = [];
+      if (count) parts.push(`${count} דריסות שיוך`);
+      if (ghostCount) parts.push(`${ghostCount} כיתות רפאים`);
+      if (unmatchedCount) parts.push(`${unmatchedCount} חניכי רפאים לבדיקה`);
+      banner.textContent = show ? `ארגון כיתות אם: ${parts.join(' · ')}` : '';
+    }
     ['bagrut', 'groups', 'sadin', 'roster'].forEach(p => this.renderFreshnessBar(p));
     RulesView.renderDataStatus.call(this);
     if (this.state.tab === 'settings') RulesView.renderQualityCard.call(this, DATASETS);
@@ -926,6 +943,16 @@ const App = {
     }
     this.rosterReport = { warnings: res.warnings, skipped: res.skipped, duplicates: res.duplicates, sheets: res.sheets, ignored: saved.ignored };
     this.toast(`נטענה מצבת: ${saved.count} חניכים מ-${res.sheets.length} גיליונות${saved.ignored ? ` (${saved.ignored} חניכי ז'-ט' לא נקלטו)` : ''}`, 'ok');
+    const rec = saved.reconciled || {};
+    if (rec.mergedManual || rec.cleanedOverrides || rec.mergedGhostClasses || rec.convertedManual) {
+      const summary = [
+        rec.mergedManual ? `${rec.mergedManual} חניכי רפאים התמזגו למצבת` : '',
+        rec.convertedManual ? `${rec.convertedManual} חניכי רפאים נשמרו בדריסת כיתה` : '',
+        rec.mergedGhostClasses ? `${rec.mergedGhostClasses} כיתות רפאים התמזגו` : '',
+        rec.cleanedOverrides ? `${rec.cleanedOverrides} דריסות תואמות נוקו` : ''
+      ].filter(Boolean).join(' · ');
+      this.toast(`התמזגות שכבת האמת: ${summary}`, 'info');
+    }
     const overrides = Object.keys(Config.getRosterOverrides()).length;
     if (overrides) this.toast(`המצבת עודכנה. שים לב: ${overrides} דריסות שיוך ידניות ממשיכות לחול על הקובץ החדש.`, 'warn');
     res.warnings.forEach(w => this.toast(w, 'warn'));
@@ -1163,6 +1190,7 @@ const App = {
   ovSyncGrade(...args) { return RulesView.ovSyncGrade.apply(this, args); },
   ovSyncDefaultTrack(...args) { return RulesView.ovSyncDefaultTrack.apply(this, args); },
   renderRosterOverrides(...args) { return RulesView.renderRosterOverrides.apply(this, args); },
+  renderHomeroomWorkspace(...args) { return RulesView.renderHomeroomWorkspace.apply(this, args); },
   ovSelect(...args) { return RulesView.ovSelect.apply(this, args); },
   openClassRoster(...args) { return RulesView.openClassRoster.apply(this, args); },
   classRosterApply(...args) { return RulesView.classRosterApply.apply(this, args); },
@@ -1181,10 +1209,13 @@ const App = {
     });
     const editActions = new Set(['ovSave', 'ovRemove', 'ovClearAll', 'excModalSave', 'excModalClear',
       'ruleRemove', 'compRemove', 'qRemove', 'calibDelete', 'formSubmit', 'deleteRoster',
-      'clearPanel', 'clearSadinGrade', 'quarantineClear', 'bagrutPin', 'weaknessRiskApply']);
+      'clearPanel', 'clearSadinGrade', 'quarantineClear', 'bagrutPin', 'weaknessRiskApply',
+      'hrAddClass', 'hrDeleteGhostClass', 'hrAddStudent', 'hrBatchApply', 'hrAssignSelectedToClass',
+      'hrHideSelected', 'hrHideStudent', 'hrRestoreStudent']);
     const editChanges = new Set(['backupImport', 'gradeCohort', 'compEnabled', 'compCodes', 'compWeight',
       'compGrade', 'compMagen', 'ruleToggle', 'clauseCodes', 'clauseKeywords', 'internalGrade',
-      'clauseGrade', 'gateToggle', 'gateUnits', 'qName', 'qGrade', 'specialEd', 'classMove', 'classTrack', 'weaknessRiskRules']);
+      'clauseGrade', 'gateToggle', 'gateUnits', 'qName', 'qGrade', 'specialEd', 'classMove', 'classTrack',
+      'weaknessRiskRules', 'hrClassNickname', 'hrClassReview']);
     const editIds = new Set(['excTrack', 'excNote', 'ruleCompEnabled', 'ruleCompPoints', 'ruleCompMin',
       'ruleCompMax', 'ruleCompCount', 'ruleCompExcluded', 'ruleParamPass', 'ruleParamBorderline',
       'ruleParamBonus', 'ruleParamMagen']);
@@ -1234,13 +1265,20 @@ const App = {
       if (this.state.studentMapTz && !(e.target.closest && e.target.closest('.student-map-popover, #modal-root, #mappingModal, [data-act="studentMap"]'))) {
         GroupsView.closeStudentMap.call(this, false);
       }
+      if (this.state.hrOpenClass && !(e.target.closest && e.target.closest('#hrClassPopover, #modal-root, #mappingModal, [data-act="hrOpenClass"], #hrBankCard'))) {
+        RulesView.closeHomeroomClassPopover.call(this, false);
+      }
       if (e.target.closest('[data-go-overrides]')) {
         e.stopPropagation();
         this.state.settingsView = 'overrides';
+        this.state.ovMode = 'organize';
+        this.dirty.add('settings');
         this.showTab('settings');
         this.renderSettingsNav();
-        const section = $('ovTableSection');
-        if (section) { section.scrollIntoView({ block: 'start' }); section.focus({ preventScroll: true }); }
+        RulesView.renderHomeroomModeBar.call(this);
+        RulesView.renderHomeroomWorkspace.call(this);
+        const section = $('homeroomWorkspace') || $('ovTableSection');
+        if (section && section.scrollIntoView) section.scrollIntoView({ block: 'start' });
         return;
       }
       const tab = e.target.closest('[data-tab]');
@@ -1350,9 +1388,14 @@ const App = {
       }
       const mapping = $('mappingModal');
       const modalOpen = !!($('modal-root') && $('modal-root').children.length) || !!(mapping && !mapping.classList.contains('hidden'));
-      /* Esc סוגר קודם מודאל פתוח (למשל השוואת קבוצות מעל המפה), ורק אחריו את חלונית "מפת שיבוצים" */
+      /* Esc סוגר קודם מודאל פתוח (למשל השוואת קבוצות מעל המפה), ורק אחריו את חלונית "מפת שיבוצים" או חלונית כיתת אם */
       if (this.state.studentMapTz && !modalOpen) {
         GroupsView.closeStudentMap.call(this, true);
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
+      if (this.state.hrOpenClass && !modalOpen) {
+        RulesView.closeHomeroomClassPopover.call(this, true);
         e.preventDefault(); e.stopPropagation();
         return;
       }
@@ -1572,6 +1615,22 @@ const App = {
     classRoster(...args) { return RulesView.classRoster.apply(this, args); },
     ovRemove(...args) { return RulesView.ovRemove.apply(this, args); },
     ovClearAll(...args) { return RulesView.ovClearAll.apply(this, args); },
+    ovMode(...args) { return RulesView.ovMode.apply(this, args); },
+    openHomeroomOrganize(...args) { return RulesView.openHomeroomOrganize.apply(this, args); },
+    hrOpenClass(...args) { return RulesView.hrOpenClass.apply(this, args); },
+    hrCloseClass(...args) { return RulesView.hrCloseClass.apply(this, args); },
+    hrAddClass(...args) { return RulesView.hrAddClass.apply(this, args); },
+    hrDeleteGhostClass(...args) { return RulesView.hrDeleteGhostClass.apply(this, args); },
+    hrAddStudent(...args) { return RulesView.hrAddStudent.apply(this, args); },
+    hrBatchApply(...args) { return RulesView.hrBatchApply.apply(this, args); },
+    hrAssignSelectedToClass(...args) { return RulesView.hrAssignSelectedToClass.apply(this, args); },
+    hrHideSelected(...args) { return RulesView.hrHideSelected.apply(this, args); },
+    hrClearSelection(...args) { return RulesView.hrClearSelection.apply(this, args); },
+    hrHideStudent(...args) { return RulesView.hrHideStudent.apply(this, args); },
+    hrRestoreStudent(...args) { return RulesView.hrRestoreStudent.apply(this, args); },
+    hrBankFilter(...args) { return RulesView.hrBankFilter.apply(this, args); },
+    hrBankSort(...args) { return RulesView.hrBankSort.apply(this, args); },
+    hrToggleBankAll(...args) { return RulesView.hrToggleBankAll.apply(this, args); },
 
     clearPanel(el) { return RulesView.clearPanel.call(this, el, DATASETS); },
     clearSadinGrade(...args) { return RulesView.clearSadinGrade.apply(this, args); },
@@ -1618,8 +1677,13 @@ const App = {
     showUnknown(el) {
       const rc = Config.reconcile(el.dataset.key);
       this.openModal(`
-        <div class="flex items-center justify-between mb-2"><h3 class="text-lg font-semibold">לא נמצאו במצבת (${rc.unknown.length})</h3><button type="button" class="btn btn-ghost" data-act="closeModal">סגירה</button></div>
-        <p class="text-sm text-slate-500 mb-3">ת.ז אלה מופיעות ב"${E(DATASETS[el.dataset.key].title)}" אך אינן במצבת העליונה, ולכן הוחרגו מכל המדדים.</p>
+        <div class="flex items-center justify-between gap-2 mb-2"><h3 class="text-lg font-semibold">לא נמצאו במצבת (${rc.unknown.length})</h3>
+          <div class="flex items-center gap-2">
+            <button type="button" class="btn btn-primary btn-sm" data-act="openHomeroomOrganize" data-bank-filter="ghosts">שייך בארגון כיתות אם</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="closeModal">סגירה</button>
+          </div>
+        </div>
+        <p class="text-sm text-slate-500 mb-3">ת.ז אלה מופיעות ב"${E(DATASETS[el.dataset.key].title)}" אך אינן במצבת העליונה, ולכן הוחרגו מכל המדדים. ניתן לשייך אותן לכיתת אם או להסתירן בארגון כיתות אם.</p>
         <div class="flex flex-wrap gap-1 text-xs max-h-72 overflow-auto">${rc.unknown.slice(0, 500).map(tz => `<span class="badge fresh-slate border">${E(tz)}</span>`).join('')}</div>`);
     },
     showMissing(el) {
@@ -1733,6 +1797,8 @@ const App = {
     qName(...args) { return RulesView.qName.apply(this, args); },
     qGrade(...args) { return RulesView.qGrade.apply(this, args); },
     specialEd(...args) { return RulesView.specialEd.apply(this, args); },
+    hrClassNickname(...args) { return RulesView.hrClassNickname.apply(this, args); },
+    hrClassReview(...args) { return RulesView.hrClassReview.apply(this, args); },
     classMove(...args) { return RulesView.classMove.apply(this, args); },
     classTrack(...args) { return RulesView.classTrack.apply(this, args); },
 

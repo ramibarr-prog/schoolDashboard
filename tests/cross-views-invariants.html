@@ -127,7 +127,10 @@ window.fetch = (input, options) => {
     <select id="sadinSubjectSelect"></select><select id="sadinTeacherSelect"></select><select id="sadinFilterSelect"></select><div id="sadin-table"></div>
     <div id="groups-head"><div id="groups-mode"></div></div><div id="groups-kpis"></div><div id="groups-student-map" class="hidden"></div><div id="groups-table"></div><div id="groups-strip"></div><div id="groups-master"></div><div id="groups-detail"></div><select id="groupSubjectSelect"></select><select id="groupTeacherSelect"></select>
     <select id="profSelect"></select><div id="profName"></div><div id="profMeta"></div><div id="profBadges"></div><div id="profKpis"></div><div id="profBody"></div>
-    <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button><button id="profilePin"></button>`;
+    <button id="profPrev"></button><button id="profNext"></button><span id="profPos"></span><button id="profBack"></button><select id="excTrack"></select><textarea id="excNote"></textarea><button id="excOpen"></button><button id="profilePin"></button>
+    <div id="overridesModeTabs"><button data-act="ovMode" data-mode="organize" aria-selected="true"></button><button data-act="ovMode" data-mode="log" aria-selected="false"><span id="ovLogBadge" class="hidden"></span></button></div>
+    <div id="homeroomWorkspace" class="hr-workspace"></div><div id="hrClassPopover" class="hr-class-popover hidden"></div>
+    <div id="rosterOverridesCard" hidden><div id="ovTableCard"><div id="ovTableSection"><input id="ovTableSearch"><select id="ovTableFilter"><option value="all"></option></select><span id="ovCount"></span><button id="ovClearAll"></button><p id="ovExceptionsHint"></p><div id="ovTable"></div><div id="ovTableFooter"></div></div></div><aside id="ovSidePanel"><h3 id="ovFormTitle"></h3><input id="overrideTraineeSearch"><div id="ovResults" class="hidden"></div><div id="ovInfo"></div><select id="ovGrade"><option value=""></option><option value="י"></option><option value="יא"></option><option value="יב"></option></select><select id="ovHomeroom"></select><input id="ovOtherHomeroom" class="hidden"><select id="ovTrack"><option value=""></option></select><input id="ovNote"><label id="ovNameWrap" class="hidden"><input id="ovName"></label><input type="checkbox" id="ovHidden"></aside></div>`;
   const mount = () => {
     let stage = document.getElementById('stage');
     if (!stage) { stage = document.createElement('div'); stage.id = 'stage'; document.body.appendChild(stage); }
@@ -599,6 +602,87 @@ window.fetch = (input, options) => {
         const merged = Store.trainees;
         check(merged.has(T(6)) && merged.has(T(1)) && merged.has(T(5)) && merged.get(T(2)).classKey === 'יא2', 'Merge: other grades must be preserved and overrides applied');
         check(Config.getRosterEntry().data.some(r => r.tz === T(4)), 'Merge: the hidden student must stay in the stored roster');
+      });
+
+      await part('QA-7.7 homeroom organization, ghost classes, ghost students and smart roster reconciliation', async () => {
+        resetConfig();
+        const app = newApp();
+        const row = (n, grade, homeroom) => stu(n, grade, homeroom);
+        world({
+          roster: [row(1, 'יב', 'יב1'), row(2, 'יא', 'יא1'), row(3, 'י', 'י1')],
+          bagrut: bagrutRows([...profile(T(1)), ...profile(T(91))]),
+          groups: groupRows([{ tz: T(91), grade: 'יא', cls: 5, gid: 'אזרחות יא5 רמי בר [9101]', teacher: false }])
+        });
+        /* 1. כיתות רפאים: יצירה, שקיפות ב-Store.classes, חסימת מחיקה כשאינה ריקה ומחיקה נקייה כשהיא ריקה */
+        check(GroupAnalyzer.unmatchedIds().some(u => u.tz === T(91)), 'Detected ghost student starts in unmatchedIds');
+        const g1 = Config.upsertGhostClass('יא', '5', { nickname: 'אורגנית' });
+        const gEmpty = Config.upsertGhostClass('י', '3');
+        Store.refresh();
+        check(g1.ok && g1.classKey === 'יא5' && gEmpty.ok && gEmpty.classKey === 'י3', 'Ghost classes created');
+        check(Store.classes().includes('יא5') && Store.classes().includes('י3'), 'Active ghost classes injected into Store.classes()');
+        same(Config.classLabel('יא5'), 'יא5 • אורגנית', 'Ghost class nickname reflected in classLabel');
+
+        /* 2. שיוך קבוצתי של חניך רפאים שאותר + חניך קיים לכיתת רפאים + הוספת חניך ידני חדש */
+        app.renderHomeroomWorkspace();
+        check(RulesView.hrApplyBatchAssign.call(app, [T(91), T(2)], 'יא5'), 'Batch assignment to ghost class succeeds');
+        check(Config.setRosterOverride(T(92), { grade: 'יא', homeroom: 'יא5', name: 'חניך רפאים שני', manual: true }).ok, 'Manual ghost student added');
+        app.afterDataChange();
+        check(Store.trainees.get(T(91)).manual === true && Store.trainees.get(T(91)).classKey === 'יא5', 'Ghost student is active and flagged manual');
+        check(!GroupAnalyzer.unmatchedIds().some(u => u.tz === T(91)), 'Promoted ghost student leaves unmatchedIds');
+        check(BagrutEngine.evaluate(T(91), FULL).tier === 1, 'Ghost student is transparently evaluated by BagrutEngine');
+        app.state.profileTz = T(91);
+        app.renderTrainee360Panel();
+        check($id('profMeta').textContent.includes('יא5 • אורגנית'), '360 card reflects ghost class and nickname');
+        check(!Config.removeGhostClass('יא5').ok, 'Non-empty ghost class cannot be deleted');
+
+        /* 3. ממשק ארגון כיתות אם: 3 שכבות אנכיות (י"א באמצע בצבע דבש-חול), חלונית כיתה צפה, מיון בנק חניכים ויומן דריסות */
+        app.renderHomeroomWorkspace();
+        const lanes = [...document.querySelectorAll('#hrLanesHost [data-grade-lane]')];
+        same(lanes.map(el => el.dataset.gradeLane), ['י', 'יא', 'יב'], 'Three vertical grade lanes with י"א in the middle');
+        check(lanes[1].classList.contains('hr-pool-11'), 'Middle lane (י"א) uses warm honey-sand pool class');
+        const pebble = document.querySelector('#hrLanesHost .hr-pebble[data-class="יא5"]');
+        check(!!pebble && pebble.classList.contains('is-ghost') && pebble.textContent.includes('3 חניכים'), 'Ghost pebble displays count and ghost status');
+        app.acts.hrOpenClass.call(app, pebble);
+        check(!$id('hrClassPopover').classList.contains('hidden') && $id('hrClassPopover').querySelectorAll('[data-drag-tz]').length === 3, 'Clicking class opens floating popover with draggable students');
+        app.acts.hrCloseClass.call(app);
+        check($id('hrClassPopover').classList.contains('hidden'), 'Closing class popover hides it');
+        const headers = [...document.querySelectorAll('#hrBankTableWrap thead th[data-act="hrBankSort"]')];
+        same(headers.map(h => h.dataset.col), ['name', 'grade', 'roster'], 'Student bank has 3 sortable columns');
+        app.acts.hrBankSort.call(app, headers[1]);
+        same(document.querySelector('#hrBankTableWrap thead th[data-col="grade"]').getAttribute('aria-sort'), 'ascending', 'Clicking grade column sorts ascending');
+        app.acts.ovMode.call(app, { dataset: { mode: 'log' } });
+        check($id('homeroomWorkspace').hidden === true && $id('rosterOverridesCard').hidden === false, 'Switching to log mode reveals overrides log');
+        app.acts.ovMode.call(app, { dataset: { mode: 'organize' } });
+        check($id('homeroomWorkspace').hidden === false && $id('rosterOverridesCard').hidden === true, 'Switching back restores homeroom workspace');
+        noGarbage('QA-7.7 homeroom workspace');
+
+        /* 4. קליטת מצבת חדשה והתמזגות חכמה של דריסות, חניכי רפאים וכיתות רפאים */
+        Config.setRosterOverride(T(1), { track: 'אתגר' });
+        parsed.roster = {
+          rows: [
+            row(1, 'יב', 'יב1'),
+            row(2, 'יא', 'יא5'),   /* דריסת כיתה שכבר תואמת למצבת החדשה -> תנוקה אוטומטית */
+            row(3, 'י', 'י1'),
+            row(91, 'יא', 'יא5'),  /* חניך רפאים שהופיע באותה כיתה -> מתמזג לחניך רגיל והדריסה נמחקת */
+            row(92, 'יא', 'יא1')   /* חניך רפאים שהופיע בכיתה שונה -> מומר לדריסת כיתה רגילה שמשמרת יא5 */
+          ],
+          ignoredIds: [], warnings: [], sheets: ['Sheet'], skipped: 0, duplicates: 0
+        };
+        const importing = app.importRoster({ name: 'roster-reconcile.xlsx' });
+        await tick();
+        app.acts.rosterImportChoice.call(app, { dataset: { choice: 'replace' } });
+        check(await importing, 'Reconciling roster import succeeded');
+
+        const ovAfter = Config.getRosterOverrides();
+        check(!ovAfter[T(2)], 'Matching class override on T(2) was auto-cleaned');
+        check(ovAfter[T(1)] && ovAfter[T(1)].track === 'אתגר', 'Differing override on T(1) stayed intact');
+        check(!ovAfter[T(91)] && Store.trainees.get(T(91)).manual === false && Store.trainees.get(T(91)).classKey === 'יא5', 'Manual student in same class merged cleanly into regular student');
+        check(ovAfter[T(92)] && !ovAfter[T(92)].manual && ovAfter[T(92)].homeroom === 'יא5' && Store.trainees.get(T(92)).classKey === 'יא5', 'Manual student in different class converted to regular class override keeping coordinator choice');
+        check(!Config.isGhostClass('יא5') && Store.classes().filter(c => c === 'יא5').length === 1, 'Ghost class יא5 merged with real roster class without duplication');
+        check(Config.isDormantGhostClass('י3') && !Store.classes().includes('י3'), 'Empty ghost class י3 became dormant and hidden from work screens');
+        app.renderHomeroomWorkspace();
+        check(!!document.querySelector('#hrLanesHost .hr-pebble[data-class="י3"]'), 'Dormant empty ghost class remains visible in Homeroom Organization for clean deletion');
+        check(Config.removeGhostClass('י3').ok && !Config.isGhostClass('י3'), 'Empty ghost class deleted cleanly');
       });
 
       await part('QA-8.1 tracks and special-ed classes drive filters, and every student lands in exactly one track', async () => {

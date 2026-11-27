@@ -287,7 +287,10 @@
     document.querySelectorAll('#settingsTabs [data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === view)));
     const badge = (id, n, title) => { const el = $(id); if (el) { el.classList.toggle('hidden', !n); el.textContent = n; el.title = title; } };
     const overrides = Object.keys(Config.getRosterOverrides()).length;
-    badge('setBadgeOverrides', overrides, `${overrides} דריסות שיוך פעילות`);
+    const ghostCount = Config.activeGhostClasses().length;
+    const totalChanges = overrides + ghostCount;
+    badge('setBadgeOverrides', totalChanges, `${overrides} דריסות שיוך${ghostCount ? ` · ${ghostCount} כיתות רפאים` : ''}`);
+    badge('ovLogBadge', overrides, `${overrides} דריסות שיוך פעילות`);
     const unmapped = this.unrecognizedCodes().length;
     badge('setBadgeRules', unmapped, `${unmapped} שאלונים שטרם שויכו`);
     RulesView.renderDataStatus.call(this);
@@ -349,17 +352,23 @@
   renderSettingsPanel() {
     this.renderFreshnessBar('roster');
     const roster = Config.getRoster();
+    const activeGhosts = Config.activeGhostClasses();
+    const unmatchedCount = Store.hasData() || Config.getRosterEntry() ? GroupAnalyzer.unmatchedIds().length : 0;
+    const mismatchCount = Store.hasData() || Config.getRosterEntry() ? Config.detectRosterMismatches().length : 0;
     let html;
-    if (!roster.length) {
-      html = '<div class="text-slate-500">טרם נטענה מצבת. אפשר לטעון קובץ אקסל.</div>';
+    if (!roster.length && !activeGhosts.length) {
+      html = `<div class="text-slate-500">טרם נטענה מצבת. אפשר לטעון קובץ אקסל או לבנות כיתות רפאים מראש.</div>
+        <div class="mt-2"><button type="button" class="btn btn-ghost btn-sm" data-act="openHomeroomOrganize">פתיחת ארגון כיתות אם</button></div>`;
     } else {
-      const byClass = new Map();
-      roster.forEach(r => byClass.set(r.homeroom, (byClass.get(r.homeroom) || 0) + 1));
-      const classes = [...byClass.keys()].sort((a, b) => Util.ord(Util.parseClass('', a).gradeKey) - Util.ord(Util.parseClass('', b).gradeKey) || natural(a, b));
+      const classes = Config.allHomeroomClasses();
       const rep = this.rosterReport;
-      html = `<div class="font-medium mb-1">${roster.length} חניכים פעילים · ${classes.length} כיתות אם</div>
+      const organizeLabel = unmatchedCount
+        ? `ארגון כיתות אם · ${unmatchedCount} חניכי רפאים לבדיקה`
+        : mismatchCount ? `ארגון כיתות אם · ${mismatchCount} סתירות שיוך` : 'ארגון כיתות אם';
+      html = `<div class="font-medium mb-1">${roster.length} חניכים פעילים · ${classes.length} כיתות אם${activeGhosts.length ? ` (${activeGhosts.length} רפאים)` : ''}</div>
         ${rep ? `<div class="text-xs text-slate-500">נקלטו ${rep.sheets.length} גיליונות${rep.skipped ? ` · ${rep.skipped} שורות דולגו` : ''}${rep.duplicates ? ` · ${rep.duplicates} כפילויות אוחדו` : ''}${rep.ignored ? ` · ${rep.ignored} חניכי ז'-ט' לא נקלטו` : ''}</div>
-          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">${E(w)}</div>`).join('')}` : ''}`;
+          ${rep.warnings.map(w => `<div class="text-xs text-amber-700 mt-1">${E(w)}</div>`).join('')}` : ''}
+        <div class="mt-2"><button type="button" class="btn btn-ghost btn-sm" data-act="openHomeroomOrganize" data-bank-filter="${unmatchedCount ? 'ghosts' : 'all'}">${E(organizeLabel)}</button></div>`;
     }
     setHtml('rosterSummary', html);
     const deleteRoster = $('deleteRosterBtn');
@@ -368,6 +377,7 @@
     const rawRows = Config.getRosterEntry() ? Config.getRosterEntry().data : [];
     const counts = new Map();
     rawRows.forEach(r => counts.set(r.homeroom, 0));
+    activeGhosts.forEach(c => counts.set(c, 0));
     roster.forEach(r => counts.set(r.homeroom, (counts.get(r.homeroom) || 0) + 1));
     const gradeOrder = c => {
       const index = Util.GRADE_KEYS.indexOf(Util.parseClass('', c).gradeKey);
@@ -389,6 +399,7 @@
       : '<div class="text-sm text-slate-400">הכיתות יוצגו לאחר טעינת המצבת.</div>');
     setText('nicknamesCount', `${classes.filter(c => Config.isSpecialEdClass(c)).length} מתוך ${classes.length}`);
     setText('configSummary', `${Object.keys(Config.data.traineeExceptions).length} רשומות חריג/מסלול שמורות · ${Object.keys(Config.getRosterOverrides()).length} דריסות שיוך`);
+    RulesView.renderHomeroomWorkspace.call(this);
     this.renderRosterOverrides();
     this.renderDataTools();
     this.renderCloudCard();
@@ -503,10 +514,10 @@
   },
 
   renderRosterOverrides() {
+    RulesView.renderHomeroomModeBar.call(this);
     if (!$('ovTable')) return;
     this._ovCands = this.ovCandidates();
-    const entry = Config.getRosterEntry();
-    const classes = [...new Set((entry ? entry.data : []).map(r => r.homeroom))].sort(natural);
+    const classes = Config.allHomeroomClasses();
     setHtml('ovHomeroom', '<option value="">ללא שינוי</option>' + Util.GRADE_KEYS.map(g => {
       const rooms = classes.filter(c => Util.parseClass('', c).gradeKey === g);
       return rooms.length ? `<optgroup label="שכבה ${E(Util.gl(g))}">${rooms.map(c => `<option value="${E(c)}">${E(Config.classLabel(c))}</option>`).join('')}</optgroup>` : '';
@@ -616,7 +627,7 @@
     const prev = document.querySelector('#modal-root [data-act="modalBackdrop"]');
     const scroll = prev ? prev.scrollTop : 0;
     if (!members.length) return this.closeModal();
-    const classes = [...new Set(Config.getRoster().map(r => r.homeroom))].sort(natural);
+    const classes = Config.allHomeroomClasses();
     const homeOptions = current => Util.GRADE_KEYS.map(g => {
       const rooms = classes.filter(c => Util.parseClass('', c).gradeKey === g);
       return rooms.length ? `<optgroup label="שכבה ${E(Util.gl(g))}">${rooms.map(c => `<option value="${E(c)}" ${c === current ? 'selected' : ''}>${E(Config.classLabel(c))}</option>`).join('')}</optgroup>` : '';
@@ -648,8 +659,641 @@
   },
 
   afterClassSettingChange() {
+    Store.refresh();
     this.syncFilters();
     this.invalidateAll();
+  },
+
+  /* ==================================================================
+     ארגון כיתות אם – מרחב אורגני לשכבות, כיתות רפאים ובנק חניכים
+     ================================================================== */
+  hrSelectedSet() {
+    if (!(this._hrSelected instanceof Set)) this._hrSelected = new Set();
+    return this._hrSelected;
+  },
+
+  renderHomeroomModeBar() {
+    const mode = this.state.ovMode === 'log' ? 'log' : 'organize';
+    this.state.ovMode = mode;
+    document.querySelectorAll('#overridesModeTabs [data-mode]').forEach(btn => {
+      btn.setAttribute('aria-selected', String(btn.dataset.mode === mode));
+    });
+    const ws = $('homeroomWorkspace'), logCard = $('rosterOverridesCard');
+    if (ws) ws.hidden = mode !== 'organize';
+    if (logCard) logCard.hidden = mode !== 'log';
+    if (mode !== 'organize' && this.state.hrOpenClass) RulesView.closeHomeroomClassPopover.call(this, false);
+  },
+
+  ovMode(el) {
+    this.state.ovMode = el.dataset.mode === 'log' ? 'log' : 'organize';
+    RulesView.renderHomeroomModeBar.call(this);
+    if (this.state.ovMode === 'organize') RulesView.renderHomeroomWorkspace.call(this);
+  },
+
+  openHomeroomOrganize(el) {
+    this.closeModal();
+    this.state.settingsView = 'overrides';
+    this.state.ovMode = (el && el.dataset.ovMode) === 'log' ? 'log' : 'organize';
+    if (el && el.dataset.bankFilter) this.state.hrBankFilter = el.dataset.bankFilter;
+    this.dirty.add('settings');
+    this.showTab('settings');
+    this.renderSettingsNav();
+    RulesView.renderHomeroomModeBar.call(this);
+    RulesView.renderHomeroomWorkspace.call(this);
+    const target = this.state.ovMode === 'log' ? $('ovTableSection') : $('homeroomWorkspace');
+    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'start' });
+  },
+
+  /** בונה תמונת מצב אחידה לבנק החניכים: מצבת מלאה (כולל מוסתרים וידניים) + חניכי רפאים שאותרו בקובצי המשנה */
+  hrBankModel() {
+    const rosterAll = Config.getRosterAll();
+    const known = new Set();
+    const gradeHintByTz = new Map();
+    ['groupsData', 'sadinData', 'bagrutData'].forEach(key => {
+      Config.getRows(key).forEach(r => {
+        if (r.isTeacher || !r.tz || gradeHintByTz.has(r.tz)) return;
+        const g = Util.normGrade(r.gradeKey || r.grade || '');
+        if (Util.GRADE_KEYS.includes(g)) gradeHintByTz.set(r.tz, g);
+      });
+    });
+    const rows = [];
+    rosterAll.forEach(r => {
+      known.add(r.tz);
+      const name = `${r.firstName} ${r.lastName}`.trim() || r.tz;
+      const isManual = !!(r.manual || r.added);
+      const isMoved = !isManual && !r.hidden && !!(r.override && (r.override.homeroom || r.override.grade || r.override.track));
+      const kind = r.hidden ? 'hidden' : isManual ? 'manual' : isMoved ? 'overridden' : 'regular';
+      const grade = r.hidden ? (r.grade || r.rawGrade || '') : r.grade;
+      const homeroom = r.hidden ? (r.homeroom || r.rawHomeroom || '') : r.homeroom;
+      let rosterText = r.rawHomeroom || r.homeroom || '—', rosterTone = '';
+      if (r.hidden) { rosterText = `מוסתר${r.rawHomeroom ? ` (${r.rawHomeroom})` : ''}`; rosterTone = 'is-hidden'; }
+      else if (isManual) { rosterText = `רפאים · ${r.homeroom}`; rosterTone = 'is-ghost'; }
+      else if (r.rawHomeroom && r.homeroom !== r.rawHomeroom) { rosterText = `${r.rawHomeroom} ← ${r.homeroom}`; rosterTone = 'is-moved'; }
+      else if (r.override && r.override.track) { rosterText = `${r.homeroom} · ${r.track}`; rosterTone = 'is-moved'; }
+      rows.push({ tz: r.tz, name, grade, homeroom, rawHomeroom: r.rawHomeroom || '', kind, rosterText, rosterTone, sources: [], rec: r });
+    });
+    const unmatched = GroupAnalyzer.unmatchedIds();
+    unmatched.forEach(u => {
+      if (known.has(u.tz)) return;
+      known.add(u.tz);
+      rows.push({
+        tz: u.tz, name: u.name || u.tz, grade: gradeHintByTz.get(u.tz) || '', homeroom: '', rawHomeroom: '',
+        kind: 'unmatched', rosterText: 'לא במצבת', rosterTone: 'is-ghost', sources: u.sources || [], rec: null
+      });
+    });
+    Object.values(Config.getRosterOverrides()).forEach(o => {
+      if (known.has(o.tz)) return;
+      known.add(o.tz);
+      rows.push({
+        tz: o.tz, name: o.name || o.tz, grade: o.grade || gradeHintByTz.get(o.tz) || '', homeroom: o.homeroom || '', rawHomeroom: '',
+        kind: o.hidden ? 'hidden' : 'manual', rosterText: o.hidden ? 'מוסתר' : (o.homeroom || 'ידני'),
+        rosterTone: o.hidden ? 'is-hidden' : 'is-ghost', sources: [], rec: null
+      });
+    });
+    const counts = {
+      all: rows.filter(r => r.kind !== 'hidden').length,
+      ghosts: rows.filter(r => r.kind === 'unmatched' || r.kind === 'manual').length,
+      unmatched: unmatched.length,
+      overridden: rows.filter(r => r.kind === 'overridden' || r.kind === 'manual').length,
+      hidden: rows.filter(r => r.kind === 'hidden').length
+    };
+    return { rows, counts, byTz: new Map(rows.map(r => [r.tz, r])) };
+  },
+
+  hrFilteredBankRows(model) {
+    const filter = ['all', 'ghosts', 'overridden', 'hidden'].includes(this.state.hrBankFilter) ? this.state.hrBankFilter : 'all';
+    this.state.hrBankFilter = filter;
+    const q = Util.norm(this.state.hrBankSearch || '').toLocaleLowerCase();
+    const list = model.rows.filter(r => {
+      if (filter === 'all' && r.kind === 'hidden') return false;
+      if (filter === 'ghosts' && r.kind !== 'unmatched' && r.kind !== 'manual') return false;
+      if (filter === 'overridden' && r.kind !== 'overridden' && r.kind !== 'manual') return false;
+      if (filter === 'hidden' && r.kind !== 'hidden') return false;
+      if (!q) return true;
+      return [r.name, r.tz, r.homeroom, r.rawHomeroom, r.rosterText].some(v => Util.norm(v).toLocaleLowerCase().includes(q));
+    });
+    const sort = this.state.hrBankSort || { col: 'name', dir: 1 };
+    const dir = sort.dir === -1 ? -1 : 1;
+    const kindRank = { unmatched: 0, manual: 1, overridden: 2, regular: 3, hidden: 4 };
+    list.sort((a, b) => {
+      if (sort.col === 'grade') {
+        const oa = a.grade ? Util.ord(a.grade) : 99, ob = b.grade ? Util.ord(b.grade) : 99;
+        return dir * (oa - ob || natural(a.homeroom, b.homeroom) || natural(a.name, b.name));
+      }
+      if (sort.col === 'roster') {
+        return dir * ((kindRank[a.kind] - kindRank[b.kind]) || natural(a.rosterText, b.rosterText) || natural(a.name, b.name));
+      }
+      if (filter === 'ghosts' && a.kind !== b.kind) return (a.kind === 'unmatched' ? -1 : 1);
+      return dir * (natural(a.name, b.name) || a.tz.localeCompare(b.tz));
+    });
+    return list;
+  },
+
+  renderHomeroomWorkspace() {
+    RulesView.renderHomeroomModeBar.call(this);
+    const host = $('homeroomWorkspace');
+    if (!host) return;
+    if (!$('hrLanesHost')) {
+      host.innerHTML = `
+        <div id="hrLanesHost" class="hr-lanes" aria-label="שכבות וכיתות אם"></div>
+        <aside id="hrBankCard" class="card hr-bank" aria-label="בנק חניכים">
+          <div class="hr-bank-head">
+            <h3>בנק חניכים</h3>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="hrAddStudent">+ הוספת חניך חדש</button>
+          </div>
+          <div id="hrBankPills" class="hr-bank-pills" role="group" aria-label="סינון בנק חניכים"></div>
+          <input id="hrBankSearch" class="inp w-full" placeholder="חיפוש לפי שם, ת.ז או כיתה..." aria-label="חיפוש בבנק חניכים" autocomplete="off">
+          <div id="hrBatchBar" class="hr-batch-bar hidden"></div>
+          <div id="hrBankTableWrap" class="hr-bank-wrap"></div>
+          <div id="hrBankFooter" class="text-xs text-slate-500 flex items-center justify-between gap-2"></div>
+          <div id="hrHideZone" class="hr-hide-zone" data-drop-hide="1"></div>
+        </aside>`;
+    }
+    const search = $('hrBankSearch');
+    if (search && document.activeElement !== search) search.value = this.state.hrBankSearch || '';
+    const model = RulesView.hrBankModel.call(this);
+    this._hrBankCache = model;
+    /* ניקוי ת.ז שנבחרו אך כבר אינן קיימות במודל */
+    const sel = RulesView.hrSelectedSet.call(this);
+    [...sel].forEach(tz => { if (!model.byTz.has(tz)) sel.delete(tz); });
+    RulesView.renderHomeroomLanes.call(this);
+    RulesView.renderHomeroomBankControls.call(this, model);
+    RulesView.renderHomeroomBankTable.call(this, model);
+    if (this.state.hrOpenClass) RulesView.renderHomeroomClassPopover.call(this);
+    else RulesView.closeHomeroomClassPopover.call(this, false);
+  },
+
+  renderHomeroomLanes() {
+    const lanesHost = $('hrLanesHost');
+    if (!lanesHost) return;
+    const roster = Config.getRoster();
+    const byClass = new Map();
+    roster.forEach(r => {
+      if (!byClass.has(r.homeroom)) byClass.set(r.homeroom, []);
+      byClass.get(r.homeroom).push(r);
+    });
+    const mismatchesByClass = new Map();
+    Config.detectRosterMismatches().forEach(m => {
+      if (m.homeroom) mismatchesByClass.set(m.homeroom, (mismatchesByClass.get(m.homeroom) || 0) + 1);
+    });
+    const allClasses = Config.allHomeroomClasses({ includeDormant: true });
+    /* סדר שכבות אנכי קבוע: י' למעלה (טורקיז-אקליפטוס), י"א באמצע (דבש-חול חמים), י"ב למטה (ירוק מרווה) */
+    const extraGrades = [...new Set(allClasses.map(c => Util.parseClass('', c).gradeKey).filter(g => g && !Util.GRADE_KEYS.includes(g)))];
+    const gradeOrder = [...Util.GRADE_KEYS, ...extraGrades];
+    const poolTone = g => ({ 'י': 'hr-pool-10', 'יא': 'hr-pool-11', 'יב': 'hr-pool-12' }[g] || 'hr-pool-other');
+    const rawClassNames = Config.rosterClassNames();
+
+    lanesHost.innerHTML = gradeOrder.map(grade => {
+      const classes = allClasses.filter(c => Util.parseClass('', c).gradeKey === grade);
+      const totalStudents = classes.reduce((sum, c) => sum + (byClass.get(c) || []).length, 0);
+      const pebbles = classes.map(c => {
+        const members = byClass.get(c) || [];
+        const isGhost = Config.isGhostClass(c);
+        const isDormant = Config.isDormantGhostClass(c);
+        const isReview = Config.isClassReview(c) || (mismatchesByClass.get(c) || 0) > 0;
+        const isSpec = Config.isSpecialEdClass(c);
+        const nick = rawClassNames[c] || Config.nickname(c);
+        const selected = this.state.hrOpenClass === c;
+        const statusHtml = isGhost
+          ? `<span class="hr-status is-ghost">${isDormant ? 'כיתת רפאים · ריקה' : 'כיתת רפאים'}</span>${isReview ? '<span class="hr-status is-warn">לתיקון</span>' : ''}`
+          : isReview ? '<span class="hr-status is-warn">לתיקון</span>' : '<span class="hr-status is-ok">תקין</span>';
+        const delBtn = isGhost && members.length === 0
+          ? `<button type="button" class="hr-pebble-del" data-act="hrDeleteGhostClass" data-class="${E(c)}" title="מחיקת כיתת רפאים ריקה" aria-label="${E(`מחיקת כיתת רפאים ${c}`)}">✕</button>`
+          : '';
+        return `<div class="hr-pebble${isGhost ? ' is-ghost' : ''}${isDormant ? ' is-dormant' : ''}${isReview ? ' is-review' : ''}${selected ? ' is-selected' : ''}"
+          role="button" tabindex="0" data-act="hrOpenClass" data-class="${E(c)}" data-drop-class="${E(c)}" aria-expanded="${String(selected)}">
+          <div class="hr-pebble-top">
+            <div>
+              <div class="hr-pebble-name">${E(c)}</div>
+              ${nick ? `<span class="hr-pebble-sub">${E(nick)}</span>` : ''}
+            </div>
+            ${delBtn}
+          </div>
+          <div class="hr-pebble-bottom">
+            <span class="hr-pebble-count">${members.length ? `${members.length} חניכים` : 'ריקה'}</span>
+            <span class="flex flex-wrap items-center gap-1">${statusHtml}${isSpec ? '<span class="hr-status is-spec">חנ"מ</span>' : ''}</span>
+          </div>
+        </div>`;
+      }).join('');
+      return `<section class="hr-pool ${poolTone(grade)}" data-grade-lane="${E(grade)}" aria-label="${E(`שכבה ${Util.gl(grade)}`)}">
+        <div class="hr-pool-head">
+          <div class="hr-pool-title">
+            <h3>שכבה ${E(Util.gl(grade))}</h3>
+            <span class="hr-pool-meta">${classes.length} כיתות · ${totalStudents} חניכים</span>
+          </div>
+          <button type="button" class="hr-add-class-btn" data-act="hrAddClass" data-grade="${E(grade)}">+ הוספת כיתה</button>
+        </div>
+        <div class="hr-pebbles">${pebbles || '<div class="hr-empty-lane">אין כיתות בשכבה זו כרגע · לחצו "+ הוספת כיתה" ליצירת כיתת רפאים</div>'}</div>
+      </section>`;
+    }).join('');
+  },
+
+  renderHomeroomBankControls(model = this._hrBankCache || RulesView.hrBankModel.call(this)) {
+    const pillsHost = $('hrBankPills'), batchBar = $('hrBatchBar'), hideZone = $('hrHideZone');
+    if (!pillsHost) return;
+    const filter = this.state.hrBankFilter || 'all';
+    const pills = [
+      ['all', `הכול (${model.counts.all})`, false],
+      ['ghosts', `רפאים (${model.counts.ghosts})`, model.counts.unmatched > 0],
+      ['overridden', `דריסות (${model.counts.overridden})`, false],
+      ['hidden', `מוסתרים (${model.counts.hidden})`, false]
+    ];
+    pillsHost.innerHTML = pills.map(([key, label, alert]) =>
+      `<button type="button" class="hr-pill${alert ? ' has-alert' : ''}" data-act="hrBankFilter" data-filter="${E(key)}" aria-pressed="${String(filter === key)}">${E(label)}</button>`
+    ).join('');
+
+    const sel = RulesView.hrSelectedSet.call(this);
+    if (batchBar) {
+      batchBar.classList.toggle('hidden', !sel.size);
+      if (sel.size) {
+        const classes = Config.allHomeroomClasses({ includeDormant: true });
+        const opts = Util.GRADE_KEYS.map(g => {
+          const rooms = classes.filter(c => Util.parseClass('', c).gradeKey === g);
+          return rooms.length ? `<optgroup label="שכבה ${E(Util.gl(g))}">${rooms.map(c => `<option value="${E(c)}">${E(Config.classLabel(c))}</option>`).join('')}</optgroup>` : '';
+        }).join('');
+        batchBar.innerHTML = `
+          <strong class="text-[#355747]">${sel.size} נבחרו:</strong>
+          <select id="hrBatchTarget" class="inp flex-1 text-xs py-1" aria-label="כיתת יעד לשיוך קבוצתי">
+            <option value="">בחרו כיתה או פעולה...</option>
+            ${opts}
+            <option value="__hide__">עזב / מוסתר מהמערכת</option>
+          </select>
+          <button type="button" class="btn btn-primary btn-sm" data-act="hrBatchApply">שייך</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="hrClearSelection">נקה</button>`;
+      } else batchBar.innerHTML = '';
+    }
+
+    if (hideZone) {
+      hideZone.innerHTML = `
+        <strong>עזב / מוסתר מהמערכת</strong>
+        <span>גררו לכאן חניך להסתרה מהמערכת</span>
+        <div class="flex flex-wrap items-center justify-center gap-2 mt-2">
+          ${sel.size ? `<button type="button" class="btn btn-danger btn-sm" data-act="hrHideSelected">הסתר ${sel.size} נבחרים</button>` : ''}
+          ${model.counts.hidden ? `<button type="button" class="btn btn-ghost btn-sm" data-act="hrBankFilter" data-filter="hidden">צפייה במוסתרים (${model.counts.hidden})</button>` : ''}
+        </div>`;
+    }
+  },
+
+  renderHomeroomBankTable(model = this._hrBankCache || RulesView.hrBankModel.call(this)) {
+    const wrap = $('hrBankTableWrap'), footer = $('hrBankFooter');
+    if (!wrap) return;
+    const matches = RulesView.hrFilteredBankRows.call(this, model);
+    this._hrVisibleBankTzs = matches.map(r => r.tz);
+    const limited = matches.length > 120 && !this.state.hrBankShowAll;
+    const shown = limited ? matches.slice(0, 120) : matches;
+    const sel = RulesView.hrSelectedSet.call(this);
+    const sort = this.state.hrBankSort || { col: 'name', dir: 1 };
+    const sortTh = (col, label) => {
+      const active = sort.col === col;
+      const arrow = active ? (sort.dir === -1 ? ' ↓' : ' ↑') : '';
+      const aria = active ? (sort.dir === -1 ? 'descending' : 'ascending') : 'none';
+      return `<th data-act="hrBankSort" data-col="${col}" aria-sort="${aria}">${label}${arrow}</th>`;
+    };
+    const allChecked = shown.length > 0 && shown.every(r => sel.has(r.tz));
+    const rowsHtml = shown.map(r => {
+      const checked = sel.has(r.tz);
+      const subParts = [r.tz];
+      if (r.sources && r.sources.length) subParts.push(r.sources.join(', '));
+      const restoreBtn = r.kind === 'hidden'
+        ? ` <button type="button" class="underline text-xs text-[#355747] mr-1" data-act="hrRestoreStudent" data-tz="${E(r.tz)}">שחזר</button>`
+        : '';
+      return `<tr draggable="true" data-drag-tz="${E(r.tz)}" class="${checked ? 'is-checked' : ''}">
+        <td class="hr-chk-col"><input type="checkbox" data-hr-check="${E(r.tz)}" ${checked ? 'checked' : ''} aria-label="${E(`בחירת ${r.name}`)}"></td>
+        <td><span class="hr-stu-name">${E(r.name)}</span><span class="hr-stu-sub" dir="ltr">${E(subParts.join(' · '))}</span></td>
+        <td>${E(r.grade ? Util.gl(r.grade) : '—')}</td>
+        <td><span class="hr-roster-tag ${r.rosterTone}">${E(r.rosterText)}</span>${restoreBtn}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table class="hr-bank-tbl">
+      <thead><tr>
+        <th class="hr-chk-col"><input type="checkbox" id="hrSelectAll" ${allChecked ? 'checked' : ''} aria-label="בחירת כל החניכים המוצגים"></th>
+        ${sortTh('name', 'שם')}${sortTh('grade', 'שכבה')}${sortTh('roster', 'במצבת')}
+      </tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-slate-400 py-6">אין חניכים להצגה בסינון זה</td></tr>'}</tbody>
+    </table>`;
+    if (footer) {
+      footer.innerHTML = `<span>מציג ${shown.length} מתוך ${matches.length} · אפשר לסמן ולגרור יחד אל כיתה</span>
+        ${matches.length > 120 ? `<button type="button" class="underline text-[#355747]" data-act="hrToggleBankAll">${this.state.hrBankShowAll ? 'צמצם' : 'הצג הכול'}</button>` : ''}`;
+    }
+  },
+
+  renderHomeroomClassPopover(anchorEl) {
+    const pop = $('hrClassPopover');
+    const classKey = this.state.hrOpenClass;
+    if (!pop || !classKey) { if (pop) pop.classList.add('hidden'); return; }
+    const allClasses = Config.allHomeroomClasses({ includeDormant: true });
+    if (!allClasses.includes(classKey)) {
+      this.state.hrOpenClass = null;
+      pop.classList.add('hidden');
+      return;
+    }
+    const members = Config.getRoster().filter(r => r.homeroom === classKey)
+      .sort((a, b) => natural(`${a.firstName} ${a.lastName}`.trim(), `${b.firstName} ${b.lastName}`.trim()));
+    const isGhost = Config.isGhostClass(classKey);
+    const isReview = Config.isClassReview(classKey);
+    const isSpec = Config.isSpecialEdClass(classKey);
+    const rawName = Config.rosterClassNames()[classKey] || '';
+    const nick = Config.nickname(classKey);
+    const sel = RulesView.hrSelectedSet.call(this);
+    const q = Util.norm(this.state.hrPopSearch || '').toLocaleLowerCase();
+    const filtered = q ? members.filter(r => Util.norm(`${r.firstName} ${r.lastName} ${r.tz}`).toLocaleLowerCase().includes(q)) : members;
+
+    pop.innerHTML = `
+      <div class="sm-head">
+        <div class="sm-title">
+          <h2>כיתה ${E(Config.classLabel(classKey))}</h2>
+          <p>${members.length} חניכים פעילים${isGhost ? ' · כיתת רפאים' : ''}${rawName ? ` · שם במצבת: ${E(rawName)}` : ''}</p>
+        </div>
+        <button type="button" class="sm-close" data-act="hrCloseClass" aria-label="סגירת חלונית כיתה">✕</button>
+      </div>
+      <div class="grid gap-2 text-xs bg-[#FAF7EF] p-2.5 rounded-xl border border-[#E6ECE6]">
+        <label class="flex items-center gap-2">
+          <span class="text-slate-600 whitespace-nowrap">כינוי / שם:</span>
+          <input class="inp flex-1 py-1 text-xs" data-chg="hrClassNickname" data-class="${E(classKey)}" value="${E(nick)}" placeholder="${E(rawName || 'למשל: מדעית / מרחב')}">
+        </label>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <label class="inline-flex items-center gap-1.5 cursor-pointer font-medium text-[#355747]">
+            <input type="checkbox" data-chg="hrClassReview" data-class="${E(classKey)}" ${isReview ? 'checked' : ''}>סמן לבדיקה
+          </label>
+          <label class="inline-flex items-center gap-1.5 cursor-pointer font-medium text-[#355747]">
+            <input type="checkbox" data-chg="specialEd" data-class="${E(classKey)}" ${isSpec ? 'checked' : ''}>כיתת חנ"מ
+          </label>
+          ${isGhost && members.length === 0 ? `<button type="button" class="btn btn-danger btn-sm" data-act="hrDeleteGhostClass" data-class="${E(classKey)}">מחק כיתה ריקה</button>` : ''}
+        </div>
+        ${sel.size ? `<button type="button" class="btn btn-primary btn-sm w-full justify-center" data-act="hrAssignSelectedToClass" data-class="${E(classKey)}">+ שבץ ${sel.size} נבחרים לכיתה זו</button>` : ''}
+      </div>
+      ${members.length > 6 ? `<input id="hrPopSearch" class="inp w-full py-1 text-xs" value="${E(this.state.hrPopSearch || '')}" placeholder="סינון חניכים בכיתה..." aria-label="סינון חניכים בכיתה">` : ''}
+      <div class="text-[11px] text-slate-500">גררו חניך החוצה אל כיתה אחרת או אל אזור "עזב / מוסתר"</div>
+      <ul id="hrPopList" class="hr-pop-list">${RulesView.hrClassPopoverRowsHtml.call(this, filtered)}</ul>`;
+
+    pop.classList.remove('hidden');
+    if (anchorEl && anchorEl.getBoundingClientRect) {
+      const r = anchorEl.getBoundingClientRect();
+      if (r.width > 0 && window.innerWidth >= 900) {
+        const pw = Math.min(376, window.innerWidth - 24);
+        const preferredLeft = r.left - pw - 12 >= 16 ? r.left - pw - 12 : Math.max(16, Math.min(r.left, window.innerWidth - pw - 270));
+        const preferredTop = Math.max(84, Math.min(r.top, window.innerHeight - 440));
+        pop.style.left = `${Math.round(preferredLeft)}px`;
+        pop.style.top = `${Math.round(preferredTop)}px`;
+      }
+    }
+  },
+
+  hrClassPopoverRowsHtml(list) {
+    if (!list.length) return '<li class="p-4 text-center text-xs text-slate-400">אין חניכים בכיתה זו כרגע</li>';
+    return list.map(r => {
+      const name = `${r.firstName} ${r.lastName}`.trim() || r.tz;
+      const moved = !r.added && r.rawHomeroom && r.rawHomeroom !== r.homeroom;
+      const badge = r.manual || r.added
+        ? '<span class="hr-status is-ghost">רפאים</span>'
+        : moved ? `<span class="hr-status is-warn" title="${E(`במצבת המקורית: ${r.rawHomeroom}`)}">מ-${E(r.rawHomeroom)}</span>` : '';
+      const undo = (r.override && (r.override.homeroom || r.override.grade || r.manual || r.added))
+        ? `<button type="button" class="text-xs text-slate-500 hover:text-[#355747] px-1" data-act="ovRemove" data-tz="${E(r.tz)}" title="${r.manual || r.added ? 'הסרת חניך ידני' : 'החזרה לכיתה שבמצבת'}">↩</button>`
+        : '';
+      return `<li class="hr-pop-row" draggable="true" data-drag-tz="${E(r.tz)}">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="hr-grip" aria-hidden="true">⋮⋮</span>
+          <div class="min-w-0">
+            <button type="button" class="font-semibold text-[#355747] hover:underline text-right truncate block" data-act="openProfile" data-tz="${E(r.tz)}">${E(name)}</button>
+            <span class="text-[11px] text-slate-500 font-mono" dir="ltr">${E(r.tz)}</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          ${badge}${undo}
+          <button type="button" class="text-xs text-slate-400 hover:text-[#C86432] px-1" data-act="hrHideStudent" data-tz="${E(r.tz)}" title="סמן כעזב / מוסתר">עזב</button>
+        </div>
+      </li>`;
+    }).join('');
+  },
+
+  closeHomeroomClassPopover(restoreFocus = false) {
+    const prev = this.state.hrOpenClass;
+    this.state.hrOpenClass = null;
+    this.state.hrPopSearch = '';
+    const pop = $('hrClassPopover');
+    if (pop) pop.classList.add('hidden');
+    document.querySelectorAll('#hrLanesHost .hr-pebble.is-selected').forEach(el => {
+      el.classList.remove('is-selected');
+      el.setAttribute('aria-expanded', 'false');
+    });
+    if (restoreFocus && prev) {
+      const btn = [...document.querySelectorAll('#hrLanesHost .hr-pebble')].find(p => p.dataset.class === prev);
+      if (btn) btn.focus();
+    }
+  },
+
+  hrOpenClass(el, event) {
+    if (event && event.target && event.target.closest('[data-act="hrDeleteGhostClass"]')) return;
+    const c = el.dataset.class;
+    if (!c) return;
+    if (this.state.hrOpenClass === c) {
+      RulesView.closeHomeroomClassPopover.call(this, false);
+      return;
+    }
+    this.state.hrOpenClass = c;
+    this.state.hrPopSearch = '';
+    RulesView.renderHomeroomLanes.call(this);
+    const currentPebble = [...document.querySelectorAll('#hrLanesHost .hr-pebble')].find(p => p.dataset.class === c) || el;
+    RulesView.renderHomeroomClassPopover.call(this, currentPebble);
+    const pop = $('hrClassPopover');
+    if (pop) pop.focus({ preventScroll: true });
+  },
+
+  hrCloseClass() { RulesView.closeHomeroomClassPopover.call(this, true); },
+
+  hrAddClass(el) {
+    const grade = el.dataset.grade || 'י';
+    this.formModal(`הוספת כיתת רפאים · שכבה ${Util.gl(grade)}`, [
+      { key: 'code', label: `מספר או קוד כיתה בשכבה ${Util.gl(grade)}`, placeholder: `למשל 5 או ${grade}5` },
+      { key: 'nickname', label: 'שם / כינוי כיתה (אופציונלי)', placeholder: 'למשל מדעית / מרחב' }
+    ], v => {
+      const res = Config.upsertGhostClass(grade, v.code, { nickname: v.nickname });
+      if (res.ok) {
+        this.state.hrOpenClass = res.classKey;
+        this.afterDataChange();
+        this.toast(`נוצרה כיתת רפאים ${Config.classLabel(res.classKey)}`, 'ok');
+      }
+      return res;
+    }, 'יצירת כיתה');
+  },
+
+  hrDeleteGhostClass(el) {
+    const classKey = el.dataset.class;
+    if (!classKey) return;
+    if (!this.confirmAction(`למחוק את כיתת הרפאים הריקה "${Config.classLabel(classKey)}"?`)) return;
+    const res = Config.removeGhostClass(classKey);
+    if (res.ok === false) return this.toast(res.error || 'מחיקת הכיתה נכשלה', 'error');
+    if (this.state.hrOpenClass === classKey) this.state.hrOpenClass = null;
+    this.afterDataChange();
+    this.toast(`כיתת הרפאים ${classKey} נמחקה`, 'ok');
+  },
+
+  hrAddStudent() {
+    const classes = Config.allHomeroomClasses({ includeDormant: true });
+    if (!classes.length) return this.toast('יש ליצור תחילה כיתה (או לטעון מצבת) לפני הוספת חניך.', 'warn');
+    const defaultClass = this.state.hrOpenClass && classes.includes(this.state.hrOpenClass) ? this.state.hrOpenClass : classes[0];
+    this.formModal('הוספת חניך חדש (רפאים / ידני)', [
+      { key: 'tz', label: 'תעודת זהות', placeholder: '9 ספרות' },
+      { key: 'name', label: 'שם מלא', placeholder: 'שם פרטי ושם משפחה' },
+      { key: 'homeroom', label: 'כיתת אם', type: 'select', value: defaultClass, options: classes.map(c => ({ value: c, label: Config.classLabel(c) })) },
+      { key: 'track', label: 'מסלול', type: 'select', value: 'רגילה', options: Config.TRACKS.map(t => ({ value: t, label: t })) }
+    ], v => {
+      const name = String(v.name || '').trim();
+      if (!name) return { ok: false, error: 'יש להזין שם לחניך החדש' };
+      const parsed = Util.parseClass('', v.homeroom);
+      const res = Config.setRosterOverride(v.tz, {
+        grade: parsed.gradeKey, homeroom: parsed.classKey,
+        track: v.track === 'רגילה' ? '' : v.track,
+        name, hidden: false, manual: true
+      });
+      if (res.ok) {
+        this.afterDataChange();
+        this.toast(`נוסף החניך ${name} לכיתה ${Config.classLabel(parsed.classKey)}`, 'ok');
+      }
+      return res;
+    }, 'הוספת חניך');
+  },
+
+  /** בונה פריטי עדכון קבוצתי לשיוך לכיתה או להסתרה, תוך שימור אוטומטי של שם ודגל manual לחניכי רפאים */
+  hrBuildBatchItems(tzs, target) {
+    const model = this._hrBankCache || RulesView.hrBankModel.call(this);
+    const hide = target === '__hide__';
+    const parsed = hide ? null : Util.parseClass('', target);
+    if (!hide && (!parsed || !parsed.classKey)) return [];
+    return [...new Set(tzs.map(tz => Util.normId(tz)).filter(Boolean))].map(tz => {
+      const info = model.byTz.get(tz);
+      const existingOv = Config.getRosterOverrides()[tz];
+      const isGhost = !info || info.kind === 'unmatched' || info.kind === 'manual' || (info.rec && info.rec.added);
+      if (hide) {
+        const patch = { hidden: true };
+        if (isGhost) {
+          patch.name = (existingOv && existingOv.name) || (info && info.name !== tz ? info.name : '');
+          if (existingOv && existingOv.manual) patch.manual = true;
+        }
+        return { tz, patch };
+      }
+      const patch = { grade: parsed.gradeKey, homeroom: parsed.classKey, hidden: false };
+      if (isGhost) {
+        patch.name = (existingOv && existingOv.name) || (info && info.name !== tz ? info.name : '');
+        patch.manual = true;
+      }
+      return { tz, patch };
+    });
+  },
+
+  hrApplyBatchAssign(tzs, target) {
+    if (!this.requireEdit()) return false;
+    const items = RulesView.hrBuildBatchItems.call(this, tzs, target);
+    if (!items.length) return false;
+    const res = Config.setRosterOverridesBatch(items);
+    if (!res || res.ok === false) {
+      this.toast((res && res.error) || 'שמירת השיוך נכשלה', 'error');
+      return false;
+    }
+    if (!res.applied && res.failed) {
+      this.toast(res.error || 'לא ניתן היה לעדכן את החניכים שנבחרו', 'warn');
+      return false;
+    }
+    RulesView.hrSelectedSet.call(this).clear();
+    this.afterDataChange();
+    const label = target === '__hide__' ? 'הועברו למוסתרים' : `שויכו לכיתה ${Config.classLabel(target)}`;
+    this.toast(`${res.applied} חניכים ${label}`, 'ok');
+    return true;
+  },
+
+  hrBatchApply() {
+    const sel = [...RulesView.hrSelectedSet.call(this)];
+    const target = $('hrBatchTarget') ? $('hrBatchTarget').value : '';
+    if (!sel.length) return this.toast('לא נבחרו חניכים בבנק', 'warn');
+    if (!target) return this.toast('יש לבחור כיתת יעד או פעולה', 'warn');
+    RulesView.hrApplyBatchAssign.call(this, sel, target);
+  },
+
+  hrAssignSelectedToClass(el) {
+    const sel = [...RulesView.hrSelectedSet.call(this)];
+    if (!sel.length || !el.dataset.class) return;
+    RulesView.hrApplyBatchAssign.call(this, sel, el.dataset.class);
+  },
+
+  hrHideSelected() {
+    const sel = [...RulesView.hrSelectedSet.call(this)];
+    if (!sel.length) return;
+    RulesView.hrApplyBatchAssign.call(this, sel, '__hide__');
+  },
+
+  hrClearSelection() {
+    RulesView.hrSelectedSet.call(this).clear();
+    RulesView.renderHomeroomBankControls.call(this);
+    RulesView.renderHomeroomBankTable.call(this);
+    if (this.state.hrOpenClass) RulesView.renderHomeroomClassPopover.call(this);
+  },
+
+  hrHideStudent(el) {
+    if (!el.dataset.tz) return;
+    RulesView.hrApplyBatchAssign.call(this, [el.dataset.tz], '__hide__');
+  },
+
+  hrRestoreStudent(el) {
+    const tz = Util.normId(el.dataset.tz);
+    if (!tz) return;
+    const rawRow = (Config.getRosterEntry()?.data || []).find(r => r.tz === tz && !Util.isJunior(r.grade));
+    const ov = Config.getRosterOverrides()[tz];
+    if (rawRow || (ov && ov.grade && ov.homeroom)) {
+      const res = Config.setRosterOverride(tz, { hidden: false });
+      if (res.ok === false) return this.toast(res.error || 'שחזור החניך נכשל', 'error');
+      this.afterDataChange();
+      this.toast('החניך שוחזר למערכת', 'ok');
+      return;
+    }
+    const classes = Config.allHomeroomClasses({ includeDormant: true });
+    if (!classes.length) {
+      const res = Config.removeRosterOverride(tz);
+      if (res.ok === false) return this.toast(res.error, 'error');
+      this.afterDataChange();
+      this.toast('החניך הוסר מרשימת המוסתרים', 'ok');
+      return;
+    }
+    this.formModal('שחזור חניך לכיתת אם', [
+      { key: 'homeroom', label: 'בחרו כיתת אם לשחזור', type: 'select', value: classes[0], options: classes.map(c => ({ value: c, label: Config.classLabel(c) })) }
+    ], v => {
+      const p = Util.parseClass('', v.homeroom);
+      const res = Config.setRosterOverride(tz, { grade: p.gradeKey, homeroom: p.classKey, hidden: false, manual: true, name: (ov && ov.name) || '' });
+      if (res.ok) { this.afterDataChange(); this.toast(`החניך שוחזר לכיתה ${Config.classLabel(p.classKey)}`, 'ok'); }
+      return res;
+    }, 'שחזור');
+  },
+
+  hrBankFilter(el) {
+    this.state.hrBankFilter = el.dataset.filter || 'all';
+    this.state.hrBankShowAll = false;
+    RulesView.renderHomeroomBankControls.call(this);
+    RulesView.renderHomeroomBankTable.call(this);
+  },
+
+  hrBankSort(el) {
+    const col = el.dataset.col || 'name';
+    const cur = this.state.hrBankSort || { col: 'name', dir: 1 };
+    this.state.hrBankSort = { col, dir: cur.col === col ? (cur.dir === 1 ? -1 : 1) : 1 };
+    RulesView.renderHomeroomBankTable.call(this);
+  },
+
+  hrToggleBankAll() {
+    this.state.hrBankShowAll = !this.state.hrBankShowAll;
+    RulesView.renderHomeroomBankTable.call(this);
+  },
+
+  hrClassNickname(el) {
+    const res = Config.setNickname(el.dataset.class, el.value);
+    if (res.ok === false) { this.afterClassSettingChange(); return this.toast(res.error || 'שמירת הכינוי נכשלה', 'error'); }
+    this.afterClassSettingChange();
+    this.toast(el.value.trim() ? `עודכן שם הכיתה: ${Config.classLabel(el.dataset.class)}` : `הוסר הכינוי של ${el.dataset.class}`, 'ok');
+  },
+
+  hrClassReview(el) {
+    const res = Config.setClassReview(el.dataset.class, el.checked);
+    if (res.ok === false) { this.afterClassSettingChange(); return this.toast(res.error || 'שמירת הסימון נכשלה', 'error'); }
+    this.afterClassSettingChange();
+    this.toast(el.checked ? `כיתה ${el.dataset.class} סומנה לבדיקה` : `הוסר סימון הבדיקה מכיתה ${el.dataset.class}`, 'ok');
   },
 
   /* ==================================================================
@@ -1362,6 +2006,94 @@
       this.toast('ההגדרות אופסו', 'ok');
     });
 
+    /* אינטראקציות מרחב "ארגון כיתות אם": חיפוש חי, בחירה מרובה וגרירה אל כיתה / אזור הסתרה */
+    document.addEventListener('input', e => {
+      if (e.target.id === 'hrBankSearch') {
+        this.state.hrBankSearch = e.target.value;
+        RulesView.renderHomeroomBankTable.call(this);
+      } else if (e.target.id === 'hrPopSearch') {
+        this.state.hrPopSearch = e.target.value;
+        const c = this.state.hrOpenClass;
+        const q = Util.norm(this.state.hrPopSearch || '').toLocaleLowerCase();
+        const members = Config.getRoster().filter(r => r.homeroom === c)
+          .sort((a, b) => natural(`${a.firstName} ${a.lastName}`.trim(), `${b.firstName} ${b.lastName}`.trim()));
+        const filtered = q ? members.filter(r => Util.norm(`${r.firstName} ${r.lastName} ${r.tz}`).toLocaleLowerCase().includes(q)) : members;
+        setHtml('hrPopList', RulesView.hrClassPopoverRowsHtml.call(this, filtered));
+      }
+    });
+    document.addEventListener('change', e => {
+      const chk = e.target.dataset && e.target.dataset.hrCheck;
+      if (chk) {
+        const sel = RulesView.hrSelectedSet.call(this);
+        if (e.target.checked) sel.add(chk); else sel.delete(chk);
+        const tr = e.target.closest('tr');
+        if (tr) tr.classList.toggle('is-checked', e.target.checked);
+        RulesView.renderHomeroomBankControls.call(this);
+        if (this.state.hrOpenClass) RulesView.renderHomeroomClassPopover.call(this);
+        return;
+      }
+      if (e.target.id === 'hrSelectAll') {
+        const sel = RulesView.hrSelectedSet.call(this);
+        const visible = this._hrVisibleBankTzs || [];
+        visible.forEach(tz => { if (e.target.checked) sel.add(tz); else sel.delete(tz); });
+        RulesView.renderHomeroomBankControls.call(this);
+        RulesView.renderHomeroomBankTable.call(this);
+        if (this.state.hrOpenClass) RulesView.renderHomeroomClassPopover.call(this);
+      }
+    });
+    document.addEventListener('keydown', e => {
+      const pebble = e.target.closest && e.target.closest('.hr-pebble[data-act="hrOpenClass"]');
+      if (pebble && e.target === pebble && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        RulesView.hrOpenClass.call(this, pebble, e);
+      }
+    });
+    const clearDragHighlights = () => {
+      document.querySelectorAll('.hr-pebble.is-dragover, .hr-hide-zone.is-dragover').forEach(el => el.classList.remove('is-dragover'));
+    };
+    document.addEventListener('dragstart', e => {
+      const row = e.target.closest && e.target.closest('[data-drag-tz]');
+      if (!row) return;
+      const tz = row.dataset.dragTz;
+      const sel = RulesView.hrSelectedSet.call(this);
+      const inBank = !!row.closest('#hrBankCard');
+      const batch = inBank && sel.has(tz) && sel.size > 1 ? [...sel] : [tz];
+      this._hrDragTzs = batch;
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', JSON.stringify(batch)); } catch (err) { /* noop */ }
+      }
+    });
+    document.addEventListener('dragover', e => {
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      if (!target || !this._hrDragTzs) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      clearDragHighlights();
+      target.classList.add('is-dragover');
+    });
+    document.addEventListener('dragleave', e => {
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      if (target && !target.contains(e.relatedTarget)) target.classList.remove('is-dragover');
+    });
+    document.addEventListener('drop', e => {
+      const target = e.target.closest && e.target.closest('[data-drop-class], [data-drop-hide]');
+      if (!target) return;
+      e.preventDefault();
+      clearDragHighlights();
+      let tzs = this._hrDragTzs;
+      this._hrDragTzs = null;
+      if ((!tzs || !tzs.length) && e.dataTransfer) {
+        try { tzs = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (err) { tzs = []; }
+      }
+      if (!Array.isArray(tzs) || !tzs.length) return;
+      const dest = target.dataset.dropHide ? '__hide__' : target.dataset.dropClass;
+      if (dest) RulesView.hrApplyBatchAssign.call(this, tzs, dest);
+    });
+    document.addEventListener('dragend', () => {
+      this._hrDragTzs = null;
+      clearDragHighlights();
+    });
   },
 
   };

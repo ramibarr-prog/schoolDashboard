@@ -213,22 +213,26 @@ window.fetch = (url, options) => {
     bad.rosterData.data[0].tz = '123';
     bad.groupsData.data.push(null, [], 'invalid', { tz: { unexpected: true } });
     bad.studentMeta = { '123': { note: 'Normalized', isException: 'false', reason: {} }, bad: null };
-    bad.rosterOverrides = { '123': { tz: '<script>', note: {}, hidden: 'false', homeroom: [] } };
+    bad.rosterOverrides = { '123': { tz: '<script>', note: {}, hidden: 'false', homeroom: [], manual: true } };
+    bad.ghostClasses = { 'יא5': { classKey: 'יא5', grade: 'יא', dormant: 'no', updatedAt: 'bad' }, invalid: { classKey: 'ז1', grade: 'ז' } };
     const clean = sanitizeState(bad);
     assert(clean.rosterData.data[0].tz === tz && clean.groupsData.data.length === 1, 'Rows not sanitized');
     assert(clean.studentMeta[tz].note === 'Normalized' && !clean.studentMeta[tz].isException && clean.studentMeta[tz].reason === '', 'Metadata types invalid');
-    assert(clean.rosterOverrides[tz].tz === tz && !clean.rosterOverrides[tz].hidden && clean.rosterOverrides[tz].note === '', 'Override types invalid');
+    assert(clean.rosterOverrides[tz].tz === tz && !clean.rosterOverrides[tz].hidden && clean.rosterOverrides[tz].manual === true && clean.rosterOverrides[tz].note === '', 'Override types invalid');
+    assert(clean.ghostClasses['יא5'] && clean.ghostClasses['יא5'].dormant === false && !clean.ghostClasses.invalid, 'Ghost classes not sanitized');
     assert(clean.bagrutData.data[0].cls.kind === 'fail' && clean.bagrutData.data[0].cls.block, 'Blocking grade changed');
     await rejects(() => CloudSync.applyState({ ...state, groupsData: 17 }), 'groupsData');
     passed.push('Untrusted rows, IDs, metadata and override types sanitized; grade semantics preserved');
 
     const mapFields = {
-      rosterOverrides: 'rosterOverrides', studentMeta: 'traineeExceptions', classNicknames: 'classNicknames',
+      rosterOverrides: 'rosterOverrides', ghostClasses: 'ghostClasses', classReviews: 'classReviews',
+      studentMeta: 'traineeExceptions', classNicknames: 'classNicknames',
       specialEdClasses: 'specialEdClasses', rosterMismatchDismissed: 'rosterMismatchDismissed'
     };
     const savedMaps = Object.fromEntries(Object.values(mapFields).map(key => [key, clone(Config.data[key])]));
     const localMaps = {
-      rosterOverrides: { [tz]: { tz, note: 'local' } }, traineeExceptions: { [tz]: { note: 'local' } },
+      rosterOverrides: { [tz]: { tz, note: 'local' } }, ghostClasses: { 'יא5': { classKey: 'יא5', grade: 'יא', dormant: false, updatedAt: 1 } },
+      classReviews: { 'י1': true }, traineeExceptions: { [tz]: { note: 'local' } },
       classNicknames: { 'י1': 'local' }, specialEdClasses: { 'י1': true }, rosterMismatchDismissed: { [tz]: 'local' }
     };
     Object.assign(Config.data, clone(localMaps));
