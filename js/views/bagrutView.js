@@ -26,10 +26,12 @@
     const due = adaptive ? items.filter(item => item.required) : items;
     const passed = due.filter(item => item.status === 'עובר' || item.status === 'פטור').length;
     const ok = passed === due.length;
+    const ignored = !noData && items.some(item => item.ignored);
     const summary = noData || !items.length ? 'לא ניתן לקבוע' :
+      ignored ? 'עובר (סימולציה)' :
       adaptive ? (ok ? 'תקין לשלב בשנה' : 'חסר / נכשל') :
         `${ok ? 'עובר' : 'חסר / נכשל'} (${passed}/${due.length})`;
-    const statusClass = noData || !items.length ? 'neutral' : ok ? 'pass' : 'bad';
+    const statusClass = noData || !items.length ? 'neutral' : (ok || ignored) ? 'pass' : 'bad';
     const rows = items.map(item => {
       const state = item.status === 'עובר' || item.status === 'פטור' ? 'pass' : item.status === 'לא ידוע' ? 'neutral' : 'bad';
       const value = typeof item.value === 'number' ? Util.fmt(item.value, 1) :

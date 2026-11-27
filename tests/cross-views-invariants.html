@@ -2161,8 +2161,10 @@ window.fetch = (input, options) => {
       choose(T(202));
       app.state.bagrut.ignoreInternals = true;
       app.renderBagrutPanel();
-      check(panel().querySelector('summary').textContent.includes('חסר / נכשל (3/4)') &&
-        panel().textContent.includes('מוצגים הציונים בפועל'), 'Ignoring internals does not hide their actual status');
+      check(panel().querySelector('summary .bagrut-subject-status').textContent === 'עובר (סימולציה)' &&
+        panel().querySelector('summary .bagrut-subject-status').classList.contains('is-pass') &&
+        science().querySelector('.bagrut-subject-status').textContent === 'חסר' &&
+        panel().textContent.includes('מוצגים הציונים בפועל'), 'Ignoring internals shows simulated pass summary while retaining actual status');
       world({ roster: [stu(206, 'יב', 'יב1')] });
       const unknownApp = newApp({ grade: 'יב' });
       unknownApp.state.tab = 'bagrut';
