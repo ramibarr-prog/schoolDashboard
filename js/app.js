@@ -50,7 +50,7 @@ const App = {
     sadinSort: { key: 'class_name', dir: 'asc' },
     /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
     sadinColWidths: {},
-    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null },
+    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakGroupKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null },
     profileTz: null,
     selectedSearchTz: null,
     /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
@@ -1525,6 +1525,7 @@ const App = {
     weakLens(el) { return SadinView.weakLens.call(this, el); },
     weakPickClass(el) { return SadinView.weakPickClass.call(this, el); },
     weakPickSubject(el) { return SadinView.weakPickSubject.call(this, el); },
+    weakGroupSelect(el) { return SadinView.weakGroupSelect.call(this, el); },
     weakSubjectKind(el) { return SadinView.weakSubjectKind.call(this, el); },
     weakStudentFilter(el) { return SadinView.weakStudentFilter.call(this, el); },
     weakPickStudent(el) { return SadinView.weakPickStudent.call(this, el); },

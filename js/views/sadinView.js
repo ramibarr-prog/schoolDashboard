@@ -567,6 +567,7 @@
     const lens = ['classes', 'subjects', 'students'].includes(el.dataset.lens) ? el.dataset.lens : 'classes';
     if (st.weakRiskDraft && lens !== 'students') SadinView.weaknessRiskClose.call(this, false);
     st.weakLens = lens;
+    st.weakGroupKey = '';
     st.weakSubjectKind = 'all';
     st.weakStudentFilter = 'all';
     st.weakStudentTz = null;
@@ -585,8 +586,16 @@
 
   weakPickSubject(el) {
     this.state.sadin.weakSubjectKey = el.dataset.subject || '';
+    this.state.sadin.weakGroupKey = '';
     SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
     const btn = [...document.querySelectorAll('#sadin-table [data-act="weakPickSubject"]')].find(b => b.dataset.subject === this.state.sadin.weakSubjectKey);
+    if (btn) btn.focus();
+  },
+
+  weakGroupSelect(el) {
+    this.state.sadin.weakGroupKey = el.dataset.groupKey || '';
+    SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+    const btn = [...document.querySelectorAll('#sadin-table [data-act="weakGroupSelect"]')].find(b => b.dataset.groupKey === this.state.sadin.weakGroupKey);
     if (btn) btn.focus();
   },
 
@@ -1226,52 +1235,81 @@
       else insightText = `יציבות רוחבית בכל הקבוצות · ממוצע שכבה ${subAvgTxt}`;
     }
 
-    /* סדר קבוצות: קודם הנמוכות ביותר (ימין) ואז הגבוהות (שמאל) כדי ליצור שבילי זרימה נקיים */
+    /* סדר קבוצות ב-RTL: מהפער השלילי ביותר מימין ועד החיובי ביותר משמאל */
     const orderedGroups = [...selected.groups].sort((a, b) =>
       (a.deltaFromSubject ?? 0) - (b.deltaFromSubject ?? 0) || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.teacher, b.teacher)
     );
+    const groupKeyOf = g => g.groupId || `${g.teacher}|${g.groupLabel}`;
+    const selectedGroup = orderedGroups.find(g => groupKeyOf(g) === st.weakGroupKey) || orderedGroups[0] || null;
+    st.weakGroupKey = selectedGroup ? groupKeyOf(selectedGroup) : '';
+    const shortTeacher = name => {
+      const parts = String(name || 'ללא מורה').trim().split(/\s+/);
+      return parts.length <= 2 ? parts.join(' ') : parts.slice(0, 2).join(' ');
+    };
 
-    const beamRows = orderedGroups.map(g => {
+    const colButtons = orderedGroups.map(g => {
+      const gKey = groupKeyOf(g);
+      const isSelected = selectedGroup && gKey === st.weakGroupKey;
+      const gAvgTxt = g.avg == null ? '—' : Util.fmt(g.avg, 0);
+      const gAvgFull = g.avg == null ? '—' : Util.fmt(g.avg, 1);
+      const d = g.deltaFromSubject;
+      const isBelow = d != null && d < -0.15;
+      const barPct = d != null && Number.isFinite(d) ? Math.min(100, Math.max(18, Math.round((Math.abs(d) / maxAbsDelta) * 100))) : 24;
+      const deltaTxt = d != null && Number.isFinite(d) ? fmtDelta(d) : '0.0';
+      const deltaCls = isBelow ? 'is-neg' : (d != null && d > 0.15 ? 'is-pos' : 'is-even');
+      const tip = `${g.teacher} · ${g.groupLabel} · ממוצע ${gAvgFull} (${deltaTxt}) · ${g.studentCount} חניכים · ${g.failPct}% נכשלים`;
+      const labelHtml = `<span class="weak-hcol-label">
+        <span class="weak-hcol-teacher">${E(shortTeacher(g.teacher))}</span>
+        <span class="weak-hcol-avg">${gAvgTxt}</span>
+      </span>`;
+      const barHtml = `<span class="weak-hcol-stack ${isBelow ? 'is-below' : 'is-above'}">
+        ${!isBelow ? `<span class="weak-delta ${deltaCls}">${E(deltaTxt)}</span>` : ''}
+        <span class="weak-hcol-bar ${isBelow ? 'is-below' : 'is-above'}" style="height:${barPct}%"></span>
+        ${isBelow ? `<span class="weak-delta ${deltaCls}">${E(deltaTxt)}</span>` : ''}
+      </span>`;
+
+      return `<button type="button" class="weak-hcol ${isBelow ? 'is-below' : 'is-above'}${isSelected ? ' is-selected' : ''}" data-act="weakGroupSelect" data-group-key="${E(gKey)}" aria-pressed="${String(!!isSelected)}" title="${E(tip)}">
+        <span class="weak-hcol-top">${isBelow ? labelHtml : barHtml}</span>
+        <span class="weak-hcol-dot" aria-hidden="true"><i></i></span>
+        <span class="weak-hcol-bot">${isBelow ? barHtml : labelHtml}</span>
+      </button>`;
+    }).join('');
+
+    let focusCardHtml = '';
+    if (selectedGroup) {
+      const g = selectedGroup;
       const gAvgTxt = g.avg == null ? '—' : Util.fmt(g.avg, 1);
       const d = g.deltaFromSubject;
       const isBelow = d != null && d < -0.15;
-      const isAbove = !isBelow;
-      const absPct = d != null && Number.isFinite(d) ? Math.min(100, Math.max(24, Math.round((Math.abs(d) / maxAbsDelta) * 100))) : 38;
-      const deltaTxt = d != null && Number.isFinite(d) ? fmtDelta(d) : '0.0';
       const deltaCls = isBelow ? 'is-neg' : (d != null && d > 0.15 ? 'is-pos' : 'is-even');
+      const deltaTxt = d != null && Number.isFinite(d) ? fmtDelta(d, ' מהשכבה') : 'בממוצע השכבה';
       const hasTeacher = g.teacher && g.teacher !== 'ללא מורה';
       const teachersJson = E(JSON.stringify(hasTeacher ? [g.teacher] : []));
-      const actionsHtml = `<div class="weak-beam-actions">
-        <button type="button" class="weak-beam-btn" data-act="sadinCellSheet" data-class="all" data-subject="${E(selected.name)}" data-teacher="${E(hasTeacher ? g.teacher : '')}">פתח בסדין</button>
-        <button type="button" class="weak-beam-btn" data-act="sadinCellAlerts" data-class="all" data-subject="${E(selected.name)}" data-group-id="${E(g.groupId)}" data-group-label="${E(g.groupLabel)}" data-teachers="${teachersJson}" ${hasTeacher ? '' : 'disabled title="אין מורה מזוהה בקבוצה"'}>התראה למורה</button>
-      </div>`;
-      const metaHtml = `<div class="weak-beam-meta">
-        <div class="weak-beam-title-line">
-          <strong class="weak-group-teacher">${E(g.teacher)} · ${gAvgTxt}</strong>
+      focusCardHtml = `<article class="weak-group-card weak-group-focus${isBelow ? ' is-lag' : ''}" aria-label="פירוט הקבוצה הנבחרת">
+        <div class="weak-group-focus-main">
+          <span class="weak-score-ring is-sm ${scoreTone(g.avg)}">${gAvgTxt}</span>
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <strong class="weak-group-teacher">${E(g.teacher)}</strong>
+              <span class="weak-delta ${deltaCls}">${E(deltaTxt)}</span>
+            </div>
+            <span class="weak-group-id">${E(g.groupLabel)} · ${g.studentCount} חניכים</span>
+            <div class="weak-group-focus-pills">
+              <span class="weak-mini-pill${g.failCount ? ' is-fail' : ''}">${g.failPct}% נכשלים (${g.failCount}/${g.studentCount})</span>
+              <span class="weak-mini-pill">${g.uncertain && !g.missedCount ? 'החמצות: —' : `${g.missedCount} החמצות מאומתות`}</span>
+            </div>
+          </div>
         </div>
-        <span class="weak-group-id">${E(g.groupLabel)} · ${g.studentCount} חניכים · ${g.failPct}% נכשלים</span>
-        ${actionsHtml}
-      </div>`;
-      const barHtml = `<div class="weak-beam-bar-wrap">
-        <div class="weak-beam-bar ${isBelow ? 'is-below' : 'is-above'}" style="width:${absPct}%">
-          <span class="weak-delta ${deltaCls}">${E(deltaTxt)}</span>
-        </div>
-      </div>`;
-
-      return `<article class="weak-group-card weak-beam-row ${isBelow ? 'is-below' : 'is-above'}">
-        <div class="weak-beam-side is-below-side">
-          ${isBelow ? `${barHtml}${metaHtml}` : ''}
-        </div>
-        <div class="weak-beam-axis-dot" aria-hidden="true"><span></span></div>
-        <div class="weak-beam-side is-above-side">
-          ${isAbove ? `${barHtml}${metaHtml}` : ''}
+        <div class="weak-group-focus-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-act="sadinCellSheet" data-class="all" data-subject="${E(selected.name)}" data-teacher="${E(hasTeacher ? g.teacher : '')}">פתח בסדין</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="sadinCellAlerts" data-class="all" data-subject="${E(selected.name)}" data-group-id="${E(g.groupId)}" data-group-label="${E(g.groupLabel)}" data-teachers="${teachersJson}" ${hasTeacher ? '' : 'disabled title="אין מורה מזוהה בקבוצה"'}>התראה למורה</button>
         </div>
       </article>`;
-    }).join('');
+    }
 
     const hillsBg = `<svg class="weak-horizon-hills" viewBox="0 0 1200 180" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 130 C220 75, 420 155, 680 105 C910 60, 1080 95, 1200 55 L1200 180 L0 180 Z" fill="#F4E2D4" opacity=".48"/>
-      <path d="M0 150 C260 110, 490 170, 760 125 C980 90, 1110 135, 1200 110 L1200 180 L0 180 Z" fill="#DCEBD9" opacity=".42"/>
+      <path d="M0 130 C220 75, 420 155, 680 105 C910 60, 1080 95, 1200 55 L1200 180 L0 180 Z" fill="#F4E2D4" opacity=".42"/>
+      <path d="M0 150 C260 110, 490 170, 760 125 C980 90, 1110 135, 1200 110 L1200 180 L0 180 Z" fill="#DCEBD9" opacity=".38"/>
     </svg>`;
 
     setHtml('sadin-table', `<div class="weak-subj-layout weak-lens-enter" data-weak-lens="subjects">
@@ -1286,16 +1324,20 @@
             <h2>${E(selected.name)} · קבוצות הלימוד במקצוע</h2>
             <p class="weak-muted">${selected.groupCount} קבוצות לימוד · ממוצע שכבה ${subAvgTxt} · ${selected.failPct}% נכשלים (${selected.failCount}/${selected.studentCount} חניכים)</p>
           </div>
-        </div>
-        <div class="weak-horizon-axis-head">
-          <span class="weak-horizon-dir is-below">מתחת לממוצע →</span>
           <span class="weak-horizon-pill">ממוצע שכבה <strong>${subAvgTxt}</strong></span>
-          <span class="weak-horizon-dir is-above">← מעל הממוצע</span>
         </div>
-        <div class="weak-horizon-stage">
-          <span class="weak-horizon-spine" aria-hidden="true"></span>
-          <div class="weak-beam-list">${beamRows || '<p class="weak-muted text-center py-6">אין קבוצות לימוד מזוהות למקצוע זה.</p>'}</div>
-        </div>
+        ${orderedGroups.length ? `
+          <div class="weak-hchart" aria-label="גרף פער קבוצות מול ממוצע השכבה">
+            <div class="weak-hchart-dir is-above">↑ מעל הממוצע</div>
+            <div class="weak-hchart-scroll">
+              <div class="weak-hchart-stage">
+                <span class="weak-hchart-line" aria-hidden="true"></span>
+                <div class="weak-hchart-bars">${colButtons}</div>
+              </div>
+            </div>
+            <div class="weak-hchart-dir is-below">↓ מתחת לממוצע</div>
+          </div>
+          ${focusCardHtml}` : '<p class="weak-muted text-center py-6">אין קבוצות לימוד מזוהות למקצוע זה.</p>'}
         <div class="weak-horizon-insight">${E(insightText)}</div>
       </section>
     </div>`);

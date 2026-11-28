@@ -2095,11 +2095,16 @@ window.fetch = (input, options) => {
       const engSubBtn = [...$id('sadin-table').querySelectorAll('[data-act="weakPickSubject"]')].find(b => b.dataset.subject === 'אנגלית');
       check(!!engSubBtn, 'English appears in subjects lens');
       engSubBtn.click();
-      const grpCards = [...$id('sadin-table').querySelectorAll('.weak-group-card')];
-      check(grpCards.length === 2 && grpCards.some(c => c.textContent.includes('מיכל בדיקה') && c.textContent.includes('[9911]') && c.querySelector('.weak-delta')) &&
-        grpCards.some(c => c.textContent.includes('רונית בדיקה') && c.textContent.includes('[9913]')),
-        'Subject detail splits into study groups/teachers with explicit delta from subject average');
-      const michalSheetBtn = grpCards.find(c => c.textContent.includes('מיכל בדיקה')).querySelector('[data-act="sadinCellSheet"]');
+      const grpCols = [...$id('sadin-table').querySelectorAll('.weak-hcol[data-act="weakGroupSelect"]')];
+      check(grpCols.length === 2 && grpCols.some(c => c.textContent.includes('מיכל בדיקה') && c.querySelector('.weak-delta')) &&
+        grpCols.some(c => c.textContent.includes('רונית בדיקה') && c.querySelector('.weak-delta')),
+        'Subject horizon chart shows clickable columns for all study groups/teachers with explicit deltas');
+      const michalCol = grpCols.find(c => c.textContent.includes('מיכל בדיקה'));
+      michalCol.click();
+      const focusCard = $id('sadin-table').querySelector('.weak-group-focus');
+      check(focusCard && focusCard.textContent.includes('מיכל בדיקה') && focusCard.textContent.includes('[9911]') && focusCard.querySelector('.weak-delta'),
+        'Selecting a group column updates the single focus card below the horizon chart');
+      const michalSheetBtn = focusCard.querySelector('[data-act="sadinCellSheet"]');
       michalSheetBtn.click();
       same([app.state.sadin.mode, app.state.sadin.view, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
         ['full', 'sheet', 'אנגלית', 'מיכל בדיקה', 'all'], 'Group action opens Sadin filtered to the exact subject and teacher');
