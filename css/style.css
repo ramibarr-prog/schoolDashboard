@@ -436,9 +436,9 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 @media (min-width: 1024px) {
   .weak-sticky-header.is-sticky-weak { top: -1rem; }
 }
-.weak-sticky-header.is-sticky-weak > .screen-scope { grid-column: 2; justify-self: end; margin: 0 !important; }
+.weak-sticky-header.is-sticky-weak > .screen-scope { grid-column: 1; grid-row: 1; justify-self: start; margin: 0 !important; }
 .weak-sticky-header.is-sticky-weak > .weak-toolbar { display: contents; }
-.weak-sticky-header.is-sticky-weak .weak-toolbar-head { grid-column: 1; grid-row: 1; }
+.weak-sticky-header.is-sticky-weak .weak-toolbar-head { grid-column: 2; grid-row: 1; justify-content: space-between; }
 .weak-sticky-header.is-sticky-weak .weak-lens-hero { grid-column: 1 / -1; grid-row: 2; }
 .weak-toolbar { display: flex; flex-direction: column; gap: .65rem; margin-bottom: .9rem; }
 .weak-toolbar-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem; }
@@ -646,11 +646,11 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 
 /* משקפת 2: מקצועות וקבוצות – רשימת מקצועות קומפקטית מימין וגרף קו אופק אופקי + כרטיסיית מיקוד משמאל */
 .weak-subj-layout { display: grid; grid-template-columns: minmax(16.5rem, 33fr) minmax(0, 67fr); gap: 1.15rem; align-items: start; }
-.weak-subj-layout .weak-list-pane { padding: 1.1rem 1.15rem; }
-.weak-subj-layout .weak-list { gap: .42rem; max-height: 39rem; }
+.weak-subj-layout .weak-list-pane { padding: 1rem 1.05rem; }
+.weak-subj-layout .weak-list { gap: .35rem; max-height: 40rem; }
 .weak-pebble {
-  display: flex; align-items: center; gap: .62rem; width: 100%; padding: .55rem .8rem;
-  border: none; border-radius: 18px; background: #FAF7EF; text-align: right; cursor: pointer;
+  display: flex; align-items: center; gap: .6rem; width: 100%; padding: .46rem .75rem;
+  border: none; border-radius: 17px; background: #FAF7EF; text-align: right; cursor: pointer;
   box-shadow: 0 3px 10px rgba(34, 58, 42, .035);
   transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
 }
@@ -893,7 +893,8 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-questionnaire-controls input { width: 5rem; }
 @media (max-width: 960px) {
   .weak-sticky-header.is-sticky-weak { grid-template-columns: minmax(0, 1fr); gap: .45rem; }
-  .weak-sticky-header.is-sticky-weak > .screen-scope { grid-column: 1; justify-self: start; }
+  .weak-sticky-header.is-sticky-weak > .screen-scope { grid-column: 1; grid-row: auto; justify-self: start; }
+  .weak-sticky-header.is-sticky-weak .weak-toolbar-head { grid-column: 1; grid-row: auto; }
   .weak-sticky-header.is-sticky-weak .weak-lens-hero { grid-row: auto; }
   .weak-lenses { grid-template-columns: minmax(0, 1fr); border-radius: 22px; }
   .weak-home-layout, .weak-subj-layout, .weak-care-layout { grid-template-columns: minmax(0, 1fr); }

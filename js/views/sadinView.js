@@ -544,7 +544,8 @@
         mode: 'early', strip: 'all', subject: 'all', teacher: 'all',
         weakLens: prev.weakLens || 'classes',
         weakClassKey: prev.weakClassKey || '',
-        weakSubjectKey: prev.weakSubjectKey || ''
+        weakSubjectKey: prev.weakSubjectKey || '',
+        weakGroupKey: prev.weakGroupKey || null
       });
       this.syncFilters();
       this.onFilterChange();
@@ -738,7 +739,8 @@
       subject: 'all', teacher: 'all',
       weakLens: this.state.sadin.weakLens || 'classes',
       weakClassKey: this.state.sadin.weakClassKey || '',
-      weakSubjectKey: this.state.sadin.weakSubjectKey || ''
+      weakSubjectKey: this.state.sadin.weakSubjectKey || '',
+      weakGroupKey: this.state.sadin.weakGroupKey || null
     };
     let teachers = [];
     try { teachers = el.dataset.teachers ? JSON.parse(el.dataset.teachers) : []; } catch (e) { teachers = []; }
@@ -920,7 +922,7 @@
     modeBox.className = early ? 'weak-toolbar' : 'flex flex-wrap gap-2 mb-2';
     modeBox.innerHTML = early
       ? `<div class="weak-toolbar-head">
-          <div class="weak-title"><h1>מוקדי חולשה</h1><span class="weak-scope-pill">${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</span></div>
+          <div class="weak-title"><h1>מוקדי חולשה</h1></div>
           <span class="weak-quality-slot"></span>
         </div>
         <div class="weak-lens-hero" role="tablist" aria-label="משקפות מוקדי חולשה">

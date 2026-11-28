@@ -50,7 +50,7 @@ const App = {
     sadinSort: { key: 'class_name', dir: 'asc' },
     /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
     sadinColWidths: {},
-    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakGroupKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null },
+    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakGroupKey: null, weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null },
     profileTz: null,
     selectedSearchTz: null,
     /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
