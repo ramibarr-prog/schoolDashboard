@@ -50,7 +50,7 @@ const App = {
     sadinSort: { key: 'class_name', dir: 'asc' },
     /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
     sadinColWidths: {},
-    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false },
+    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all' },
     profileTz: null,
     selectedSearchTz: null,
     /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
@@ -1522,6 +1522,11 @@ const App = {
     weaknessRiskAdjust(el) { return SadinView.weaknessRiskAdjust.call(this, el); },
     weaknessRiskReset() { return SadinView.weaknessRiskReset.call(this); },
     weaknessRiskApply() { return SadinView.weaknessRiskApply.call(this); },
+    weakLens(el) { return SadinView.weakLens.call(this, el); },
+    weakPickClass(el) { return SadinView.weakPickClass.call(this, el); },
+    weakPickSubject(el) { return SadinView.weakPickSubject.call(this, el); },
+    weakSubjectKind(el) { return SadinView.weakSubjectKind.call(this, el); },
+    weakStudentFilter(el) { return SadinView.weakStudentFilter.call(this, el); },
     sadinSelectCell(el) { return SadinView.selectWeakness.call(this, el); },
     sadinCellEligibility(el) { return SadinView.openWeaknessEligibility.call(this, el); },
     sadinCellSheet(el) { return SadinView.openWeaknessSheet.call(this, el); },
@@ -1567,7 +1572,14 @@ const App = {
         /* "כל השכבות" מכרטיס כללי אינו מבטל שכבה שנבחרה במפורש בסינון העליון */
         if (chip !== 'attention' && scope && (scope !== 'all' || this.state.filters.grade === 'all')) { this.applyBagrutScope(scope); this.alertOut = []; }
       }
-      if (go === 'sadin') { Object.assign(this.state.sadin, { strip: strip || 'all', mode: !strip || strip === 'all' ? 'early' : 'full', subject: 'all', teacher: 'all' }); this.alertOut = []; this.dirty.add('sadin'); }
+      if (go === 'sadin') {
+        Object.assign(this.state.sadin, {
+          strip: strip || 'all', mode: !strip || strip === 'all' ? 'early' : 'full',
+          subject: 'all', teacher: 'all', weakLens: 'classes', weakClassKey: '', weakSubjectKey: '',
+          weakSubjectKind: 'all', weakStudentFilter: 'all'
+        });
+        this.alertOut = []; this.dirty.add('sadin');
+      }
       if (go === 'groups') {
         Object.assign(this.state.groups, { subject: 'all', teacher: 'all' });
         Object.assign(this.state, { groupsViewMode: view === 'explorer' ? 'explorer' : 'anomalies', anomalyCategoryFilter: 'all', anomalySubject: 'all' });
@@ -1590,7 +1602,15 @@ const App = {
     ovHotspot(el) {
       this.rememberScreenFilters();
       this.resetOverviewDrillFilters();
-      Object.assign(this.state.sadin, { mode: 'early', strip: 'all', subject: 'all', teacher: 'all', cell: { cls: el.dataset.class, subject: el.dataset.subject } });
+      const hasSubject = !!el.dataset.subject;
+      Object.assign(this.state.sadin, {
+        mode: 'early', strip: 'all', subject: 'all', teacher: 'all',
+        weakLens: hasSubject ? 'subjects' : 'classes',
+        weakClassKey: el.dataset.class || '',
+        weakSubjectKey: el.dataset.subject || '',
+        weakSubjectKind: 'all', weakStudentFilter: 'all',
+        cell: { cls: el.dataset.class, subject: el.dataset.subject }
+      });
       this.alertOut = [];
       this.dirty.add('sadin');
       this.showTab('sadin');

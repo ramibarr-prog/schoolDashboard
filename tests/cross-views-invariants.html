@@ -193,24 +193,29 @@ window.fetch = (input, options) => {
     same(actual.riskStudentTzs.slice().sort(), independentWeaknessRiskTzs(app), `${label}: complete risk population matches grade events and active rules`);
     same([actual.riskStudentsCount, actual.riskClassesCount, actual.totalClassesCount, actual.hotspotsCount],
       [expected.riskStudentsCount, expected.riskClassesCount, expected.totalClassesCount, expected.hotspotsCount], `${label}: summary counts`);
-    const kpis = [...$id('sadin-table').querySelectorAll('.weak-kpi strong')].map(el => el.textContent.trim());
-    const incompleteGroups = app.filtered().some(t => !SignalEngine.prerequisitesFor(t.gradeKey).hasGroups);
-    same(kpis, [
-      expected.average == null ? '—' : Util.fmt(expected.average, 1),
-      String(expected.model.failed),
-      !expected.model.missed && (expected.model.uncertain || incompleteGroups) ? '—' : String(expected.model.missed),
-      `${expected.riskClassesCount} מתוך ${expected.totalClassesCount}`
-    ], `${label}: four destination KPIs`);
-    const buttons = [...$id('sadin-table').querySelectorAll('.weak-ranking button')].slice(0, 3);
-    same(buttons.map(b => [b.dataset.class, b.dataset.subject]), expected.hotspots.map(c => [c.cls, c.subject]), `${label}: top three destination hotspots`);
-    buttons.forEach((b, i) => {
-      const c = expected.hotspots[i];
-      same(b.querySelector('strong').textContent.trim(), c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}%`, `${label}: hotspot value ${i + 1}`);
-    });
+
+    /* משקפת 1 (ברירת מחדל): כיתות אם — ללא פקד סף סיכון של חניכים וללא מפת חום */
+    const lensTabs = [...document.querySelectorAll('#sadin-mode .weak-lens-tab')];
+    same(lensTabs.map(b => b.dataset.lens), ['classes', 'subjects', 'students'], `${label}: three hermetic lens tabs`);
+    check($id('sadin-table').querySelector('[data-weak-lens="classes"]') && !document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]') && !document.querySelector('#weak-risk-popover'),
+      `${label}: default classes lens has no student risk popover`);
+
+    /* משקפת 2: מקצועות וקבוצות — ללא פקד סף סיכון של חניכים */
+    app.acts.weakLens.call(app, { dataset: { lens: 'subjects' } });
+    check($id('sadin-table').querySelector('[data-weak-lens="subjects"]') && !document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
+      `${label}: subjects lens has no student risk popover`);
+
+    /* משקפת 3: חניכי קצה — פקד סף הסיכון מופיע רק כאן והאוכלוסייה תואמת במדויק */
+    app.acts.weakLens.call(app, { dataset: { lens: 'students' } });
+    check(!!$id('sadin-table').querySelector('[data-weak-lens="students"]') && !!document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
+      `${label}: students lens exposes risk-rule control`);
+    const edgeRows = [...$id('sadin-table').querySelectorAll('.weak-edge-table [data-act="openProfile"]')].map(b => b.dataset.tz).sort();
+    same(edgeRows, expected.riskStudentTzs.slice().sort(), `${label}: students lens edge list matches exact risk population`);
     SadinView.weaknessRiskToggle.call(app);
     const preview = document.querySelector('#weak-risk-popover .weak-risk-preview');
     check(preview && preview.textContent.includes(`${expected.riskClassesCount} מתוך ${expected.totalClassesCount} כיתות בסיכון · ${expected.riskStudentsCount} חניכים`), `${label}: risk-rule preview matches complete population`);
     SadinView.weaknessRiskClose.call(app);
+    app.acts.weakLens.call(app, { dataset: { lens: 'classes' } });
   };
   const checkWeaknessCard = (card, expected, label) => {
     same(parseInt(card.querySelector('.ov-value').textContent, 10), expected.riskStudentsCount, `${label}: overview risk students`);
@@ -2013,16 +2018,24 @@ window.fetch = (input, options) => {
     await group('Separate weakness and current-grades navigation and submitted questionnaires', async () => {
       resetConfig();
       const english = 'אנגלית 4 יח"ל יא1 מיכל בדיקה [9911]';
+      const englishB = 'אנגלית 5 יח"ל יא2 רונית בדיקה [9913]';
       const math = 'מתמטיקה 3 יח"ל יא2 דוד בדיקה [9912]';
-      const roster = [stu(1, 'יא', 'יא1'), stu(2, 'יא', 'יא1'), stu(3, 'יא', 'יא2'), stu(4, 'י', 'י1')];
+      const tinyMajor = 'מגמת פיזיקה יא1 אלון בדיקה [9914]';
+      const roster = [stu(1, 'יא', 'יא1'), stu(2, 'יא', 'יא1'), stu(5, 'יא', 'יא1'), stu(6, 'יא', 'יא1'), stu(7, 'יא', 'יא1'), stu(3, 'יא', 'יא2'), stu(8, 'יא', 'יא2'), stu(4, 'י', 'י1')];
       const groups = groupRows([
-        ...[1, 2].map(n => ({ tz: T(n), grade: 'יא', cls: 'יא1', gid: english })),
-        { tz: T(3), grade: 'יא', cls: 'יא2', gid: math }
+        ...[1, 2, 5, 6].map(n => ({ tz: T(n), grade: 'יא', cls: 'יא1', gid: english })),
+        { tz: T(1), grade: 'יא', cls: 'יא1', gid: tinyMajor },
+        { tz: T(3), grade: 'יא', cls: 'יא2', gid: math },
+        { tz: T(3), grade: 'יא', cls: 'יא2', gid: englishB }
       ]);
       const sadin = sadinRows([
         { tz: T(1), ev: 'מבחן (100)', sc: 40, grp: english, dt: '01/10/2026' },
         { tz: T(2), ev: 'מבחן (100)', sc: 80, grp: english, dt: '01/10/2026' },
-        { tz: T(3), ev: 'מבחן (100)', sc: 50, grp: math, dt: '01/10/2026' }
+        { tz: T(5), ev: 'מבחן (100)', sc: 75, grp: english, dt: '01/10/2026' },
+        { tz: T(6), ev: 'מבחן (100)', sc: 85, grp: english, dt: '01/10/2026' },
+        { tz: T(1), ev: 'מבחן (100)', sc: 48, grp: tinyMajor, dt: '01/10/2026' },
+        { tz: T(3), ev: 'מבחן (100)', sc: 50, grp: math, dt: '01/10/2026' },
+        { tz: T(3), ev: 'מבחן (100)', sc: 92, grp: englishB, dt: '01/10/2026' }
       ]);
       const bagrut = bagrutRows([
         { tz: T(1), code: '16382', final: 40, moed: 'א' },
@@ -2054,27 +2067,65 @@ window.fetch = (input, options) => {
       $id('stage').append(weakNav, sheetNav);
       weakNav.click();
       app.changeGradeFilter('יא');
-      check($id('sadin-table').querySelector('.weak-table') && weakNav.getAttribute('aria-selected') === 'true' &&
-        sheetNav.getAttribute('aria-selected') === 'false', 'Weakness navigation opens the heatmap');
+      check($id('sadin-table').querySelector('[data-weak-lens="classes"]') && weakNav.getAttribute('aria-selected') === 'true' &&
+        sheetNav.getAttribute('aria-selected') === 'false', 'Weakness navigation opens the default homeroom-classes lens');
+
+      /* בדיקת משקפת 1 (כיתות אם): ניקוי רעש מגמה של חניך בודד (n=1 מתוך 5 בכיתה) וניווט לסדין כיתתי + חזרה */
+      const clsBtn = [...$id('sadin-table').querySelectorAll('[data-act="weakPickClass"]')].find(b => b.dataset.class === 'יא1');
+      check(!!clsBtn, 'Class יא1 appears in classes lens');
+      clsBtn.click();
+      const clsDetail = $id('sadin-table').querySelector('.weak-detail-pane');
+      check(clsDetail.textContent.includes('אנגלית') && !clsDetail.querySelector('.weak-sub-table').textContent.includes('פיזיקה') &&
+        clsDetail.textContent.includes('הושמטו 1 מקצועות בחירה'), 'Class breakdown shows substantial subjects and omits 1-student major with a quiet note');
+      clsDetail.querySelector('[data-act="sadinCellSheet"]').click();
+      same([app.state.sadin.mode, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
+        ['full', 'all', 'all', 'יא1'], 'Class lens opens Sadin filtered strictly to that homeroom');
+      const backFromClass = $id('sadin-mode').querySelector('[data-back-weakness="1"]');
+      check(backFromClass && backFromClass.classList.contains('nav-back') && backFromClass.textContent.includes('→'), 'Back button uses unified RTL nav-back style');
+      backFromClass.click();
+      same([app.state.sadin.mode, app.state.sadin.weakLens, app.state.sadin.weakClassKey, app.state.filters.cls],
+        ['early', 'classes', 'יא1', 'all'], 'Returning from Sadin restores classes lens and selected class');
+
+      /* בדיקת משקפת 2 (מקצועות וקבוצות): פיצול לקבוצות לימוד ומורים, פער מממוצע המקצוע וניווט לסדין מורה + חזרה */
+      $id('sadin-mode').querySelector('[data-lens="subjects"]').click();
+      check(!!$id('sadin-table').querySelector('[data-weak-lens="subjects"]') && !document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
+        'Subjects lens opens cleanly with no student risk control');
+      const engSubBtn = [...$id('sadin-table').querySelectorAll('[data-act="weakPickSubject"]')].find(b => b.dataset.subject === 'אנגלית');
+      check(!!engSubBtn, 'English appears in subjects lens');
+      engSubBtn.click();
+      const grpCards = [...$id('sadin-table').querySelectorAll('.weak-group-card')];
+      check(grpCards.length === 2 && grpCards.some(c => c.textContent.includes('מיכל בדיקה') && c.textContent.includes('[9911]') && c.querySelector('.weak-delta')) &&
+        grpCards.some(c => c.textContent.includes('רונית בדיקה') && c.textContent.includes('[9913]')),
+        'Subject detail splits into study groups/teachers with explicit delta from subject average');
+      const michalSheetBtn = grpCards.find(c => c.textContent.includes('מיכל בדיקה')).querySelector('[data-act="sadinCellSheet"]');
+      michalSheetBtn.click();
+      same([app.state.sadin.mode, app.state.sadin.view, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
+        ['full', 'sheet', 'אנגלית', 'מיכל בדיקה', 'all'], 'Group action opens Sadin filtered to the exact subject and teacher');
+      check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true',
+        'Group action opens sheet matrix and selects sheet navigation');
+      check($id('sadin-table').querySelector('[data-ck="subj:אנגלית"]') && !$id('sadin-table').querySelector('[data-ck="subj:מתמטיקה"]'),
+        'Sheet is filtered to the selected subject');
+      $id('sadin-mode').querySelector('[data-back-weakness="1"]').click();
+      same([app.state.sadin.mode, app.state.sadin.weakLens, app.state.sadin.weakSubjectKey],
+        ['early', 'subjects', 'אנגלית'], 'Returning from Sadin restores subjects lens and selected subject');
+
+      /* בדיקת משקפת 3 (חניכי קצה): תגובת אמת לשינוי סף הסיכון והפרדת חניכים ללא ציונים כלל (T(7), T(8)) לאזור מתקפל סגור */
+      $id('sadin-mode').querySelector('[data-lens="students"]').click();
+      const noGradesDetails = $id('sadin-table').querySelector('details.weak-nogrades');
+      check(!!noGradesDetails && noGradesDetails.open === false && noGradesDetails.textContent.includes('(2)'),
+        'Zero-grade students are separated into a collapsed footer section');
+      same(tzsIn(noGradesDetails), [T(7), T(8)], 'Exactly the two students with no current grades appear in the zero-grade section');
+      const edgeTable = () => $id('sadin-table').querySelector('.weak-edge-table');
+      same(tzsIn(edgeTable()), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in main edge table without zero-grade students');
+      $id('sadin-mode').querySelector('[data-act="weaknessRiskToggle"]').click();
+      document.querySelector('#weak-risk-popover [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
+      same(tzsIn(edgeTable()), [T(1)], 'Adjusting minFails to 2+ immediately updates the live edge-students table (only T(1) has 2 fails)');
+      SadinView.weaknessRiskClose.call(app);
+      same(tzsIn(edgeTable()), [T(1), T(3)], 'Closing risk popover without applying restores saved threshold');
+
       sheetNav.click();
       check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true' &&
         weakNav.getAttribute('aria-selected') === 'false', 'Sheet navigation opens the matrix directly');
-      weakNav.click();
-      const heat = [...$id('sadin-table').querySelectorAll('.weak-heat')].find(b => b.dataset.class === 'יא1' && b.dataset.subject === 'אנגלית');
-      check(!!heat, 'English homeroom heatmap cell exists');
-      heat.click();
-      const sheetAction = $id('sadin-table').querySelector('[data-act="sadinCellSheet"]');
-      check(sheetAction && sheetAction.textContent.includes('פתח בסדין'), 'Selected heatmap cell offers open in sheet');
-      sheetAction.click();
-      same([app.state.sadin.mode, app.state.sadin.view, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
-        ['full', 'sheet', 'אנגלית', 'מיכל בדיקה', 'יא1'], 'Cell opens the matching class, subject and single teacher in sheet');
-      const backBtn = $id('sadin-mode') && $id('sadin-mode').querySelector('[data-back-weakness="1"]');
-      if (backBtn) check(backBtn.classList.contains('nav-back') && backBtn.textContent.includes('→'), 'Back to weakness button uses unified RTL nav-back style');
-      check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true',
-        'Cell opens sheet matrix and selects sheet navigation');
-      same(tzsIn($id('sadin-table')), [T(1), T(2)], 'Sheet contains the selected homeroom');
-      check($id('sadin-table').querySelector('[data-ck="subj:אנגלית"]') && !$id('sadin-table').querySelector('[data-ck="subj:מתמטיקה"]'),
-        'Sheet is filtered to the selected subject');
       app.state.sadin.subject = 'all';
       app.state.sadin.teacher = 'all';
       app.state.filters.cls = 'all';

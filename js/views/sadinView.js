@@ -259,7 +259,255 @@
       riskyClasses, riskyStudents: riskTzs.size, riskTzs: [...riskTzs], averages, teachers: [...teachers.values()], uncertain };
   }
 
-  const mean = values => values.length ? Util.fmt(values.reduce((a, b) => a + b, 0) / values.length, 1) : '—';
+  const meanNum = values => values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  const mean = values => values.length ? Util.fmt(meanNum(values), 1) : '—';
+  const fmtDelta = (delta, suffix = '') => {
+    if (delta == null || !Number.isFinite(delta)) return '';
+    const rounded = Math.round(delta * 10) / 10;
+    if (Math.abs(rounded) < 0.1) return `0.0${suffix}`;
+    return `${rounded > 0 ? '+' : '−'}${Util.fmt(Math.abs(rounded), 1)}${suffix}`;
+  };
+
+  /**
+   * מודל 3 המשקפות ההרמטיות של מסך "מוקדי חולשה":
+   *  1. classes – כיתות אם בשכבה ופירוק סיבות (ללא רעש מגמות קטנות).
+   *  2. subjects – מקצועות בשכבה ופירוק לקבוצות לימוד (groupId) ומורים כולל פער מממוצע המקצוע.
+   *  3. students – חניכי קצה פעילים מעל הסף בנפרד מחניכים ללא ציונים כלל בשוטף.
+   */
+  function buildWeaknessLensesModel(roster, rules) {
+    const prereqs = prerequisitesByGrade(roster);
+    const classMap = new Map();
+    roster.forEach(t => {
+      if (!classMap.has(t.classKey)) {
+        classMap.set(t.classKey, {
+          key: t.classKey, grade: t.gradeKey, total: 0, gradedStudents: 0,
+          studentAvgs: [], subjectEvals: 0, failedEvals: 0, studentsWithFail: 0,
+          missedCount: 0, uncertain: false, subjects: new Map()
+        });
+      }
+      classMap.get(t.classKey).total++;
+    });
+
+    const subjectMap = new Map();
+    const cohortStudentAvgs = [];
+    const edgeStudents = [];
+    const noGradesStudents = [];
+    let globalUncertain = false;
+
+    const sheetRows = GroupAnalyzer.sadinSheet(roster, {});
+    const rowByTz = new Map(sheetRows.map(r => [r.t.tz, r]));
+
+    roster.forEach(t => {
+      const row = rowByTz.get(t.tz) || { t, subjects: new Map() };
+      Config.withRulesForGrade(t.gradeKey, () => {
+        const p = prereqs.get(t.gradeKey) || { hasGroups: false, hasSadin: false };
+        const hasGroups = p.hasGroups;
+        const cls = classMap.get(t.classKey);
+        const studentScores = [];
+        const failedSubjects = [];
+        const missedSubjects = [];
+        const failTeacherSet = new Set();
+        let fails = 0, missedForStudent = 0, activeSubjectCount = 0;
+
+        row.subjects.forEach(s => {
+          if (excludedWeaknessSubject(s)) return;
+          const missed = confirmedMissed(s, hasGroups, t.tz);
+          const unverifiedMissed = s.missed.size > missed;
+          if (unverifiedMissed || !hasGroups) {
+            globalUncertain = globalUncertain || unverifiedMissed;
+            if (cls) cls.uncertain = cls.uncertain || !hasGroups || unverifiedMissed;
+          }
+          const hasValidAvg = s.avg != null && !(s.avg === 0 && !failingSubject(s) && s.missed.size > 0);
+          if (!hasValidAvg && !missed) return;
+
+          activeSubjectCount++;
+          const fail = hasValidAvg && failingSubject(s);
+          if (hasValidAvg) studentScores.push(s.avg);
+          if (fail) fails++;
+          missedForStudent += missed;
+          if (missed > 0) missedSubjects.push({ name: s.name, count: missed });
+
+          /* עדכון משקפת 1: כיתות אם */
+          if (cls) {
+            cls.subjectEvals++;
+            if (fail) cls.failedEvals++;
+            cls.missedCount += missed;
+            if (!cls.subjects.has(s.name)) {
+              cls.subjects.set(s.name, { name: s.name, isCore: coreRank(s.name) >= 0, n: 0, scores: [], failCount: 0, missedCount: 0 });
+            }
+            const cs = cls.subjects.get(s.name);
+            cs.n++;
+            if (hasValidAvg) cs.scores.push(s.avg);
+            if (fail) cs.failCount++;
+            cs.missedCount += missed;
+          }
+
+          /* עדכון משקפת 2: מקצועות וקבוצות לימוד */
+          if (!subjectMap.has(s.name)) {
+            const cRank = coreRank(s.name);
+            subjectMap.set(s.name, {
+              name: s.name, isCore: cRank >= 0, coreOrder: cRank >= 0 ? cRank : 99,
+              studentCount: 0, scores: [], failCount: 0, missedCount: 0,
+              uncertain: false, groups: new Map()
+            });
+          }
+          const sub = subjectMap.get(s.name);
+          sub.studentCount++;
+          sub.uncertain = sub.uncertain || !hasGroups || unverifiedMissed;
+          if (hasValidAvg) sub.scores.push(s.avg);
+          if (fail) sub.failCount++;
+          sub.missedCount += missed;
+
+          /* פיצול לקבוצות לימוד (groupId) ומורים מתוך s.entries ו-s.missed */
+          const groupBuckets = new Map();
+          const ensureBucket = (groupId, rawTeacher) => {
+            const gid = groupId ? String(groupId) : '';
+            const gObj = gid ? Store.groups.get(gid) : null;
+            const teacher = (gObj && gObj.teacher) || rawTeacher || 'ללא מורה';
+            const bKey = gid ? `grp:${gid}` : `tch:${teacher}`;
+            if (!groupBuckets.has(bKey)) {
+              const groupLabel = gid
+                ? ((gObj && gObj.targetClasses ? `${gObj.targetClasses} ` : '') + `[${gid}]`).trim()
+                : 'ללא קבוצה מזוהה';
+              groupBuckets.set(bKey, { key: bKey, groupId: gid, groupLabel, teacher, events: [], entryAvgs: [], missedMap: new Map() });
+            }
+            return groupBuckets.get(bKey);
+          };
+          s.entries.forEach(e => {
+            const b = ensureBucket(e.groupId, e.teacher);
+            if (e.events && e.events.length) b.events.push(...e.events);
+            else if (e.avg != null) b.entryAvgs.push(e.avg);
+          });
+          s.missed.forEach((m, mKey) => {
+            const b = ensureBucket(m.groupId, m.teacher);
+            b.missedMap.set(mKey, m);
+          });
+          if (!groupBuckets.size) {
+            /* גיבוי כשאין entry מזוהה: בדיקה בקבוצות הרשומות של החניך למקצוע */
+            const enrolledGrp = Store.groupsOf(t.tz).find(g => g.subject && GroupAnalyzer.sadinSubject(g.subject) === s.name);
+            const b = ensureBucket(enrolledGrp ? enrolledGrp.groupId : '', enrolledGrp ? enrolledGrp.teacher : '');
+            if (hasValidAvg) b.entryAvgs.push(s.avg);
+          }
+
+          const subjTeachersForFail = [];
+          groupBuckets.forEach(b => {
+            const gAvg = b.events.length ? Store.weightedAverage(b.events).avg : meanNum(b.entryAvgs);
+            const synth = { ...s, avg: gAvg, events: b.events, missed: b.missedMap };
+            const gMissed = confirmedMissed(synth, hasGroups, t.tz);
+            const gValidAvg = gAvg != null && !(gAvg === 0 && !failingSubject(synth) && b.missedMap.size > 0);
+            if (!gValidAvg && !gMissed) return;
+            const gFail = gValidAvg && failingSubject(synth);
+            if (fail && b.teacher && b.teacher !== 'ללא מורה') {
+              failTeacherSet.add(b.teacher);
+              subjTeachersForFail.push(b.teacher);
+            }
+            if (!sub.groups.has(b.key)) {
+              sub.groups.set(b.key, {
+                key: b.key, groupId: b.groupId, groupLabel: b.groupLabel, teacher: b.teacher,
+                studentCount: 0, scores: [], failCount: 0, missedCount: 0, uncertain: false
+              });
+            }
+            const grp = sub.groups.get(b.key);
+            grp.studentCount++;
+            if (gValidAvg) grp.scores.push(gAvg);
+            if (gFail) grp.failCount++;
+            grp.missedCount += gMissed;
+            grp.uncertain = grp.uncertain || !hasGroups || b.missedMap.size > gMissed;
+          });
+
+          if (fail) {
+            failedSubjects.push({ name: s.name, avg: s.avg, teachers: [...new Set(subjTeachersForFail)] });
+          }
+        });
+
+        /* סיווג חניך למשקפת 3: הפרדה מוחלטת של חניכים ללא ציונים כלל בשוטף */
+        if (activeSubjectCount === 0) {
+          noGradesStudents.push({ t, classKey: t.classKey });
+          return;
+        }
+
+        const studentMean = meanNum(studentScores);
+        if (studentMean != null) {
+          cohortStudentAvgs.push(studentMean);
+          if (cls) cls.studentAvgs.push(studentMean);
+        }
+        if (cls) {
+          cls.gradedStudents++;
+          if (fails > 0) cls.studentsWithFail++;
+        }
+
+        const meetsRisk = fails >= rules.minFails || (rules.minMissed > 0 && missedForStudent >= rules.minMissed);
+        if (meetsRisk) {
+          edgeStudents.push({
+            t, overallAvg: studentMean, fails, missedCount: missedForStudent,
+            failedSubjects: failedSubjects.sort((a, b) => (a.avg ?? 999) - (b.avg ?? 999) || natural(a.name, b.name)),
+            missedSubjects: missedSubjects.sort((a, b) => b.count - a.count || natural(a.name, b.name)),
+            distinctFailTeachers: failTeacherSet.size
+          });
+        }
+      });
+    });
+
+    const cohortAvg = meanNum(cohortStudentAvgs);
+
+    /* גימור משקפת 1 – כיתות אם */
+    const classes = [...classMap.values()].map(c => {
+      const avg = meanNum(c.studentAvgs);
+      const deltaFromCohort = avg != null && cohortAvg != null ? avg - cohortAvg : null;
+      const failRate = c.subjectEvals ? (c.failedEvals / c.subjectEvals) * 100 : 0;
+      const failPct = Math.round(failRate);
+      const hasGroups = (prereqs.get(c.grade) || {}).hasGroups;
+      /* ניקוי רעש מגמות: הצג רק מקצועות עם נוכחות ממשית בכיתה (n >= 4 או >= 25% מהחניכים בעלי נתונים; בכיתות זעירות <= 4 מותאם) */
+      const allSubs = [...c.subjects.values()].map(s => ({
+        ...s, avg: meanNum(s.scores), failPct: s.n ? Math.round((s.failCount / s.n) * 100) : 0
+      }));
+      const isSubstantial = s => c.total <= 4
+        ? (s.n >= 2 || (c.total <= 2 && s.n >= 1))
+        : (s.n >= 4 || (c.gradedStudents > 0 && s.n >= 3 && s.n / c.gradedStudents >= 0.25));
+      const substantialSubjects = allSubs.filter(isSubstantial)
+        .sort((a, b) => b.failPct - a.failPct || b.missedCount - a.missedCount || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.name, b.name));
+      const omittedSubjectsCount = allSubs.length - substantialSubjects.length;
+      const concernScore = failRate * 1.4 + (c.gradedStudents ? (c.missedCount / c.gradedStudents) * 18 : 0) + Math.max(0, -(deltaFromCohort || 0)) * 1.2;
+      const isCalm = c.failedEvals === 0 && c.missedCount === 0 && (deltaFromCohort == null || deltaFromCohort >= -3);
+      let patternText = 'כיתה יציבה — ללא ציונים נכשלים או החמצות מאומתות בנתונים הזמינים.';
+      if (c.gradedStudents === 0) patternText = 'טרם דווחו ציונים שוטפים לחניכי הכיתה.';
+      else if (c.failedEvals > 0 && c.missedCount >= c.failedEvals) patternText = `שילוב של ציונים נכשלים (${failPct}% מציוני המקצועות) וצבירת החמצות הערכה (${c.missedCount}).`;
+      else if (c.failedEvals > 0) patternText = `מוקד קושי לימודי — ${failPct}% מציוני המקצועות בכיתה נכשלים (${c.studentsWithFail} חניכים עם נכשל)${c.missedCount ? ` · ${c.missedCount} החמצות` : ''}.`;
+      else if (c.missedCount > 0) patternText = `מוקד היעדרות מהערכות — ${c.missedCount} החמצות מאומתות ללא ממוצעים נכשלים.`;
+      else if (!isCalm) patternText = `ממוצע כיתתי נמוך מממוצע השכבה (${fmtDelta(deltaFromCohort)}) ללא נכשלים פעילים.`;
+      return {
+        ...c, avg, deltaFromCohort, failRate, failPct, hasGroups,
+        substantialSubjects, omittedSubjectsCount, concernScore, isCalm, patternText
+      };
+    }).sort((a, b) => b.concernScore - a.concernScore || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.key, b.key));
+
+    /* גימור משקפת 2 – מקצועות וקבוצות */
+    const subjects = [...subjectMap.values()].map(s => {
+      const avg = meanNum(s.scores);
+      const failPct = s.studentCount ? Math.round((s.failCount / s.studentCount) * 100) : 0;
+      const groups = [...s.groups.values()].map(g => {
+        const gAvg = meanNum(g.scores);
+        const gFailPct = g.studentCount ? Math.round((g.failCount / g.studentCount) * 100) : 0;
+        const deltaFromSubject = gAvg != null && avg != null ? gAvg - avg : null;
+        const gConcern = gFailPct * 1.3 + (g.studentCount ? (g.missedCount / g.studentCount) * 18 : 0) + Math.max(0, -(deltaFromSubject || 0)) * 1.5;
+        return { ...g, avg: gAvg, failPct: gFailPct, deltaFromSubject, concernScore: gConcern };
+      }).sort((a, b) => b.concernScore - a.concernScore || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.teacher, b.teacher));
+      const concernScore = failPct * 1.35 + (s.studentCount ? (s.missedCount / s.studentCount) * 18 : 0) + (avg != null ? Math.max(0, 68 - avg) * 0.7 : 0);
+      const isCalm = s.failCount === 0 && s.missedCount === 0;
+      return { ...s, avg, failPct, groups, groupCount: groups.length, concernScore, isCalm };
+    }).sort((a, b) => b.concernScore - a.concernScore || a.coreOrder - b.coreOrder || natural(a.name, b.name));
+
+    /* גימור משקפת 3 – חניכי קצה */
+    edgeStudents.sort((a, b) =>
+      (b.fails * 2 + b.distinctFailTeachers * 0.4 + b.missedCount) - (a.fails * 2 + a.distinctFailTeachers * 0.4 + a.missedCount) ||
+      (a.overallAvg ?? 999) - (b.overallAvg ?? 999) ||
+      natural(a.t.name, b.t.name)
+    );
+    noGradesStudents.sort((a, b) => natural(a.classKey, b.classKey) || natural(a.t.name, b.t.name));
+
+    return { cohortAvg, classes, subjects, edgeStudents, noGradesStudents, prereqs, globalUncertain };
+  }
+
   const severity = rate => rate < 20 ? 0 : rate < 40 ? 1 : rate < 60 ? 2 : 3;
 
   window.SadinView = {
@@ -290,21 +538,68 @@
       this.state.filters.grade = prev.grade;
       this.state.filters.cls = prev.cls;
       this.state.filters.track = prev.track;
-      Object.assign(this.state.sadin, { mode: 'early', strip: 'all', subject: prev.subject, teacher: prev.teacher });
+      Object.assign(this.state.sadin, {
+        mode: 'early', strip: 'all', subject: 'all', teacher: 'all',
+        weakLens: prev.weakLens || 'classes',
+        weakClassKey: prev.weakClassKey || '',
+        weakSubjectKey: prev.weakSubjectKey || ''
+      });
       this.syncFilters();
       this.onFilterChange();
       this.showTab('sadin');
       return;
     }
-    if (el.dataset.mode === 'early') this._weaknessBackState = null;
+    if (el.dataset.mode === 'early') {
+      this._weaknessBackState = null;
+      this.state.sadin.subject = 'all';
+      this.state.sadin.teacher = 'all';
+    }
     this.state.sadin.mode = el.dataset.mode;
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
     if (!preserveFilter) this.state.sadin.strip = 'all';
     this.dirty.add('sadin'); this.showTab('sadin');
   },
 
+  weakLens(el) {
+    const st = this.state.sadin;
+    const lens = ['classes', 'subjects', 'students'].includes(el.dataset.lens) ? el.dataset.lens : 'classes';
+    if (st.weakRiskDraft && lens !== 'students') SadinView.weaknessRiskClose.call(this, false);
+    st.weakLens = lens;
+    st.weakSubjectKind = 'all';
+    st.weakStudentFilter = 'all';
+    st.subject = 'all';
+    st.teacher = 'all';
+    this.dirty.add('sadin');
+    this.renderTab('sadin');
+  },
+
+  weakPickClass(el) {
+    this.state.sadin.weakClassKey = el.dataset.class || '';
+    SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+    const btn = [...document.querySelectorAll('#sadin-table [data-act="weakPickClass"]')].find(b => b.dataset.class === this.state.sadin.weakClassKey);
+    if (btn) btn.focus();
+  },
+
+  weakPickSubject(el) {
+    this.state.sadin.weakSubjectKey = el.dataset.subject || '';
+    SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+    const btn = [...document.querySelectorAll('#sadin-table [data-act="weakPickSubject"]')].find(b => b.dataset.subject === this.state.sadin.weakSubjectKey);
+    if (btn) btn.focus();
+  },
+
+  weakSubjectKind(el) {
+    this.state.sadin.weakSubjectKind = el.dataset.kind || 'all';
+    SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+  },
+
+  weakStudentFilter(el) {
+    this.state.sadin.weakStudentFilter = el.dataset.filter || 'all';
+    SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+  },
+
   weaknessRiskToggle() {
     const st = this.state.sadin;
+    if (st.weakLens !== 'students') return;
     if (st.weakRiskDraft) return SadinView.weaknessRiskClose.call(this, true);
     const control = document.querySelector('#sadin-mode .weak-risk-control');
     if (!control) return;
@@ -316,6 +611,7 @@
   },
 
   weaknessRiskClose(restoreFocus = false) {
+    const hadDraft = !!this.state.sadin.weakRiskDraft;
     this.state.sadin.weakRiskDraft = null;
     const pop = $('weak-risk-popover');
     if (pop) pop.remove();
@@ -323,6 +619,9 @@
     if (button) {
       button.setAttribute('aria-expanded', 'false');
       if (restoreFocus) button.focus();
+    }
+    if (hadDraft && this.state.sadin.mode !== 'full' && this.state.sadin.weakLens === 'students' && Store.loaded.grades) {
+      SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
     }
   },
 
@@ -335,12 +634,18 @@
     }
     draft[key] += step;
     updateRiskPopover(this);
+    if (st.mode !== 'full' && st.weakLens === 'students' && Store.loaded.grades) {
+      SadinView.renderWeakness.call(this, this.filtered(), st);
+    }
   },
 
   weaknessRiskReset() {
     if (!this.state.sadin.weakRiskDraft) return;
     this.state.sadin.weakRiskDraft = { minFails: 1, minMissed: 1 };
     updateRiskPopover(this);
+    if (this.state.sadin.mode !== 'full' && this.state.sadin.weakLens === 'students' && Store.loaded.grades) {
+      SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+    }
   },
 
   weaknessRiskApply() {
@@ -396,26 +701,41 @@
   openWeaknessSheet(el) {
     this._weaknessBackState = {
       grade: this.state.filters.grade, cls: this.state.filters.cls, track: this.state.filters.track,
-      subject: this.state.sadin.subject, teacher: this.state.sadin.teacher
+      subject: 'all', teacher: 'all',
+      weakLens: this.state.sadin.weakLens || 'classes',
+      weakClassKey: this.state.sadin.weakClassKey || '',
+      weakSubjectKey: this.state.sadin.weakSubjectKey || ''
     };
     let teachers = [];
     try { teachers = el.dataset.teachers ? JSON.parse(el.dataset.teachers) : []; } catch (e) { teachers = []; }
-    const teacher = this.state.sadin.teacher && this.state.sadin.teacher !== 'all'
-      ? this.state.sadin.teacher
-      : teachers.length === 1 ? teachers[0] : 'all';
+    const explicitTeacher = el.dataset.teacher;
+    const teacher = explicitTeacher !== undefined
+      ? (explicitTeacher || 'all')
+      : (this.state.sadin.teacher && this.state.sadin.teacher !== 'all' ? this.state.sadin.teacher : teachers.length === 1 ? teachers[0] : 'all');
+    const targetCls = el.dataset.class || 'all';
+    const targetSubject = el.dataset.subject || 'all';
     this.rememberScreenFilters();
     this.resetOverviewDrillFilters();
-    this.state.filters.cls = el.dataset.class;
-    Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: el.dataset.subject, teacher });
+    this.state.filters.cls = targetCls;
+    Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: targetSubject, teacher });
+    this.syncFilters();
     this.onFilterChange();
     this.showTab('sadin');
   },
 
   openWeaknessAlerts(el) {
-    const cell = this.state.sadin.cell;
-    if (!cell || cell.cls !== el.dataset.class || cell.subject !== el.dataset.subject) return;
+    const subject = el.dataset.subject;
+    if (!subject) return;
+    let teachers = [];
+    try { teachers = el.dataset.teachers ? JSON.parse(el.dataset.teachers) : []; } catch (e) { teachers = []; }
     this.alertOut = [];
-    SadinView.openSadinAlerts.call(this, { cls: cell.cls, subject: cell.subject, teachers: JSON.parse(el.dataset.teachers) });
+    SadinView.openSadinAlerts.call(this, {
+      cls: el.dataset.class || 'all',
+      subject,
+      teachers,
+      groupId: el.dataset.groupId || '',
+      groupLabel: el.dataset.groupLabel || ''
+    });
   },
 
   sadinSubjectChange(value) {
@@ -544,20 +864,24 @@
       home.actions.insertBefore(home.alertButton, $('unknown-sadinData'));
     }
     const grade = this.state.filters.grade;
-    const riskRules = early ? weaknessRiskRules(this) : null;
+    const lens = ['classes', 'subjects', 'students'].includes(st.weakLens) ? st.weakLens : 'classes';
+    st.weakLens = lens;
+    if (early && lens !== 'students' && st.weakRiskDraft) st.weakRiskDraft = null;
+    const riskRules = early && lens === 'students' ? (st.weakRiskDraft || weaknessRiskRules(this)) : null;
     const riskLabel = riskRules ? `סיכון: נכשל ${riskRules.minFails}+${riskRules.minMissed ? ` או החמצה ${riskRules.minMissed}+` : ' בלבד'}` : '';
+    const lensBtn = (id, label) => `<button type="button" role="tab" class="weak-lens-tab" data-act="weakLens" data-lens="${id}" aria-selected="${String(lens === id)}">${label}</button>`;
     modeBox.className = early ? 'weak-toolbar' : 'flex flex-wrap gap-2 mb-2';
     modeBox.innerHTML = early
-      ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div><div class="weak-controls">
-        <div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div></div>
-        <span class="weak-quality-slot"></span>`
+      ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div>
+        <div class="weak-lenses" role="tablist" aria-label="משקפות מוקדי חולשה">
+          ${lensBtn('classes', 'כיתות אם')}${lensBtn('subjects', 'מקצועות וקבוצות')}${lensBtn('students', 'חניכי קצה')}
+        </div>
+        <div class="weak-controls">
+          ${lens === 'students' ? `<div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div>` : ''}
+          <span class="weak-quality-slot"></span>
+        </div>`
       : `<button type="button" class="nav-back" data-act="sadinMode" data-mode="early" data-back-weakness="1">→ חזרה למוקדי חולשה</button>`;
-    if (early && home) {
-      const controls = modeBox.querySelector('.weak-controls');
-      const riskControl = controls.querySelector('.weak-risk-control');
-      controls.insertBefore(subjectSelect, riskControl); controls.insertBefore(teacherSelect, riskControl); controls.appendChild(home.alertButton);
-      home.alertButton.textContent = 'התראות למורים';
-    } else if (home) home.alertButton.textContent = '🔔 התראות';
+    if (home) home.alertButton.textContent = '🔔 התראות';
     let summaryBox = $('sadin-summary');
     if (!summaryBox) {
       summaryBox = document.createElement('div');
@@ -655,42 +979,21 @@
   },
 
   renderWeakness(roster, st) {
-    const rules = weaknessRiskRules(this), model = weaknessModel(roster, st, rules);
-    const selected = st.cell && model.cells.get(JSON.stringify([st.cell.cls, st.cell.subject])) || model.ranked[0];
-    st.cell = selected ? { cls: selected.cls, subject: selected.subject } : null;
-    const attrs = c => `data-class="${E(c.cls)}" data-subject="${E(c.subject)}"`;
-    const cellButton = c => {
-      if (!c) return '<span class="weak-empty">—</span>';
-      const active = selected === c;
-      const small = c.students.length < 3, label = small ? `${c.risk}/${c.students.length}` : `${Math.round(c.rate)}%`;
-      return `<button type="button" class="weak-heat ${small ? 'weak-small-sample' : `weak-level-${severity(Math.round(c.rate))}`}${active ? ' is-selected' : ''}" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${active}" aria-label="${E(`${c.subject} · ${Config.classLabel(c.cls)}: ${c.risk} מתוך ${c.students.length} בסיכון${small ? ' · מדגם קטן' : ` · ${Math.round(c.rate)}%`}`)}">${label}</button>`;
-    };
-    const divider = model.subjects.findIndex(subject => !model.coreRanks.has(subject));
-    const separator = index => divider > 0 && index === divider ? ' class="weak-block-divider"' : '';
-    const rows = model.classes.map(cls => `<tr><th scope="row">${E(Config.classLabel(cls))}</th>${model.subjects.map((subject, index) => `<td${separator(index)}>${cellButton(model.cells.get(JSON.stringify([cls, subject])))}</td>`).join('')}</tr>`).join('');
-    const ranked = model.ranked.filter(c => c.risk).slice(0, 5);
-    const subject = selected ? selected.subject : st.subject;
-    const teacherRows = model.teachers.filter(t => t.subject === subject).sort((a, b) => natural(a.name, b.name)).map(t =>
-      `<tr><th scope="row">${E(t.name)}</th><td>${mean(t.scores)}</td><td>${t.total ? Math.round(t.fail / t.total * 100) : 0}%</td><td>${t.uncertain && !t.missed ? '—' : t.missed}</td></tr>`).join('');
+    const lens = ['classes', 'subjects', 'students'].includes(st.weakLens) ? st.weakLens : 'classes';
+    st.weakLens = lens;
+    const activeRules = lens === 'students' && st.weakRiskDraft ? st.weakRiskDraft : weaknessRiskRules(this);
+    const data = buildWeaknessLensesModel(roster, activeRules);
+
+    /* עדכון חיווי איכות הנתונים בראש המסך */
     const signals = SignalEngine.computeAll(this.state.sim).byTz;
     const unmatched = GroupAnalyzer.unmatchedIds().some(item => item.sources.includes('סדין ציונים'));
     const notEnrolled = roster.some(t => signals.get(t.tz).dataQuality.some(f => f.id === 'data.sadin_not_enrolled'));
     const quality = unmatched || notEnrolled;
-    const kpi = (label, value, note) => `<section class="card weak-kpi"><h2>${label}</h2><strong>${value}</strong><p>${note}</p></section>`;
-    const detail = selected ? (() => {
-      const students = selected.students.filter(s => s.risk).sort((a, b) => natural(a.t.name, b.t.name));
-      const list = students.slice(0, 10).map(s => `<li><button type="button" data-act="openProfile" data-tz="${E(s.t.tz)}" class="weak-name">${E(s.t.name)}</button><span>${E([s.fail ? `ממוצע ${Util.fmt(s.avg, 1)} · נכשל` : '', s.missed ? 'הוחמץ' : ''].filter(Boolean).join(' · '))}</span></li>`).join('');
-      return `<h3>${E(selected.subject)} · ${E(Config.classLabel(selected.cls))}</h3><p class="weak-muted">מורים: ${E([...selected.teachers].sort(natural).join(', ') || 'לא ידוע')}</p>
-        <div class="weak-metrics"><div><span>ממוצע</span><strong>${mean(selected.scores)}</strong></div><div><span>בסיכון</span><strong>${selected.risk} מתוך ${selected.students.length}</strong></div><div><span>הוחמצו</span><strong>${selected.uncertain && !selected.missed ? '—' : selected.missed}</strong></div></div>
-        <h4>חניכים בסיכון</h4><ul class="weak-students">${list || '<li>אין חניכים בסיכון בתא</li>'}</ul>${students.length > 10 ? `<p class="weak-muted">ועוד ${students.length - 10} חניכים</p>` : ''}
-        <div class="weak-detail-actions"><button type="button" class="btn btn-primary weak-primary" data-act="sadinCellSheet" ${attrs(selected)} data-teachers="${E(JSON.stringify([...selected.teachers].sort(natural)))}">פתח בסדין</button>
-        <button type="button" class="btn btn-ghost" data-act="sadinCellAlerts" ${attrs(selected)} data-teachers="${E(JSON.stringify([...selected.teachers].sort(natural)))}" ${selected.teachers.size ? '' : 'disabled title="אין מורה מזוהה בתא"'}>שלח התראה למורה</button></div>`;
-    })() : '<p class="weak-muted">אין נתונים זמינים לבחירת תא בסינון הנוכחי.</p>';
-    const prereqs = [...prerequisitesByGrade(roster).values()];
+    const prereqs = [...data.prereqs.values()];
     const incompleteGroups = prereqs.some(p => !p.hasGroups);
     const incompleteSadin = prereqs.some(p => !p.hasSadin);
     const notices = [
-      model.uncertain || incompleteGroups ? 'לא ניתן לקבוע החמצות ללא שיבוץ מאומת; הנתונים עשויים להיות חלקיים.' : '',
+      data.globalUncertain || incompleteGroups ? 'לא ניתן לקבוע החמצות ללא שיבוץ מאומת; הנתונים עשויים להיות חלקיים.' : '',
       incompleteSadin ? 'חסרים נתוני ציונים לחלק מהשכבות; הנתונים עשויים להיות חלקיים.' : '',
       unmatched ? 'קיימים חניכים בקובץ הציונים שאינם במצבת.' : '',
       notEnrolled ? 'קיימים ציונים ללא שיבוץ מאומת לקבוצה.' : ''
@@ -698,19 +1001,240 @@
     const qualitySlot = document.querySelector('#sadin-mode .weak-quality-slot');
     if (qualitySlot) qualitySlot.innerHTML = notices.length
       ? `<button type="button" class="badge ${quality ? 'gate-warn' : 'gate-off'} weak-quality" data-act="openDataQuality" title="${E(notices.join(' '))}" aria-label="${E(notices.join(' '))}">${quality ? 'לבדיקה' : 'מידע חסר'}</button>` : '';
-    setHtml('sadin-table', `<div class="weak-kpis">
-      ${kpi('ממוצע שכבתי', mean(model.averages), 'ממוצע חניכים עם ציונים בסינון הנוכחי')}
-      ${kpi('נכשלים בשוטף', model.failed, 'חניכים עם ממוצע נכשל, ללא החמצה בלבד')}
-      ${kpi('אירוע הערכה שהוחמץ', !model.missed && (model.uncertain || incompleteGroups) ? '—' : model.missed, 'אירועים עם שיבוץ מאומת בלבד')}
-      ${kpi('כיתות בסיכון', `${model.riskyClasses} מתוך ${model.classes.length}`, `שליש עליון מתוך ${model.classes.length} כיתות לפי שיעור סיכון בכל שכבה`)}</div>
-      <div class="weak-layout"><div class="weak-main"><section class="card weak-card"><h2>מפת חום: כיתה × מקצוע</h2>
-        <p class="weak-muted">אחוז החניכים בסיכון מתוך החניכים עם נתונים במקצוע; מדגם קטן משלושה מוצג כמספר חניכים.</p>
-        <div class="weak-scroll"><table class="weak-table"><thead><tr><th scope="col">כיתה</th>${model.subjects.map((s, index) => `<th scope="col"${separator(index)}>${E(s)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
-        ${model.subjects.length ? '' : '<p class="weak-muted">אין נתונים זמינים בסינון הנוכחי.</p>'}
-        <div class="weak-legend"><span><i class="weak-level-0"></i>נמוך עד 19%</span><span><i class="weak-level-1"></i>20%–39%</span><span><i class="weak-level-2"></i>40%–59%</span><span><i class="weak-level-3"></i>גבוה 60% ומעלה</span></div></section>
-        <div class="weak-lower"><section class="card weak-card"><h2>חמשת המוקדים הבוערים</h2><div class="weak-ranking">${ranked.map((c, i) => `<button type="button" data-act="sadinSelectCell" ${attrs(c)} aria-pressed="${selected === c}"><span>${i + 1}. ${E(c.subject)} · ${E(Config.classLabel(c.cls))}</span><strong>${c.students.length < 3 ? `${c.risk}/${c.students.length} · מדגם קטן` : `${Math.round(c.rate)}%`}</strong></button>`).join('') || '<p class="weak-muted">לא נמצאו מוקדים בסיכון.</p>'}</div></section>
-        <section class="card weak-card"><h2>מורים במקצוע הנבחר${subject && subject !== 'all' ? ` · ${E(subject)}` : ''}</h2><div class="weak-scroll"><table class="weak-teachers"><thead><tr><th>מורה</th><th>ממוצע</th><th>נכשלים</th><th>הוחמצו</th></tr></thead><tbody>${teacherRows || '<tr><td colspan="4">אין נתוני מורים זמינים</td></tr>'}</tbody></table></div><p class="weak-muted">התראה מוצעת רק בעבירת סף חומרה ובשיבוץ מאומת.</p></section></div></div>
-        <aside class="card weak-card weak-detail"><h2>פירוט תא</h2>${detail}</aside></div>`);
+
+    if (lens === 'classes') return SadinView.renderWeaknessClassesLens.call(this, data, st);
+    if (lens === 'subjects') return SadinView.renderWeaknessSubjectsLens.call(this, data, st);
+    return SadinView.renderWeaknessStudentsLens.call(this, data, st, activeRules, incompleteGroups);
+  },
+
+  /** משקפת 1: כיתות אם — רשימה מדורגת מימין ופירוק סיבות משמאל */
+  renderWeaknessClassesLens(data, st) {
+    if (!data.classes.length) {
+      setHtml('sadin-table', '<section class="card weak-card"><p class="weak-muted">אין כיתות אם זמינות בסינון הנוכחי.</p></section>');
+      return;
+    }
+    const selected = data.classes.find(c => c.key === st.weakClassKey) || data.classes[0];
+    st.weakClassKey = selected.key;
+    const cohortAvgTxt = data.cohortAvg == null ? '—' : Util.fmt(data.cohortAvg, 1);
+    const deltaChip = delta => {
+      if (delta == null || !Number.isFinite(delta)) return '';
+      const cls = delta <= -2 ? 'is-neg' : delta >= 2 ? 'is-pos' : 'is-even';
+      return `<span class="weak-delta ${cls}">${E(fmtDelta(delta, ' מהשכבה'))}</span>`;
+    };
+
+    const listHtml = data.classes.map(c => {
+      const active = c.key === selected.key;
+      const avgTxt = c.avg == null ? '—' : Util.fmt(c.avg, 1);
+      const missedTxt = !c.hasGroups && !c.missedCount ? 'החמצות: —' : `${c.missedCount} החמצות`;
+      const tone = c.isCalm ? 'is-calm' : c.failPct >= 25 || (c.deltaFromCohort != null && c.deltaFromCohort <= -6) ? 'is-high' : 'is-watch';
+      return `<button type="button" class="weak-list-item ${tone}${active ? ' is-selected' : ''}" data-act="weakPickClass" data-class="${E(c.key)}" aria-pressed="${String(active)}">
+        <div class="weak-item-top">
+          <strong class="weak-item-title">${E(Config.classLabel(c.key))}</strong>
+          <div class="flex items-center gap-1.5">
+            <span class="weak-item-avg">ממוצע ${avgTxt}</span>
+            ${deltaChip(c.deltaFromCohort)}
+          </div>
+        </div>
+        <div class="weak-item-sub">
+          <span>${c.failPct}% נכשלים במקצועות</span>
+          <span>·</span>
+          <span>${E(missedTxt)}</span>
+          <span>·</span>
+          <span>${c.total} חניכים</span>
+        </div>
+      </button>`;
+    }).join('');
+
+    const subRows = selected.substantialSubjects.map(s => {
+      const sAvg = s.avg == null ? '—' : Util.fmt(s.avg, 1);
+      const missedCell = !selected.hasGroups && !s.missedCount ? '—' : s.missedCount;
+      const rowWarn = s.failPct >= 20 || s.missedCount >= 3;
+      return `<tr class="${rowWarn ? 'is-warn-row' : ''}">
+        <td class="font-semibold text-[#355747]">${E(s.name)}</td>
+        <td>${s.n}</td>
+        <td>${sAvg}</td>
+        <td>${s.failCount ? `<span class="text-[#C86432] font-semibold">${s.failPct}% (${s.failCount})</span>` : '0%'}</td>
+        <td>${missedCell}</td>
+      </tr>`;
+    }).join('');
+
+    const detailHtml = `
+      <div class="weak-detail-head">
+        <div>
+          <h2>${E(Config.classLabel(selected.key))}</h2>
+          <p class="weak-muted">${selected.total} חניכים בכיתה · ממוצע שכבה להשוואה: ${cohortAvgTxt}</p>
+        </div>
+        <button type="button" class="btn btn-primary" data-act="sadinCellSheet" data-class="${E(selected.key)}" data-subject="all">פתח בסדין</button>
+      </div>
+      <div class="weak-pattern-box ${selected.isCalm ? 'is-calm' : 'is-alert'}">${E(selected.patternText)}</div>
+      <div class="weak-metrics">
+        <div><span>ממוצע כיתתי</span><strong>${selected.avg == null ? '—' : Util.fmt(selected.avg, 1)} ${deltaChip(selected.deltaFromCohort)}</strong></div>
+        <div><span>נכשלים במקצועות</span><strong>${selected.failPct}% (${selected.failedEvals}/${selected.subjectEvals})</strong></div>
+        <div><span>החמצות מאומתות</span><strong>${!selected.hasGroups && !selected.missedCount ? '—' : selected.missedCount}</strong></div>
+      </div>
+      <h3 class="weak-sec-title">מקצועות מרכזיים בכיתה</h3>
+      ${subRows
+        ? `<div class="tbl-wrap"><table class="weak-sub-table"><thead><tr><th>מקצוע</th><th>חניכים</th><th>ממוצע</th><th>נכשלים</th><th>החמצות</th></tr></thead><tbody>${subRows}</tbody></table></div>`
+        : '<p class="weak-muted">אין מקצועות עם נוכחות כיתתית מספקת בנתונים הזמינים.</p>'}
+      ${selected.omittedSubjectsCount ? `<p class="weak-omitted-note">הושמטו ${selected.omittedSubjectsCount} מקצועות בחירה עם נוכחות זעירה בכיתה כדי למנוע רעש סטטיסטי.</p>` : ''}`;
+
+    setHtml('sadin-table', `<div class="weak-split" data-weak-lens="classes">
+      <section class="card weak-card weak-list-pane" aria-label="דירוג כיתות אם">
+        <div class="weak-pane-head"><h2>כיתות אם בשכבה</h2><span class="weak-muted">${data.classes.length} כיתות · ממוצע שכבה ${cohortAvgTxt}</span></div>
+        <div class="weak-list">${listHtml}</div>
+      </section>
+      <section class="card weak-card weak-detail-pane" aria-label="פירוק סיבות לכיתה">${detailHtml}</section>
+    </div>`);
+  },
+
+  /** משקפת 2: מקצועות וקבוצות — רשימת מקצועות מימין ופירוק לקבוצות לימוד ומורים משמאל */
+  renderWeaknessSubjectsLens(data, st) {
+    const hasMajors = data.subjects.some(s => !s.isCore);
+    const kind = hasMajors && ['all', 'core', 'major'].includes(st.weakSubjectKind) ? st.weakSubjectKind : 'all';
+    st.weakSubjectKind = kind;
+    const filteredSubjects = data.subjects.filter(s => kind === 'all' || (kind === 'core' ? s.isCore : !s.isCore));
+
+    if (!filteredSubjects.length) {
+      setHtml('sadin-table', '<section class="card weak-card"><p class="weak-muted">אין נתוני מקצועות זמינים בסינון הנוכחי.</p></section>');
+      return;
+    }
+    const selected = filteredSubjects.find(s => s.name === st.weakSubjectKey) || filteredSubjects[0];
+    st.weakSubjectKey = selected.name;
+    const subAvgTxt = selected.avg == null ? '—' : Util.fmt(selected.avg, 1);
+
+    const kindPills = hasMajors ? `<div class="weak-sub-pills" role="group" aria-label="סינון סוג מקצוע">
+      ${[['all', 'הכול'], ['core', 'ליבה'], ['major', 'מגמות']].map(([k, lbl]) =>
+        `<button type="button" class="hr-pill" data-act="weakSubjectKind" data-kind="${k}" aria-pressed="${String(kind === k)}">${lbl}</button>`
+      ).join('')}
+    </div>` : '';
+
+    const listHtml = filteredSubjects.map(s => {
+      const active = s.name === selected.name;
+      const avgTxt = s.avg == null ? '—' : Util.fmt(s.avg, 1);
+      const missedTxt = s.uncertain && !s.missedCount ? 'החמצות: —' : `${s.missedCount} החמצות`;
+      const tone = s.isCalm ? 'is-calm' : s.failPct >= 25 ? 'is-high' : 'is-watch';
+      return `<button type="button" class="weak-list-item ${tone}${active ? ' is-selected' : ''}" data-act="weakPickSubject" data-subject="${E(s.name)}" aria-pressed="${String(active)}">
+        <div class="weak-item-top">
+          <strong class="weak-item-title">${E(s.name)}</strong>
+          <span class="weak-item-avg">ממוצע ${avgTxt}</span>
+        </div>
+        <div class="weak-item-sub">
+          <span>${s.failPct}% נכשלים</span>
+          <span>·</span>
+          <span>${E(missedTxt)}</span>
+          <span>·</span>
+          <span>${s.groupCount} קבוצות (${s.studentCount} חניכים)</span>
+        </div>
+      </button>`;
+    }).join('');
+
+    const groupCards = selected.groups.map(g => {
+      const gAvgTxt = g.avg == null ? '—' : Util.fmt(g.avg, 1);
+      const deltaCls = g.deltaFromSubject == null ? '' : g.deltaFromSubject <= -3 ? 'is-neg' : g.deltaFromSubject >= 3 ? 'is-pos' : 'is-even';
+      const deltaHtml = g.deltaFromSubject != null && selected.groups.length > 1
+        ? `<span class="weak-delta ${deltaCls}">${E(fmtDelta(g.deltaFromSubject, ' מממוצע המקצוע'))}</span>`
+        : '';
+      const hasTeacher = g.teacher && g.teacher !== 'ללא מורה';
+      const teachersJson = E(JSON.stringify(hasTeacher ? [g.teacher] : []));
+      return `<article class="weak-group-card">
+        <div class="weak-group-top">
+          <div>
+            <strong class="weak-group-teacher">${E(g.teacher)}</strong>
+            <span class="weak-group-id">${E(g.groupLabel)} · ${g.studentCount} חניכים</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="weak-item-avg">ממוצע ${gAvgTxt}</span>
+            ${deltaHtml}
+          </div>
+        </div>
+        <div class="weak-group-stats">
+          <span>נכשלים: <strong class="${g.failCount ? 'text-[#C86432]' : ''}">${g.failPct}% (${g.failCount}/${g.studentCount})</strong></span>
+          <span>החמצות מאומתות: <strong>${g.uncertain && !g.missedCount ? '—' : g.missedCount}</strong></span>
+        </div>
+        <div class="weak-group-actions">
+          <button type="button" class="btn btn-primary btn-sm" data-act="sadinCellSheet" data-class="all" data-subject="${E(selected.name)}" data-teacher="${E(hasTeacher ? g.teacher : '')}">פתח בסדין</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="sadinCellAlerts" data-class="all" data-subject="${E(selected.name)}" data-group-id="${E(g.groupId)}" data-group-label="${E(g.groupLabel)}" data-teachers="${teachersJson}" ${hasTeacher ? '' : 'disabled title="אין מורה מזוהה בקבוצה"'}>התראה למורה</button>
+        </div>
+      </article>`;
+    }).join('');
+
+    setHtml('sadin-table', `<div class="weak-split" data-weak-lens="subjects">
+      <section class="card weak-card weak-list-pane" aria-label="דירוג מקצועות בשכבה">
+        <div class="weak-pane-head"><h2>מקצועות בשכבה</h2>${kindPills}</div>
+        <div class="weak-list">${listHtml}</div>
+      </section>
+      <section class="card weak-card weak-detail-pane" aria-label="פירוק המקצוע לקבוצות ומורים">
+        <div class="weak-detail-head">
+          <div>
+            <h2>${E(selected.name)}</h2>
+            <p class="weak-muted">ממוצע שכבתי במקצוע: ${subAvgTxt} · ${selected.failPct}% נכשלים (${selected.failCount}/${selected.studentCount} חניכים) · ${selected.groupCount} קבוצות לימוד</p>
+          </div>
+        </div>
+        <div class="weak-groups-list">${groupCards || '<p class="weak-muted">אין קבוצות לימוד מזוהות למקצוע זה.</p>'}</div>
+      </section>
+    </div>`);
+  },
+
+  /** משקפת 3: חניכי קצה — צבירה שקטה מעל הסף והפרדת חניכים ללא ציונים כלל בתחתית */
+  renderWeaknessStudentsLens(data, st, activeRules, incompleteGroups) {
+    const subFilter = ['all', 'fails', 'missed'].includes(st.weakStudentFilter) ? st.weakStudentFilter : 'all';
+    st.weakStudentFilter = subFilter;
+    const allEdge = data.edgeStudents;
+    const failsList = allEdge.filter(s => s.fails >= activeRules.minFails);
+    const missedList = allEdge.filter(s => s.missedCount > 0);
+    const shown = subFilter === 'fails' ? failsList : subFilter === 'missed' ? missedList : allEdge;
+
+    const pills = [
+      ['all', `הכול (${allEdge.length})`],
+      ['fails', `נכשלים (${failsList.length})`],
+      ['missed', `החמצות (${missedList.length})`]
+    ].map(([k, lbl]) => `<button type="button" class="hr-pill" data-act="weakStudentFilter" data-filter="${k}" aria-pressed="${String(subFilter === k)}">${lbl}</button>`).join('');
+
+    const rowsHtml = shown.map(s => {
+      const failChips = s.failedSubjects.map(f =>
+        `<span class="weak-reason-chip is-fail">${E(f.name)} · ${Util.fmt(f.avg, 0)}</span>`
+      ).join('');
+      const spreadNote = s.distinctFailTeachers >= 2
+        ? `<span class="weak-reason-chip is-spread">מפוזר אצל ${s.distinctFailTeachers} מורים</span>` : '';
+      const missChip = s.missedCount > 0
+        ? `<span class="weak-reason-chip is-miss">${s.missedCount} החמצות (${E(s.missedSubjects.map(m => m.name).join(', '))})</span>` : '';
+      return `<tr>
+        <td><button type="button" class="weak-name" data-act="openProfile" data-tz="${E(s.t.tz)}">${E(s.t.name)}</button></td>
+        <td>${E(Config.classLabel(s.t.classKey))}</td>
+        <td>${s.overallAvg == null ? '—' : Util.fmt(s.overallAvg, 1)}</td>
+        <td><div class="flex flex-wrap items-center gap-1">${failChips}${spreadNote}${missChip}</div></td>
+      </tr>`;
+    }).join('');
+
+    const noGradesHtml = data.noGradesStudents.length ? `
+      <details class="weak-nogrades">
+        <summary>חניכים ללא ציונים כלל בשוטף (${data.noGradesStudents.length})</summary>
+        <p class="weak-muted mb-2">חניכים הרשומים במצבת שלגביהם לא דווח אף ציון שוטף ואף החמצה מאומתת — מופרדים כדי לא לעוות את רשימת הצבירה הפעילה.</p>
+        <ul class="weak-nogrades-list">
+          ${data.noGradesStudents.map(item => `<li><button type="button" class="weak-name" data-act="openProfile" data-tz="${E(item.t.tz)}">${E(item.t.name)}</button> <span class="weak-muted">(${E(Config.classLabel(item.classKey))})</span></li>`).join('')}
+        </ul>
+      </details>` : '';
+
+    const ruleSummary = `סף פעיל: נכשל ב-${activeRules.minFails}+ מקצועות${activeRules.minMissed > 0 ? ` או ${activeRules.minMissed}+ החמצות מאומתות` : ' (ללא ספירת החמצות)'}${incompleteGroups && activeRules.minMissed > 0 ? ' · החמצות דורשות קובץ קבוצות לשכבה' : ''}`;
+
+    setHtml('sadin-table', `<div class="weak-students-lens" data-weak-lens="students">
+      <section class="card weak-card">
+        <div class="weak-detail-head mb-3">
+          <div>
+            <h2>חניכי קצה מעל סף הסיכון (${allEdge.length})</h2>
+            <p class="weak-muted">${E(ruleSummary)}</p>
+          </div>
+          <div class="flex flex-wrap gap-1.5" role="group" aria-label="סינון חניכי קצה">${pills}</div>
+        </div>
+        <div class="tbl-wrap">
+          <table class="weak-edge-table">
+            <thead><tr><th>חניך</th><th>כיתת אם</th><th>ממוצע שוטף</th><th>סיבת איתור (נכשלים והחמצות)</th></tr></thead>
+            <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-slate-500 py-8">אין חניכים פעילים העוברים את סף הסיכון שנבחר.</td></tr>'}</tbody>
+          </table>
+        </div>
+        ${noGradesHtml}
+      </section>
+    </div>`);
   },
 
   /** ציון כטקסט שטוח בשורה אחת, בלי רקע או מסגרת: אדום כהה לנכשל/חסר/מסומן, אפור-כהה לעובר */
@@ -972,9 +1496,13 @@
     const st = this.state.sadin;
     this._weakAlertContext = context;
     if (context) st.alertBy = 'teacher';
+    const scopeTitle = context
+      ? `${E(context.subject)}${context.cls && context.cls !== 'all' ? ` · ${E(Config.classLabel(context.cls))}` : context.groupLabel ? ` · ${E(context.groupLabel)}` : ''}`
+      : '';
+    const singleTeacher = context && context.teachers && context.teachers.length === 1 ? context.teachers[0] : '';
     this.openModal(`<div class="flex items-center justify-between gap-2 mb-3"><h3 class="text-lg font-semibold">🔔 התראות ציונים שוטפים</h3><button type="button" class="btn btn-ghost btn-sm" data-act="closeModal">סגירה</button></div>
       <div class="flex flex-wrap items-center gap-3 mb-3">
-        ${context ? `<span>${E(context.subject)} · ${E(Config.classLabel(context.cls))}</span><select id="weakAlertTeacher" class="inp" aria-label="מורה להתראה"><option value="all">כל מורי התא</option>${context.teachers.map(t => `<option value="${E(t)}">${E(t)}</option>`).join('')}</select>` :
+        ${context ? `<span>${scopeTitle}</span><select id="weakAlertTeacher" class="inp" aria-label="מורה להתראה">${singleTeacher ? '' : '<option value="all">כל מורי הקבוצה</option>'}${context.teachers.map(t => `<option value="${E(t)}" ${t === singleTeacher ? 'selected' : ''}>${E(t)}</option>`).join('')}</select>` :
           `<select id="alertBy" class="inp" aria-label="קיבוץ התראות לפי"><option value="class" ${st.alertBy === 'class' ? 'selected' : ''}>לפי כיתה</option><option value="teacher" ${st.alertBy === 'teacher' ? 'selected' : ''}>לפי מורה</option></select>`}
         <label class="flex items-center gap-1 text-sm"><input type="checkbox" id="alertInitials" ${st.initials ? 'checked' : ''}>ראשי תיבות בלבד</label>
         <button type="button" class="btn btn-primary btn-sm" data-act="generateAlerts">הפק רשימת התראות</button>
@@ -1002,7 +1530,7 @@
   async generateAlerts() {
     const context = this._weakAlertContext;
     const by = context ? 'teacher' : this.state.sadin.alertBy === 'class' ? 'homeroom' : this.state.sadin.alertBy;
-    const roster = this.filtered().filter(t => !context || t.classKey === context.cls);
+    const roster = this.filtered().filter(t => !context || !context.cls || context.cls === 'all' || t.classKey === context.cls);
     const prereqs = prerequisitesByGrade(roster);
     const ready = roster.filter(t => {
       const p = prereqs.get(t.gradeKey);
@@ -1030,11 +1558,13 @@
         };
         s.entries.forEach(e => {
           if (!enrolled.has(String(e.groupId))) return;
+          if (context && context.groupId && String(e.groupId) !== String(context.groupId)) return;
           const teacher = (Store.groups.get(e.groupId) || {}).teacher || e.teacher || 'ללא מורה';
           bucket(teacher).events.push(...e.events);
         });
         s.missed.forEach(m => {
           if (!enrolled.has(String(m.groupId))) return;
+          if (context && context.groupId && String(m.groupId) !== String(context.groupId)) return;
           const teacher = (Store.groups.get(m.groupId) || {}).teacher || m.teacher || 'ללא מורה';
           bucket(teacher).missed.set(m.key, m);
         });
