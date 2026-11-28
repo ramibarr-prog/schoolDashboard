@@ -481,10 +481,11 @@
       };
     }).sort((a, b) => b.concernScore - a.concernScore || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.key, b.key));
 
-    /* גימור משקפת 2 – מקצועות וקבוצות */
+    /* גימור משקפת 2 – מקצועות וקבוצות (מקצועות עם מדגם זעיר n < 4 נדחקים לתחתית כדי למנוע רעש) */
     const subjects = [...subjectMap.values()].map(s => {
       const avg = meanNum(s.scores);
       const failPct = s.studentCount ? Math.round((s.failCount / s.studentCount) * 100) : 0;
+      const smallSample = s.studentCount < 4;
       const groups = [...s.groups.values()].map(g => {
         const gAvg = meanNum(g.scores);
         const gFailPct = g.studentCount ? Math.round((g.failCount / g.studentCount) * 100) : 0;
@@ -494,8 +495,8 @@
       }).sort((a, b) => b.concernScore - a.concernScore || (a.avg ?? 999) - (b.avg ?? 999) || natural(a.teacher, b.teacher));
       const concernScore = failPct * 1.35 + (s.studentCount ? (s.missedCount / s.studentCount) * 18 : 0) + (avg != null ? Math.max(0, 68 - avg) * 0.7 : 0);
       const isCalm = s.failCount === 0 && s.missedCount === 0;
-      return { ...s, avg, failPct, groups, groupCount: groups.length, concernScore, isCalm };
-    }).sort((a, b) => b.concernScore - a.concernScore || a.coreOrder - b.coreOrder || natural(a.name, b.name));
+      return { ...s, avg, failPct, smallSample, groups, groupCount: groups.length, concernScore, isCalm };
+    }).sort((a, b) => Number(a.smallSample) - Number(b.smallSample) || b.concernScore - a.concernScore || a.coreOrder - b.coreOrder || natural(a.name, b.name));
 
     /* גימור משקפת 3 – חניכי קצה */
     edgeStudents.sort((a, b) =>
@@ -600,14 +601,16 @@
   weaknessRiskToggle() {
     const st = this.state.sadin;
     if (st.weakLens !== 'students') return;
-    if (st.weakRiskDraft) return SadinView.weaknessRiskClose.call(this, true);
-    const control = document.querySelector('#sadin-mode .weak-risk-control');
+    if (st.weakRiskDraft && $('weak-risk-popover')) return SadinView.weaknessRiskClose.call(this, true);
+    const control = document.querySelector('#sadin-mode .weak-risk-control, #sadin-table .weak-risk-control');
     if (!control) return;
-    st.weakRiskDraft = { ...weaknessRiskRules(this) };
-    control.insertAdjacentHTML('beforeend', riskPopover());
-    control.querySelector('[data-act="weaknessRiskToggle"]').setAttribute('aria-expanded', 'true');
+    st.weakRiskDraft = { ...(st.weakRiskDraft || weaknessRiskRules(this)) };
+    if (!$('weak-risk-popover')) control.insertAdjacentHTML('beforeend', riskPopover());
+    const trigger = control.querySelector('[data-act="weaknessRiskToggle"]');
+    if (trigger) trigger.setAttribute('aria-expanded', 'true');
     updateRiskPopover(this);
-    $('weak-risk-popover').focus();
+    const pop = $('weak-risk-popover');
+    if (pop) pop.focus();
   },
 
   weaknessRiskClose(restoreFocus = false) {
@@ -615,7 +618,7 @@
     this.state.sadin.weakRiskDraft = null;
     const pop = $('weak-risk-popover');
     if (pop) pop.remove();
-    const button = document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]');
+    const button = document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"], #sadin-table [data-act="weaknessRiskToggle"]');
     if (button) {
       button.setAttribute('aria-expanded', 'false');
       if (restoreFocus) button.focus();
@@ -626,25 +629,26 @@
   },
 
   weaknessRiskAdjust(el) {
-    const st = this.state.sadin, draft = st.weakRiskDraft, key = el.dataset.key, step = Number(el.dataset.step);
-    if (!draft || !['minFails', 'minMissed'].includes(key) || ![-1, 1].includes(step) ||
+    const st = this.state.sadin, key = el.dataset.key, step = Number(el.dataset.step);
+    const draft = st.weakRiskDraft || (st.weakRiskDraft = { ...weaknessRiskRules(this) });
+    if (!['minFails', 'minMissed'].includes(key) || ![-1, 1].includes(step) ||
         !validRiskRules({ ...draft, [key]: draft[key] + step })) {
       this.toast('הגדרת הסיכון שנבחרה אינה תקינה.', 'warn');
       return;
     }
     draft[key] += step;
-    updateRiskPopover(this);
+    if ($('weak-risk-popover')) updateRiskPopover(this);
     if (st.mode !== 'full' && st.weakLens === 'students' && Store.loaded.grades) {
       SadinView.renderWeakness.call(this, this.filtered(), st);
     }
   },
 
   weaknessRiskReset() {
-    if (!this.state.sadin.weakRiskDraft) return;
-    this.state.sadin.weakRiskDraft = { minFails: 1, minMissed: 1 };
-    updateRiskPopover(this);
-    if (this.state.sadin.mode !== 'full' && this.state.sadin.weakLens === 'students' && Store.loaded.grades) {
-      SadinView.renderWeakness.call(this, this.filtered(), this.state.sadin);
+    const st = this.state.sadin;
+    st.weakRiskDraft = { minFails: 1, minMissed: 1 };
+    if ($('weak-risk-popover')) updateRiskPopover(this);
+    if (st.mode !== 'full' && st.weakLens === 'students' && Store.loaded.grades) {
+      SadinView.renderWeakness.call(this, this.filtered(), st);
     }
   },
 
@@ -867,18 +871,27 @@
     const lens = ['classes', 'subjects', 'students'].includes(st.weakLens) ? st.weakLens : 'classes';
     st.weakLens = lens;
     if (early && lens !== 'students' && st.weakRiskDraft) st.weakRiskDraft = null;
-    const riskRules = early && lens === 'students' ? (st.weakRiskDraft || weaknessRiskRules(this)) : null;
-    const riskLabel = riskRules ? `סיכון: נכשל ${riskRules.minFails}+${riskRules.minMissed ? ` או החמצה ${riskRules.minMissed}+` : ' בלבד'}` : '';
-    const lensBtn = (id, label) => `<button type="button" role="tab" class="weak-lens-tab" data-act="weakLens" data-lens="${id}" aria-selected="${String(lens === id)}">${label}</button>`;
+    const lensIcons = {
+      classes: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="8" height="7" rx="2"/><rect x="13" y="4" width="8" height="7" rx="2"/><rect x="3" y="13" width="8" height="7" rx="2"/><rect x="13" y="13" width="8" height="7" rx="2"/></svg>',
+      subjects: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="3" x2="12" y2="21"/><rect x="4" y="6" width="8" height="4" rx="1.5"/><rect x="12" y="13" width="7" height="4" rx="1.5"/></svg>',
+      students: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>'
+    };
+    const lensBtn = (id, label, sub) => `<button type="button" role="tab" class="weak-lens-tab" data-act="weakLens" data-lens="${id}" aria-selected="${String(lens === id)}">
+      <span class="weak-lens-ic">${lensIcons[id]}</span>
+      <span class="weak-lens-copy"><strong>${label}</strong><small>${sub}</small></span>
+    </button>`;
     modeBox.className = early ? 'weak-toolbar' : 'flex flex-wrap gap-2 mb-2';
     modeBox.innerHTML = early
-      ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div>
-        <div class="weak-lenses" role="tablist" aria-label="משקפות מוקדי חולשה">
-          ${lensBtn('classes', 'כיתות אם')}${lensBtn('subjects', 'מקצועות וקבוצות')}${lensBtn('students', 'חניכי קצה')}
-        </div>
-        <div class="weak-controls">
-          ${lens === 'students' ? `<div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div>` : ''}
+      ? `<div class="weak-toolbar-head">
+          <div class="weak-title"><h1>מוקדי חולשה</h1><span class="weak-scope-pill">${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</span></div>
           <span class="weak-quality-slot"></span>
+        </div>
+        <div class="weak-lens-hero" role="tablist" aria-label="משקפות מוקדי חולשה">
+          <div class="weak-lenses">
+            ${lensBtn('classes', 'כיתות אם', 'איזו כיתה נחלשת')}
+            ${lensBtn('subjects', 'מקצועות וקבוצות', 'השוואת קבוצות ומורים')}
+            ${lensBtn('students', 'חניכי קצה', 'איתור חניכים שקופים')}
+          </div>
         </div>`
       : `<button type="button" class="nav-back" data-act="sadinMode" data-mode="early" data-back-weakness="1">→ חזרה למוקדי חולשה</button>`;
     if (home) home.alertButton.textContent = '🔔 התראות';
@@ -1007,7 +1020,7 @@
     return SadinView.renderWeaknessStudentsLens.call(this, data, st, activeRules, incompleteGroups);
   },
 
-  /** משקפת 1: כיתות אם — רשימה מדורגת מימין ופירוק סיבות משמאל */
+  /** משקפת 1: כיתות אם — כרטיסי דופק רכים מימין ופירוק ויזואלי ללא טבלאות משמאל */
   renderWeaknessClassesLens(data, st) {
     if (!data.classes.length) {
       setHtml('sadin-table', '<section class="card weak-card"><p class="weak-muted">אין כיתות אם זמינות בסינון הנוכחי.</p></section>');
@@ -1016,78 +1029,105 @@
     const selected = data.classes.find(c => c.key === st.weakClassKey) || data.classes[0];
     st.weakClassKey = selected.key;
     const cohortAvgTxt = data.cohortAvg == null ? '—' : Util.fmt(data.cohortAvg, 1);
-    const deltaChip = delta => {
+    const scoreTone = v => v == null ? 'is-muted' : v < 62 ? 'is-high' : v < 73 ? 'is-watch' : 'is-calm';
+    const deltaChip = (delta, suffix = '') => {
       if (delta == null || !Number.isFinite(delta)) return '';
       const cls = delta <= -2 ? 'is-neg' : delta >= 2 ? 'is-pos' : 'is-even';
-      return `<span class="weak-delta ${cls}">${E(fmtDelta(delta, ' מהשכבה'))}</span>`;
+      return `<span class="weak-delta ${cls}">${E(fmtDelta(delta, suffix))}</span>`;
     };
 
     const listHtml = data.classes.map(c => {
       const active = c.key === selected.key;
-      const avgTxt = c.avg == null ? '—' : Util.fmt(c.avg, 1);
-      const missedTxt = !c.hasGroups && !c.missedCount ? 'החמצות: —' : `${c.missedCount} החמצות`;
-      const tone = c.isCalm ? 'is-calm' : c.failPct >= 25 || (c.deltaFromCohort != null && c.deltaFromCohort <= -6) ? 'is-high' : 'is-watch';
-      return `<button type="button" class="weak-list-item ${tone}${active ? ' is-selected' : ''}" data-act="weakPickClass" data-class="${E(c.key)}" aria-pressed="${String(active)}">
-        <div class="weak-item-top">
-          <strong class="weak-item-title">${E(Config.classLabel(c.key))}</strong>
-          <div class="flex items-center gap-1.5">
-            <span class="weak-item-avg">ממוצע ${avgTxt}</span>
+      const avgTxt = c.avg == null ? '—' : Util.fmt(c.avg, 0);
+      const tone = c.isCalm ? 'is-calm' : c.failPct >= 22 || (c.deltaFromCohort != null && c.deltaFromCohort <= -6) ? 'is-high' : 'is-watch';
+      const sevW = c.isCalm ? 8 : Math.min(100, Math.max(18, Math.round(c.failPct * 1.4 + (c.gradedStudents ? (c.missedCount / c.gradedStudents) * 18 : 0))));
+      const subBits = c.isCalm
+        ? 'תקין'
+        : [c.failPct ? `${c.failPct}% נכשלים` : '', c.missedCount ? `${c.missedCount} החמצות` : ''].filter(Boolean).join(' · ') || 'מעקב';
+      return `<button type="button" class="weak-pebble ${tone}${active ? ' is-selected' : ''}" data-act="weakPickClass" data-class="${E(c.key)}" aria-pressed="${String(active)}">
+        <span class="weak-score-ring ${scoreTone(c.avg)}" aria-label="ממוצע כיתה">${avgTxt}</span>
+        <div class="weak-pebble-body">
+          <div class="weak-pebble-top">
+            <strong class="weak-item-title">${E(Config.classLabel(c.key))}</strong>
             ${deltaChip(c.deltaFromCohort)}
           </div>
-        </div>
-        <div class="weak-item-sub">
-          <span>${c.failPct}% נכשלים במקצועות</span>
-          <span>·</span>
-          <span>${E(missedTxt)}</span>
-          <span>·</span>
-          <span>${c.total} חניכים</span>
+          <div class="weak-mini-track" aria-hidden="true"><i class="weak-mini-fill ${tone}" style="width:${sevW}%"></i></div>
+          <span class="weak-pebble-cap">${E(subBits)} · ${c.total} חניכים</span>
         </div>
       </button>`;
     }).join('');
 
-    const subRows = selected.substantialSubjects.map(s => {
+    const hurtSubs = selected.substantialSubjects.filter(s => s.failCount > 0 || s.missedCount > 0);
+    const okSubs = selected.substantialSubjects.filter(s => s.failCount === 0 && s.missedCount === 0);
+    const maxImpact = Math.max(20, ...hurtSubs.map(s => s.failPct + s.missedCount * 6));
+    const impactBars = hurtSubs.map(s => {
+      const w = Math.min(100, Math.max(14, Math.round(((s.failPct + s.missedCount * 6) / maxImpact) * 100)));
+      const barTone = s.failPct >= 25 || s.missedCount >= 4 ? 'is-high' : 'is-watch';
       const sAvg = s.avg == null ? '—' : Util.fmt(s.avg, 1);
-      const missedCell = !selected.hasGroups && !s.missedCount ? '—' : s.missedCount;
-      const rowWarn = s.failPct >= 20 || s.missedCount >= 3;
-      return `<tr class="${rowWarn ? 'is-warn-row' : ''}">
-        <td class="font-semibold text-[#355747]">${E(s.name)}</td>
-        <td>${s.n}</td>
-        <td>${sAvg}</td>
-        <td>${s.failCount ? `<span class="text-[#C86432] font-semibold">${s.failPct}% (${s.failCount})</span>` : '0%'}</td>
-        <td>${missedCell}</td>
-      </tr>`;
+      const tags = [
+        s.failCount ? `${s.failCount} נכשלים (${s.failPct}%)` : '',
+        s.missedCount ? `${s.missedCount} החמצות` : ''
+      ].filter(Boolean).join(' · ');
+      return `<div class="weak-impact-row">
+        <div class="weak-impact-meta">
+          <strong class="weak-impact-name">${E(s.name)}</strong>
+          <span class="weak-impact-nums">ממוצע ${sAvg} · ${E(tags)}</span>
+        </div>
+        <div class="weak-impact-track"><i class="weak-impact-fill ${barTone}" style="width:${w}%"></i></div>
+      </div>`;
     }).join('');
+
+    const okPills = okSubs.length ? `<div class="weak-ok-section">
+      <span class="weak-ok-label">תקינים בכיתה:</span>
+      <div class="weak-ok-pills">${okSubs.map(s => `<span class="weak-ok-pill">${E(s.name)} <strong>${s.avg == null ? '—' : Util.fmt(s.avg, 0)}</strong></span>`).join('')}</div>
+    </div>` : '';
+
+    const failShare = selected.failedEvals + selected.missedCount > 0
+      ? Math.round((selected.failedEvals / (selected.failedEvals + selected.missedCount)) * 100) : 0;
+    const missShare = selected.failedEvals + selected.missedCount > 0 ? 100 - failShare : 0;
 
     const detailHtml = `
       <div class="weak-detail-head">
-        <div>
-          <h2>${E(Config.classLabel(selected.key))}</h2>
-          <p class="weak-muted">${selected.total} חניכים בכיתה · ממוצע שכבה להשוואה: ${cohortAvgTxt}</p>
+        <div class="flex items-center gap-3">
+          <span class="weak-score-ring is-lg ${scoreTone(selected.avg)}">${selected.avg == null ? '—' : Util.fmt(selected.avg, 1)}</span>
+          <div>
+            <h2>${E(Config.classLabel(selected.key))}</h2>
+            <p class="weak-muted">${selected.total} חניכים · ממוצע שכבה ${cohortAvgTxt} ${deltaChip(selected.deltaFromCohort, ' מהשכבה')}</p>
+          </div>
         </div>
         <button type="button" class="btn btn-primary" data-act="sadinCellSheet" data-class="${E(selected.key)}" data-subject="all">פתח בסדין</button>
       </div>
-      <div class="weak-pattern-box ${selected.isCalm ? 'is-calm' : 'is-alert'}">${E(selected.patternText)}</div>
-      <div class="weak-metrics">
-        <div><span>ממוצע כיתתי</span><strong>${selected.avg == null ? '—' : Util.fmt(selected.avg, 1)} ${deltaChip(selected.deltaFromCohort)}</strong></div>
-        <div><span>נכשלים במקצועות</span><strong>${selected.failPct}% (${selected.failedEvals}/${selected.subjectEvals})</strong></div>
-        <div><span>החמצות מאומתות</span><strong>${!selected.hasGroups && !selected.missedCount ? '—' : selected.missedCount}</strong></div>
+      <div class="weak-diag-strip ${selected.isCalm ? 'is-calm' : 'is-alert'}">
+        <p class="weak-pattern-text">${E(selected.patternText)}</p>
+        ${selected.failedEvals + selected.missedCount > 0 ? `
+          <div class="weak-balance">
+            <div class="weak-balance-labels">
+              <span>נכשלים: <strong>${selected.failPct}%</strong> (${selected.failedEvals})</span>
+              <span>החמצות מאומתות: <strong>${!selected.hasGroups && !selected.missedCount ? '—' : selected.missedCount}</strong></span>
+            </div>
+            <div class="weak-balance-bar" aria-hidden="true">
+              ${failShare ? `<i class="is-fail" style="width:${failShare}%"></i>` : ''}
+              ${missShare ? `<i class="is-miss" style="width:${missShare}%"></i>` : ''}
+            </div>
+          </div>` : ''}
       </div>
-      <h3 class="weak-sec-title">מקצועות מרכזיים בכיתה</h3>
-      ${subRows
-        ? `<div class="tbl-wrap"><table class="weak-sub-table"><thead><tr><th>מקצוע</th><th>חניכים</th><th>ממוצע</th><th>נכשלים</th><th>החמצות</th></tr></thead><tbody>${subRows}</tbody></table></div>`
-        : '<p class="weak-muted">אין מקצועות עם נוכחות כיתתית מספקת בנתונים הזמינים.</p>'}
-      ${selected.omittedSubjectsCount ? `<p class="weak-omitted-note">הושמטו ${selected.omittedSubjectsCount} מקצועות בחירה עם נוכחות זעירה בכיתה כדי למנוע רעש סטטיסטי.</p>` : ''}`;
+      <div class="weak-impact-wrap">
+        <h3 class="weak-sec-title">${hurtSubs.length ? 'מקצועות שמושכים את הכיתה למטה' : 'סטטוס מקצועות הכיתה'}</h3>
+        ${hurtSubs.length ? `<div class="weak-impact-list">${impactBars}</div>` : '<p class="weak-calm-banner">כל המקצועות המרכזיים בכיתה ללא נכשלים והחמצות.</p>'}
+        ${okPills}
+        ${selected.omittedSubjectsCount ? `<p class="weak-omitted-note">הושמטו ${selected.omittedSubjectsCount} מקצועות בחירה עם נוכחות זעירה בכיתה כדי למנוע רעש.</p>` : ''}
+      </div>`;
 
-    setHtml('sadin-table', `<div class="weak-split" data-weak-lens="classes">
+    setHtml('sadin-table', `<div class="weak-split weak-lens-enter" data-weak-lens="classes">
       <section class="card weak-card weak-list-pane" aria-label="דירוג כיתות אם">
-        <div class="weak-pane-head"><h2>כיתות אם בשכבה</h2><span class="weak-muted">${data.classes.length} כיתות · ממוצע שכבה ${cohortAvgTxt}</span></div>
+        <div class="weak-pane-head"><h2>כיתות אם</h2><span class="weak-muted">שכבה ${cohortAvgTxt}</span></div>
         <div class="weak-list">${listHtml}</div>
       </section>
       <section class="card weak-card weak-detail-pane" aria-label="פירוק סיבות לכיתה">${detailHtml}</section>
     </div>`);
   },
 
-  /** משקפת 2: מקצועות וקבוצות — רשימת מקצועות מימין ופירוק לקבוצות לימוד ומורים משמאל */
+  /** משקפת 2: מקצועות וקבוצות — קפסולות מקצוע מימין וציר פער "משיכת חבל" משמאל */
   renderWeaknessSubjectsLens(data, st) {
     const hasMajors = data.subjects.some(s => !s.isCore);
     const kind = hasMajors && ['all', 'core', 'major'].includes(st.weakSubjectKind) ? st.weakSubjectKind : 'all';
@@ -1101,6 +1141,7 @@
     const selected = filteredSubjects.find(s => s.name === st.weakSubjectKey) || filteredSubjects[0];
     st.weakSubjectKey = selected.name;
     const subAvgTxt = selected.avg == null ? '—' : Util.fmt(selected.avg, 1);
+    const scoreTone = v => v == null ? 'is-muted' : v < 62 ? 'is-high' : v < 73 ? 'is-watch' : 'is-calm';
 
     const kindPills = hasMajors ? `<div class="weak-sub-pills" role="group" aria-label="סינון סוג מקצוע">
       ${[['all', 'הכול'], ['core', 'ליבה'], ['major', 'מגמות']].map(([k, lbl]) =>
@@ -1110,79 +1151,109 @@
 
     const listHtml = filteredSubjects.map(s => {
       const active = s.name === selected.name;
-      const avgTxt = s.avg == null ? '—' : Util.fmt(s.avg, 1);
-      const missedTxt = s.uncertain && !s.missedCount ? 'החמצות: —' : `${s.missedCount} החמצות`;
-      const tone = s.isCalm ? 'is-calm' : s.failPct >= 25 ? 'is-high' : 'is-watch';
-      return `<button type="button" class="weak-list-item ${tone}${active ? ' is-selected' : ''}" data-act="weakPickSubject" data-subject="${E(s.name)}" aria-pressed="${String(active)}">
-        <div class="weak-item-top">
-          <strong class="weak-item-title">${E(s.name)}</strong>
-          <span class="weak-item-avg">ממוצע ${avgTxt}</span>
-        </div>
-        <div class="weak-item-sub">
-          <span>${s.failPct}% נכשלים</span>
-          <span>·</span>
-          <span>${E(missedTxt)}</span>
-          <span>·</span>
-          <span>${s.groupCount} קבוצות (${s.studentCount} חניכים)</span>
+      const avgTxt = s.avg == null ? '—' : Util.fmt(s.avg, 0);
+      const tone = s.smallSample ? 'is-small' : s.isCalm ? 'is-calm' : s.failPct >= 22 ? 'is-high' : 'is-watch';
+      const cap = s.smallSample
+        ? `מדגם קטן (${s.studentCount})`
+        : `${s.failPct}% נכשלים · ${s.groupCount} קבוצות`;
+      return `<button type="button" class="weak-pebble weak-subj-pebble ${tone}${active ? ' is-selected' : ''}" data-act="weakPickSubject" data-subject="${E(s.name)}" aria-pressed="${String(active)}">
+        <span class="weak-score-ring ${s.smallSample ? 'is-muted' : scoreTone(s.avg)}">${avgTxt}</span>
+        <div class="weak-pebble-body">
+          <div class="weak-pebble-top">
+            <strong class="weak-item-title">${E(s.name)}</strong>
+            ${s.smallSample ? `<span class="weak-small-tag">מדגם קטן (${s.studentCount})</span>` : ''}
+          </div>
+          <span class="weak-pebble-cap">${E(cap)}</span>
         </div>
       </button>`;
     }).join('');
 
+    /* מסקנה אוטומטית על פיזור הקבוצות במקצוע */
+    const deltas = selected.groups.map(g => g.deltaFromSubject).filter(d => d != null && Number.isFinite(d));
+    const spread = deltas.length >= 2 ? Math.max(...deltas) - Math.min(...deltas) : 0;
+    const maxAbsDelta = Math.max(10, ...deltas.map(d => Math.abs(d)));
+    let verdictText = 'קבוצה יחידה בשכבה', verdictTone = 'is-even';
+    if (selected.groups.length >= 2) {
+      if (spread >= 8) { verdictText = 'פער ממוקד בקבוצה ספציפית'; verdictTone = 'is-neg'; }
+      else if (selected.failPct >= 15 || selected.missedCount > 0) { verdictText = 'חולשה רוחבית בכל הקבוצות'; verdictTone = 'is-warn'; }
+      else { verdictText = 'יציבות רוחבית בכל הקבוצות'; verdictTone = 'is-pos'; }
+    }
+
     const groupCards = selected.groups.map(g => {
       const gAvgTxt = g.avg == null ? '—' : Util.fmt(g.avg, 1);
-      const deltaCls = g.deltaFromSubject == null ? '' : g.deltaFromSubject <= -3 ? 'is-neg' : g.deltaFromSubject >= 3 ? 'is-pos' : 'is-even';
-      const deltaHtml = g.deltaFromSubject != null && selected.groups.length > 1
-        ? `<span class="weak-delta ${deltaCls}">${E(fmtDelta(g.deltaFromSubject, ' מממוצע המקצוע'))}</span>`
+      const d = g.deltaFromSubject;
+      const pct = d != null && Number.isFinite(d) ? Math.min(100, Math.round((Math.abs(d) / maxAbsDelta) * 100)) : 0;
+      const isNeg = d != null && d < -0.2, isPos = d != null && d > 0.2;
+      const deltaCls = d == null ? 'is-even' : d <= -2.5 ? 'is-neg' : d >= 2.5 ? 'is-pos' : 'is-even';
+      const deltaHtml = d != null && selected.groups.length > 1
+        ? `<span class="weak-delta ${deltaCls}">${E(fmtDelta(d, ' מממוצע המקצוע'))}</span>`
         : '';
       const hasTeacher = g.teacher && g.teacher !== 'ללא מורה';
       const teachersJson = E(JSON.stringify(hasTeacher ? [g.teacher] : []));
-      return `<article class="weak-group-card">
+      return `<article class="weak-group-card${isNeg && Math.abs(d) >= 4 ? ' is-lag' : ''}">
         <div class="weak-group-top">
           <div>
             <strong class="weak-group-teacher">${E(g.teacher)}</strong>
             <span class="weak-group-id">${E(g.groupLabel)} · ${g.studentCount} חניכים</span>
           </div>
           <div class="flex flex-wrap items-center gap-1.5">
-            <span class="weak-item-avg">ממוצע ${gAvgTxt}</span>
+            <span class="weak-score-ring is-sm ${scoreTone(g.avg)}">${gAvgTxt}</span>
             ${deltaHtml}
           </div>
         </div>
-        <div class="weak-group-stats">
-          <span>נכשלים: <strong class="${g.failCount ? 'text-[#C86432]' : ''}">${g.failPct}% (${g.failCount}/${g.studentCount})</strong></span>
-          <span>החמצות מאומתות: <strong>${g.uncertain && !g.missedCount ? '—' : g.missedCount}</strong></span>
+        <div class="weak-tug" aria-label="פער קבוצה מממוצע המקצוע בשכבה">
+          <div class="weak-tug-half is-pos-side">${isPos ? `<i class="weak-tug-bar is-pos" style="width:${Math.max(8, pct)}%"></i>` : ''}</div>
+          <span class="weak-tug-mid" title="ממוצע המקצוע בשכבה: ${subAvgTxt}"></span>
+          <div class="weak-tug-half is-neg-side">${isNeg ? `<i class="weak-tug-bar is-neg" style="width:${Math.max(8, pct)}%"></i>` : ''}</div>
         </div>
-        <div class="weak-group-actions">
-          <button type="button" class="btn btn-primary btn-sm" data-act="sadinCellSheet" data-class="all" data-subject="${E(selected.name)}" data-teacher="${E(hasTeacher ? g.teacher : '')}">פתח בסדין</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-act="sadinCellAlerts" data-class="all" data-subject="${E(selected.name)}" data-group-id="${E(g.groupId)}" data-group-label="${E(g.groupLabel)}" data-teachers="${teachersJson}" ${hasTeacher ? '' : 'disabled title="אין מורה מזוהה בקבוצה"'}>התראה למורה</button>
+        <div class="weak-group-bottom">
+          <div class="weak-group-stats">
+            <span class="weak-mini-pill${g.failCount ? ' is-fail' : ''}">${g.failPct}% נכשלים (${g.failCount}/${g.studentCount})</span>
+            <span class="weak-mini-pill">${g.uncertain && !g.missedCount ? 'החמצות: —' : `${g.missedCount} החמצות`}</span>
+          </div>
+          <div class="weak-group-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-act="sadinCellSheet" data-class="all" data-subject="${E(selected.name)}" data-teacher="${E(hasTeacher ? g.teacher : '')}">פתח בסדין</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="sadinCellAlerts" data-class="all" data-subject="${E(selected.name)}" data-group-id="${E(g.groupId)}" data-group-label="${E(g.groupLabel)}" data-teachers="${teachersJson}" ${hasTeacher ? '' : 'disabled title="אין מורה מזוהה בקבוצה"'}>התראה למורה</button>
+          </div>
         </div>
       </article>`;
     }).join('');
 
-    setHtml('sadin-table', `<div class="weak-split" data-weak-lens="subjects">
+    setHtml('sadin-table', `<div class="weak-split weak-lens-enter" data-weak-lens="subjects">
       <section class="card weak-card weak-list-pane" aria-label="דירוג מקצועות בשכבה">
-        <div class="weak-pane-head"><h2>מקצועות בשכבה</h2>${kindPills}</div>
+        <div class="weak-pane-head"><h2>מקצועות</h2>${kindPills}</div>
         <div class="weak-list">${listHtml}</div>
       </section>
       <section class="card weak-card weak-detail-pane" aria-label="פירוק המקצוע לקבוצות ומורים">
         <div class="weak-detail-head">
-          <div>
-            <h2>${E(selected.name)}</h2>
-            <p class="weak-muted">ממוצע שכבתי במקצוע: ${subAvgTxt} · ${selected.failPct}% נכשלים (${selected.failCount}/${selected.studentCount} חניכים) · ${selected.groupCount} קבוצות לימוד</p>
+          <div class="flex items-center gap-3">
+            <span class="weak-score-ring is-lg ${scoreTone(selected.avg)}">${subAvgTxt}</span>
+            <div>
+              <div class="flex flex-wrap items-center gap-2">
+                <h2>${E(selected.name)}</h2>
+                <span class="weak-verdict-pill ${verdictTone}">${E(verdictText)}</span>
+              </div>
+              <p class="weak-muted">${selected.failPct}% נכשלים (${selected.failCount}/${selected.studentCount} חניכים) · ${selected.groupCount} קבוצות לימוד</p>
+            </div>
           </div>
         </div>
+        <div class="weak-tug-legend"><span>מעל ממוצע המקצוע</span><span>קו אמצע = ${subAvgTxt}</span><span>מתחת לממוצע המקצוע</span></div>
         <div class="weak-groups-list">${groupCards || '<p class="weak-muted">אין קבוצות לימוד מזוהות למקצוע זה.</p>'}</div>
       </section>
     </div>`);
   },
 
-  /** משקפת 3: חניכי קצה — צבירה שקטה מעל הסף והפרדת חניכים ללא ציונים כלל בתחתית */
+  /** משקפת 3: חניכי קצה — פקד סף פתוח במרכז + גריד כרטיסי רדאר + אזור מתקפל לללא ציונים */
   renderWeaknessStudentsLens(data, st, activeRules, incompleteGroups) {
     const subFilter = ['all', 'fails', 'missed'].includes(st.weakStudentFilter) ? st.weakStudentFilter : 'all';
     st.weakStudentFilter = subFilter;
+    const savedRules = weaknessRiskRules(this);
+    const hasUnsaved = activeRules.minFails !== savedRules.minFails || activeRules.minMissed !== savedRules.minMissed;
     const allEdge = data.edgeStudents;
     const failsList = allEdge.filter(s => s.fails >= activeRules.minFails);
     const missedList = allEdge.filter(s => s.missedCount > 0);
     const shown = subFilter === 'fails' ? failsList : subFilter === 'missed' ? missedList : allEdge;
+    const scoreTone = v => v == null ? 'is-muted' : v < 55 ? 'is-high' : v < 70 ? 'is-watch' : 'is-calm';
 
     const pills = [
       ['all', `הכול (${allEdge.length})`],
@@ -1190,48 +1261,70 @@
       ['missed', `החמצות (${missedList.length})`]
     ].map(([k, lbl]) => `<button type="button" class="hr-pill" data-act="weakStudentFilter" data-filter="${k}" aria-pressed="${String(subFilter === k)}">${lbl}</button>`).join('');
 
-    const rowsHtml = shown.map(s => {
+    const cardsHtml = shown.map(s => {
+      const avgTxt = s.overallAvg == null ? '—' : Util.fmt(s.overallAvg, 1);
+      const isAcute = (s.fails > 0 && s.missedCount > 0) || s.fails >= 2 || s.distinctFailTeachers >= 2;
       const failChips = s.failedSubjects.map(f =>
-        `<span class="weak-reason-chip is-fail">${E(f.name)} · ${Util.fmt(f.avg, 0)}</span>`
+        `<span class="weak-reason-chip is-fail">${E(f.name)} ${Util.fmt(f.avg, 0)}</span>`
       ).join('');
-      const spreadNote = s.distinctFailTeachers >= 2
-        ? `<span class="weak-reason-chip is-spread">מפוזר אצל ${s.distinctFailTeachers} מורים</span>` : '';
+      const missTip = s.missedSubjects.map(m => `${m.name} (${m.count})`).join(', ');
       const missChip = s.missedCount > 0
-        ? `<span class="weak-reason-chip is-miss">${s.missedCount} החמצות (${E(s.missedSubjects.map(m => m.name).join(', '))})</span>` : '';
-      return `<tr>
-        <td><button type="button" class="weak-name" data-act="openProfile" data-tz="${E(s.t.tz)}">${E(s.t.name)}</button></td>
-        <td>${E(Config.classLabel(s.t.classKey))}</td>
-        <td>${s.overallAvg == null ? '—' : Util.fmt(s.overallAvg, 1)}</td>
-        <td><div class="flex flex-wrap items-center gap-1">${failChips}${spreadNote}${missChip}</div></td>
-      </tr>`;
+        ? `<span class="weak-reason-chip is-miss" title="${E(missTip)}">${s.missedCount} החמצות</span>` : '';
+      const spreadChip = s.distinctFailTeachers >= 2
+        ? `<span class="weak-reason-chip is-spread">${s.distinctFailTeachers} מורים</span>` : '';
+      return `<article class="weak-radar-card${isAcute ? ' is-acute' : ''}">
+        <div class="weak-radar-head">
+          <span class="weak-score-ring ${scoreTone(s.overallAvg)}">${avgTxt}</span>
+          <div class="min-w-0 flex-1">
+            <button type="button" class="weak-radar-name" data-act="openProfile" data-tz="${E(s.t.tz)}">${E(s.t.name)}</button>
+            <span class="weak-radar-cls">${E(Config.classLabel(s.t.classKey))}</span>
+          </div>
+        </div>
+        <div class="weak-radar-tags">${failChips}${missChip}${spreadChip}</div>
+      </article>`;
     }).join('');
 
     const noGradesHtml = data.noGradesStudents.length ? `
       <details class="weak-nogrades">
         <summary>חניכים ללא ציונים כלל בשוטף (${data.noGradesStudents.length})</summary>
-        <p class="weak-muted mb-2">חניכים הרשומים במצבת שלגביהם לא דווח אף ציון שוטף ואף החמצה מאומתת — מופרדים כדי לא לעוות את רשימת הצבירה הפעילה.</p>
+        <p class="weak-muted mb-2">חניכים במצבת ללא אף ציון שוטף ואף החמצה מאומתת — מופרדים מהרדאר הפעיל.</p>
         <ul class="weak-nogrades-list">
           ${data.noGradesStudents.map(item => `<li><button type="button" class="weak-name" data-act="openProfile" data-tz="${E(item.t.tz)}">${E(item.t.name)}</button> <span class="weak-muted">(${E(Config.classLabel(item.classKey))})</span></li>`).join('')}
         </ul>
       </details>` : '';
 
-    const ruleSummary = `סף פעיל: נכשל ב-${activeRules.minFails}+ מקצועות${activeRules.minMissed > 0 ? ` או ${activeRules.minMissed}+ החמצות מאומתות` : ' (ללא ספירת החמצות)'}${incompleteGroups && activeRules.minMissed > 0 ? ' · החמצות דורשות קובץ קבוצות לשכבה' : ''}`;
+    const inlineStepper = (key, value, min, labelPrefix, labelSuffix) => `
+      <div class="weak-inline-step">
+        <span>${labelPrefix}</span>
+        <div class="weak-risk-stepper">
+          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="-1" ${value <= min ? 'disabled' : ''} aria-label="הפחתת ${labelSuffix}">−</button>
+          <span class="weak-risk-value" data-key="${key}">${key === 'minMissed' && value === 0 ? 'ללא' : value}</span>
+          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="1" ${value >= 5 ? 'disabled' : ''} aria-label="הגדלת ${labelSuffix}">+</button>
+        </div>
+        <span>${labelSuffix}</span>
+      </div>`;
 
-    setHtml('sadin-table', `<div class="weak-students-lens" data-weak-lens="students">
+    const riskSummaryLabel = `נכשל ${activeRules.minFails}+${activeRules.minMissed ? ` או החמצה ${activeRules.minMissed}+` : ' בלבד'}`;
+
+    setHtml('sadin-table', `<div class="weak-students-lens weak-lens-enter" data-weak-lens="students">
       <section class="card weak-card">
-        <div class="weak-detail-head mb-3">
-          <div>
-            <h2>חניכי קצה מעל סף הסיכון (${allEdge.length})</h2>
-            <p class="weak-muted">${E(ruleSummary)}</p>
+        <div class="weak-inline-risk">
+          <div class="weak-inline-risk-controls">
+            ${inlineStepper('minFails', activeRules.minFails, 1, 'נכשל ב־', 'מקצועות')}
+            <span class="weak-inline-or">או</span>
+            ${inlineStepper('minMissed', activeRules.minMissed, 0, 'החמיץ', 'הערכות')}
+            <button type="button" class="weak-risk-reset" data-act="weaknessRiskReset">איפוס</button>
+            ${hasUnsaved ? '<button type="button" class="btn btn-primary btn-sm" data-act="weaknessRiskApply">שמור סף</button>' : ''}
+            <span class="weak-risk-control"><button type="button" class="sr-only" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!(st.weakRiskDraft && $('weak-risk-popover'))}">${E(riskSummaryLabel)}</button></span>
           </div>
-          <div class="flex flex-wrap gap-1.5" role="group" aria-label="סינון חניכי קצה">${pills}</div>
+          <div class="weak-inline-risk-sub">
+            <span class="weak-muted">מאותרים <strong>${allEdge.length}</strong> חניכי קצה${incompleteGroups && activeRules.minMissed > 0 ? ' · החמצות דורשות קובץ קבוצות' : ''}</span>
+            <div class="flex flex-wrap gap-1.5" role="group" aria-label="סינון חניכי קצה">${pills}</div>
+          </div>
         </div>
-        <div class="tbl-wrap">
-          <table class="weak-edge-table">
-            <thead><tr><th>חניך</th><th>כיתת אם</th><th>ממוצע שוטף</th><th>סיבת איתור (נכשלים והחמצות)</th></tr></thead>
-            <tbody>${rowsHtml || '<tr><td colspan="4" class="text-center text-slate-500 py-8">אין חניכים פעילים העוברים את סף הסיכון שנבחר.</td></tr>'}</tbody>
-          </table>
-        </div>
+        ${shown.length
+          ? `<div class="weak-radar-grid">${cardsHtml}</div>`
+          : '<p class="weak-calm-banner mt-4">אין חניכים פעילים העוברים את סף הסיכון שנבחר.</p>'}
         ${noGradesHtml}
       </section>
     </div>`);

@@ -205,12 +205,12 @@ window.fetch = (input, options) => {
     check($id('sadin-table').querySelector('[data-weak-lens="subjects"]') && !document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
       `${label}: subjects lens has no student risk popover`);
 
-    /* משקפת 3: חניכי קצה — פקד סף הסיכון מופיע רק כאן והאוכלוסייה תואמת במדויק */
+    /* משקפת 3: חניכי קצה — פקד סף הסיכון הפתוח מופיע רק כאן וגריד כרטיסי הרדאר תואם במדויק */
     app.acts.weakLens.call(app, { dataset: { lens: 'students' } });
-    check(!!$id('sadin-table').querySelector('[data-weak-lens="students"]') && !!document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
-      `${label}: students lens exposes risk-rule control`);
-    const edgeRows = [...$id('sadin-table').querySelectorAll('.weak-edge-table [data-act="openProfile"]')].map(b => b.dataset.tz).sort();
-    same(edgeRows, expected.riskStudentTzs.slice().sort(), `${label}: students lens edge list matches exact risk population`);
+    check(!!$id('sadin-table').querySelector('[data-weak-lens="students"]') && !!$id('sadin-table').querySelector('.weak-inline-risk'),
+      `${label}: students lens exposes inline risk-rule control`);
+    const edgeRows = [...$id('sadin-table').querySelectorAll('.weak-radar-grid [data-act="openProfile"]')].map(b => b.dataset.tz).sort();
+    same(edgeRows, expected.riskStudentTzs.slice().sort(), `${label}: students lens radar cards match exact risk population`);
     SadinView.weaknessRiskToggle.call(app);
     const preview = document.querySelector('#weak-risk-popover .weak-risk-preview');
     check(preview && preview.textContent.includes(`${expected.riskClassesCount} מתוך ${expected.totalClassesCount} כיתות בסיכון · ${expected.riskStudentsCount} חניכים`), `${label}: risk-rule preview matches complete population`);
@@ -2070,13 +2070,15 @@ window.fetch = (input, options) => {
       check($id('sadin-table').querySelector('[data-weak-lens="classes"]') && weakNav.getAttribute('aria-selected') === 'true' &&
         sheetNav.getAttribute('aria-selected') === 'false', 'Weakness navigation opens the default homeroom-classes lens');
 
-      /* בדיקת משקפת 1 (כיתות אם): ניקוי רעש מגמה של חניך בודד (n=1 מתוך 5 בכיתה) וניווט לסדין כיתתי + חזרה */
+      /* בדיקת משקפת 1 (כיתות אם): פסי השפעה ויזואליים ללא טבלה, ניקוי רעש מגמה של חניך בודד (n=1 מתוך 5 בכיתה) וניווט לסדין כיתתי + חזרה */
       const clsBtn = [...$id('sadin-table').querySelectorAll('[data-act="weakPickClass"]')].find(b => b.dataset.class === 'יא1');
-      check(!!clsBtn, 'Class יא1 appears in classes lens');
+      check(!!clsBtn && clsBtn.classList.contains('weak-pebble'), 'Class יא1 appears as a visual pulse pebble in classes lens');
       clsBtn.click();
       const clsDetail = $id('sadin-table').querySelector('.weak-detail-pane');
-      check(clsDetail.textContent.includes('אנגלית') && !clsDetail.querySelector('.weak-sub-table').textContent.includes('פיזיקה') &&
-        clsDetail.textContent.includes('הושמטו 1 מקצועות בחירה'), 'Class breakdown shows substantial subjects and omits 1-student major with a quiet note');
+      check(!clsDetail.querySelector('table') && !!clsDetail.querySelector('.weak-impact-list') &&
+        clsDetail.querySelector('.weak-impact-list').textContent.includes('אנגלית') &&
+        !clsDetail.querySelector('.weak-impact-list').textContent.includes('פיזיקה') &&
+        clsDetail.textContent.includes('הושמטו 1 מקצועות בחירה'), 'Class breakdown uses visual impact bars (no table) and omits 1-student major with a quiet note');
       clsDetail.querySelector('[data-act="sadinCellSheet"]').click();
       same([app.state.sadin.mode, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
         ['full', 'all', 'all', 'יא1'], 'Class lens opens Sadin filtered strictly to that homeroom');
@@ -2109,19 +2111,18 @@ window.fetch = (input, options) => {
       same([app.state.sadin.mode, app.state.sadin.weakLens, app.state.sadin.weakSubjectKey],
         ['early', 'subjects', 'אנגלית'], 'Returning from Sadin restores subjects lens and selected subject');
 
-      /* בדיקת משקפת 3 (חניכי קצה): תגובת אמת לשינוי סף הסיכון והפרדת חניכים ללא ציונים כלל (T(7), T(8)) לאזור מתקפל סגור */
+      /* בדיקת משקפת 3 (חניכי קצה): פקד סף פתוח במרכז, גריד כרטיסי רדאר והפרדת חניכים ללא ציונים כלל (T(7), T(8)) */
       $id('sadin-mode').querySelector('[data-lens="students"]').click();
       const noGradesDetails = $id('sadin-table').querySelector('details.weak-nogrades');
       check(!!noGradesDetails && noGradesDetails.open === false && noGradesDetails.textContent.includes('(2)'),
         'Zero-grade students are separated into a collapsed footer section');
       same(tzsIn(noGradesDetails), [T(7), T(8)], 'Exactly the two students with no current grades appear in the zero-grade section');
-      const edgeTable = () => $id('sadin-table').querySelector('.weak-edge-table');
-      same(tzsIn(edgeTable()), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in main edge table without zero-grade students');
-      $id('sadin-mode').querySelector('[data-act="weaknessRiskToggle"]').click();
-      document.querySelector('#weak-risk-popover [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
-      same(tzsIn(edgeTable()), [T(1)], 'Adjusting minFails to 2+ immediately updates the live edge-students table (only T(1) has 2 fails)');
+      const radarGrid = () => $id('sadin-table').querySelector('.weak-radar-grid');
+      same(tzsIn(radarGrid()), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in radar cards without zero-grade students');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
+      same(tzsIn(radarGrid()), [T(1)], 'Inline minFails stepper (2+) immediately updates the live radar cards (only T(1) has 2 fails)');
       SadinView.weaknessRiskClose.call(app);
-      same(tzsIn(edgeTable()), [T(1), T(3)], 'Closing risk popover without applying restores saved threshold');
+      same(tzsIn(radarGrid()), [T(1), T(3)], 'Resetting/closing draft restores saved threshold');
 
       sheetNav.click();
       check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true' &&
