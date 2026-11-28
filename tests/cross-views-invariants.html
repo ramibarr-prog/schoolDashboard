@@ -205,12 +205,12 @@ window.fetch = (input, options) => {
     check($id('sadin-table').querySelector('[data-weak-lens="subjects"]') && !document.querySelector('#sadin-mode [data-act="weaknessRiskToggle"]'),
       `${label}: subjects lens has no student risk popover`);
 
-    /* משקפת 3: חניכי קצה — פקד סף הסיכון הפתוח מופיע רק כאן וגריד כרטיסי הרדאר תואם במדויק */
+    /* משקפת 3: חניכי קצה — גלולת סף הסיכון הפתוחה ושכבות העיטוף הגליות תואמות במדויק */
     app.acts.weakLens.call(app, { dataset: { lens: 'students' } });
     check(!!$id('sadin-table').querySelector('[data-weak-lens="students"]') && !!$id('sadin-table').querySelector('.weak-inline-risk'),
       `${label}: students lens exposes inline risk-rule control`);
-    const edgeRows = [...$id('sadin-table').querySelectorAll('.weak-radar-grid [data-act="openProfile"]')].map(b => b.dataset.tz).sort();
-    same(edgeRows, expected.riskStudentTzs.slice().sort(), `${label}: students lens radar cards match exact risk population`);
+    const edgeRows = [...$id('sadin-table').querySelectorAll('.weak-care-field [data-act="weakPickStudent"][data-tz]')].map(b => b.dataset.tz).sort();
+    same(edgeRows, expected.riskStudentTzs.slice().sort(), `${label}: students lens care pebbles match exact risk population`);
     SadinView.weaknessRiskToggle.call(app);
     const preview = document.querySelector('#weak-risk-popover .weak-risk-preview');
     check(preview && preview.textContent.includes(`${expected.riskClassesCount} מתוך ${expected.totalClassesCount} כיתות בסיכון · ${expected.riskStudentsCount} חניכים`), `${label}: risk-rule preview matches complete population`);
@@ -2111,21 +2111,29 @@ window.fetch = (input, options) => {
       same([app.state.sadin.mode, app.state.sadin.weakLens, app.state.sadin.weakSubjectKey],
         ['early', 'subjects', 'אנגלית'], 'Returning from Sadin restores subjects lens and selected subject');
 
-      /* בדיקת משקפת 3 (חניכי קצה): פקד סף פתוח במרכז, גריד כרטיסי רדאר והפרדת חניכים ללא ציונים כלל (T(7), T(8)) */
+      /* בדיקת משקפת 3 (חניכי קצה): גלולת סף חיה, שכבות עיטוף גליות, זרקור אישי והפרדת חניכים ללא ציונים כלל (T(7), T(8)) */
       $id('sadin-mode').querySelector('[data-lens="students"]').click();
       const noGradesDetails = $id('sadin-table').querySelector('details.weak-nogrades');
       check(!!noGradesDetails && noGradesDetails.open === false && noGradesDetails.textContent.includes('(2)'),
         'Zero-grade students are separated into a collapsed footer section');
       same(tzsIn(noGradesDetails), [T(7), T(8)], 'Exactly the two students with no current grades appear in the zero-grade section');
-      const radarGrid = () => $id('sadin-table').querySelector('.weak-radar-grid');
-      same(tzsIn(radarGrid()), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in radar cards without zero-grade students');
+      const careTzs = () => [...$id('sadin-table').querySelectorAll('.weak-care-field [data-act="weakPickStudent"][data-tz]')].map(b => b.dataset.tz).sort();
+      same(careTzs(), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in care layers without zero-grade students');
+      const pickT3 = $id('sadin-table').querySelector(`.weak-care-field [data-act="weakPickStudent"][data-tz="${T(3)}"]`);
+      check(!!pickT3, 'Student T(3) pebble is selectable in care layers');
+      pickT3.click();
+      const spotCta = $id('sadin-table').querySelector('.weak-spotlight-card [data-act="openProfile"]');
+      check(spotCta && spotCta.dataset.tz === T(3) && $id('sadin-table').querySelector('.weak-spotlight-meaning'),
+        'Clicking a care pebble updates the personal spotlight card and exposes its 360 profile CTA');
       check(!$id('sadin-table').querySelector('[data-act="weaknessRiskApply"], [data-act="weaknessRiskReset"]'),
         'Inline risk pill has no save or reset buttons — every +/- click is live');
       const prevToastCount = app.toasts.length;
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
-      same(tzsIn(radarGrid()), [T(1)], 'Inline minFails stepper (2+) immediately updates and persists the live radar cards');
+      same(careTzs(), [T(1)], 'Inline minFails stepper (2+) immediately updates and persists the live care layers');
+      same($id('sadin-table').querySelector('.weak-spotlight-card [data-act="openProfile"]').dataset.tz, T(1),
+        'Spotlight card automatically switches to remaining student when previous selection leaves threshold');
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]').click();
-      same(tzsIn(radarGrid()), [T(1), T(3)], 'Inline minFails stepper (1+) immediately restores live radar cards');
+      same(careTzs(), [T(1), T(3)], 'Inline minFails stepper (1+) immediately restores live care layers');
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="-1"]').click();
       const decFailsAtFloor = $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]');
       check(decFailsAtFloor && decFailsAtFloor.disabled === true, 'Decrementing minFails is disabled when minMissed is 0 so (0, 0) cannot be selected');

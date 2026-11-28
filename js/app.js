@@ -50,7 +50,7 @@ const App = {
     sadinSort: { key: 'class_name', dir: 'asc' },
     /* רוחבי עמודות שהמשתמש גרר בסדין (לפי מפתח עמודה: name / homeroom / avg / negatives / subj:... / evt:...) */
     sadinColWidths: {},
-    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all' },
+    sadin: { subject: 'all', teacher: 'all', view: 'sheet', mode: 'early', strip: 'all', alertBy: 'teacher', initials: false, weakLens: 'classes', weakClassKey: '', weakSubjectKey: '', weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null },
     profileTz: null,
     selectedSearchTz: null,
     /* חניך שחלונית "מפת שיבוצים" הצפה פתוחה עבורו במסך שיבוצים לתיקון (null = סגורה) */
@@ -1527,6 +1527,7 @@ const App = {
     weakPickSubject(el) { return SadinView.weakPickSubject.call(this, el); },
     weakSubjectKind(el) { return SadinView.weakSubjectKind.call(this, el); },
     weakStudentFilter(el) { return SadinView.weakStudentFilter.call(this, el); },
+    weakPickStudent(el) { return SadinView.weakPickStudent.call(this, el); },
     sadinSelectCell(el) { return SadinView.selectWeakness.call(this, el); },
     sadinCellEligibility(el) { return SadinView.openWeaknessEligibility.call(this, el); },
     sadinCellSheet(el) { return SadinView.openWeaknessSheet.call(this, el); },
@@ -1576,7 +1577,7 @@ const App = {
         Object.assign(this.state.sadin, {
           strip: strip || 'all', mode: !strip || strip === 'all' ? 'early' : 'full',
           subject: 'all', teacher: 'all', weakLens: 'classes', weakClassKey: '', weakSubjectKey: '',
-          weakSubjectKind: 'all', weakStudentFilter: 'all'
+          weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null
         });
         this.alertOut = []; this.dirty.add('sadin');
       }
@@ -1608,7 +1609,7 @@ const App = {
         weakLens: hasSubject ? 'subjects' : 'classes',
         weakClassKey: el.dataset.class || '',
         weakSubjectKey: el.dataset.subject || '',
-        weakSubjectKind: 'all', weakStudentFilter: 'all',
+        weakSubjectKind: 'all', weakStudentFilter: 'all', weakStudentTz: null,
         cell: { cls: el.dataset.class, subject: el.dataset.subject }
       });
       this.alertOut = [];
