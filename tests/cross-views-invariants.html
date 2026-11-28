@@ -251,9 +251,14 @@ window.fetch = (input, options) => {
           const text = Util.norm(name);
           return text === 'חינוך' || /^(?:מגדר|חנג|חינוך גופני)(?:$|[\s(/-])/.test(text);
         }));
-      const facts = subjects.map(s => sheetRiskFacts(row, s));
-      return (rules.minFails > 0 && facts.filter(f => f.fail).length >= rules.minFails) ||
-        (rules.minMissed > 0 && facts.reduce((n, f) => n + f.missed, 0) >= rules.minMissed);
+      const facts = subjects.map(s => {
+        const f = sheetRiskFacts(row, s);
+        const active = f.missed > 0 || (s.avg != null && !(s.avg === 0 && !f.fail && s.missed.size));
+        return { ...f, active };
+      });
+      const activeCount = facts.filter(f => f.active).length;
+      return activeCount > 0 && facts.filter(f => f.fail).length >= rules.minFails &&
+        facts.reduce((n, f) => n + f.missed, 0) >= rules.minMissed;
     }).map(r => r.t.tz).sort();
   };
   const kpiCounts = () => [...$id('bagrut-kpis').querySelectorAll('button.gstat[data-chip]')].map(b => ({ value: b.dataset.chip, n: Number(b.querySelector('span:last-child').textContent) }));
@@ -1967,7 +1972,7 @@ window.fetch = (input, options) => {
       same(SadinView.earlyWarningRows(app.overviewModel().list).map(r => r.t.tz).sort(), expected,
         'Relevant failures, missed events and social threshold only; routine and twelve-years excluded');
       const weakness = SadinView.getHotspotsSummary.call(app, app.overviewModel().list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
-      same(weakness.riskStudentTzs.slice().sort(), [T(1), T(2), T(3), T(5), T(6)], 'Weakness model: verified absence, social threshold, routine exclusion and twelve-year student');
+      same(weakness.riskStudentTzs.slice().sort(), [T(1), T(2), T(5), T(6)], 'Weakness model default (1+ fail, 0+ missed): social threshold, routine exclusion and twelve-year student');
       app.renderOverviewPanel();
       const cards = [...$id('overview-body').querySelectorAll('button.ov-card')];
       same(cards.map(c => c.dataset.go), ['groups', 'bagrut', 'sadin'], 'Exactly three tasks in priority order');
@@ -1978,10 +1983,14 @@ window.fetch = (input, options) => {
       same([app.state.sadin.mode, app.state.sadin.subject, app.state.sadin.teacher, app.state.sadin.strip], ['early', 'all', 'all', 'all'], 'Navigation resets stale local controls');
       checkWeaknessDestination(app, weakness, 'Three-task board');
       app.state.sadin.weakRiskRules = { minFails: 2, minMissed: 0 };
-      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs, [], 'Two failures required and missed events disabled');
-      app.state.sadin.weakRiskRules = { minFails: 2, minMissed: 1 };
-      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs.slice().sort(), [T(2), T(3)], 'Stricter failure threshold retains confirmed missed events');
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs, [], 'AND threshold (2, 0): requires two failures');
+      app.state.sadin.weakRiskRules = { minFails: 0, minMissed: 1 };
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs.slice().sort(), [T(2), T(3)], 'AND threshold (0, 1): requires at least one confirmed missed event');
       app.state.sadin.weakRiskRules = { minFails: 1, minMissed: 1 };
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs.slice().sort(), [T(2)], 'AND threshold (1, 1): requires both 1+ failure AND 1+ confirmed missed event');
+      app.state.sadin.weakRiskRules = { minFails: 0, minMissed: 0 };
+      same(SadinView.getHotspotsSummary.call(app, app.filtered()).riskStudentTzs.slice().sort(), [T(1), T(2), T(3), T(5), T(6), T(7)], 'AND threshold (0, 0): includes all active students while excluding routine-only student');
+      app.state.sadin.weakRiskRules = { minFails: 0, minMissed: 1 };
       same(errorsOf(app), [], 'No early-warning navigation error');
       world({ roster, sadin: sadinRows(events) });
       app.renderOverviewPanel();
@@ -2000,11 +2009,12 @@ window.fetch = (input, options) => {
       const row = n => sheet.find(r => r.t.tz === T(n));
       same([app.sadinSummary([row(3)]).cleanCount, app.sadinSummary([row(6)]).cleanCount, app.sadinSummary([row(7)]).cleanCount], [1, 0, 1], 'Full sheet: unverified absence, failing social score, passing social score');
       const fourClasses = roster.map((t, i) => ({ ...t, homeroom: i < 3 ? 'יב1' : i === 4 || i === 5 ? 'יב2' : i === 3 ? 'יב3' : 'יב4' }));
+      app.state.sadin.weakRiskRules = { minFails: 1, minMissed: 0 };
       world({ roster: fourClasses, groups, sadin: sadinRows(events) });
       app.evals.clear();
       const third = SadinView.getHotspotsSummary.call(app, app.overviewModel().list, { ...app.state.sadin, subject: 'all', teacher: 'all' });
       same([third.riskClassesCount, third.totalClassesCount], [2, 4], 'Top third includes exactly two risky classes out of four');
-      same(third.riskStudentTzs.slice().sort(), [T(1), T(2), T(3), T(5), T(6)], 'Risk population remains exact across classes');
+      same(third.riskStudentTzs.slice().sort(), [T(1), T(2), T(5), T(6)], 'Risk population remains exact across classes');
       app.renderOverviewPanel();
       const thirdCard = $id('overview-body').querySelector('.ov-card[data-go="sadin"]');
       checkWeaknessCard(thirdCard, third, 'Four classes');
@@ -2133,16 +2143,24 @@ window.fetch = (input, options) => {
       check(!$id('sadin-table').querySelector('[data-act="weaknessRiskApply"], [data-act="weaknessRiskReset"]'),
         'Inline risk pill has no save or reset buttons — every +/- click is live');
       const prevToastCount = app.toasts.length;
+      check($id('sadin-table').querySelector('.weak-risk-caption').textContent.includes('נכשל אחד לפחות'),
+        'Default (1, 0) caption explains the active AND threshold cleanly');
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
-      same(careTzs(), [T(1)], 'Inline minFails stepper (2+) immediately updates and persists the live care layers');
+      same(careTzs(), [T(1)], 'Inline minFails stepper (2, 0) immediately updates and persists the live care layers');
       same($id('sadin-table').querySelector('.weak-spotlight-card [data-act="openProfile"]').dataset.tz, T(1),
         'Spotlight card automatically switches to remaining student when previous selection leaves threshold');
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]').click();
-      same(careTzs(), [T(1), T(3)], 'Inline minFails stepper (1+) immediately restores live care layers');
-      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="-1"]').click();
-      const decFailsAtFloor = $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]');
-      check(decFailsAtFloor && decFailsAtFloor.disabled === true, 'Decrementing minFails is disabled when minMissed is 0 so (0, 0) cannot be selected');
-      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="1"]').click();
+      same(careTzs(), [T(1), T(3)], 'Inline minFails stepper (1, 0) immediately restores live care layers');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]').click();
+      same(careTzs(), [T(1), T(2), T(3), T(5), T(6)], 'Inline (0, 0) shows all active graded students while keeping zero-grade students separated');
+      const decFailsAtZero = $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]');
+      const decMissedAtZero = $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="-1"]');
+      check(decFailsAtZero && decFailsAtZero.disabled === true && decMissedAtZero && decMissedAtZero.disabled === true,
+        'Decrement buttons are disabled only when their own value is 0');
+      $id('sadin-table').querySelector(`.weak-care-field [data-act="weakPickStudent"][data-tz="${T(2)}"]`).click();
+      check($id('sadin-table').querySelector('.weak-spotlight-meaning').textContent.includes('ללא נכשלים או החמצות בשוטף'),
+        'Clean student in (0, 0) mode displays calm status message in personal spotlight');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
       same(app.toasts.length, prevToastCount, 'Rapid inline risk threshold adjustments produce zero error toasts');
 
       sheetNav.click();

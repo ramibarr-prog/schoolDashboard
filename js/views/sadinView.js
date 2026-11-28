@@ -25,7 +25,8 @@
   const isSocial = name => Util.norm(name) === Util.norm('מעורבות חברתית');
   const failingSubject = s => SignalEngine.subjectState(s, s.gradeKey, false).fail;
   const hasEventData = ev => ev && (ev.score != null || String(ev.scoreRaw || '').trim() !== '');
-  const RISK_RULES_KEY = 'schoolDashboard.hotspots.riskRules.v1';
+  const RISK_RULES_KEY = 'schoolDashboard.hotspots.riskRules.v2';
+  const DEFAULT_RISK_RULES = { minFails: 1, minMissed: 0 };
   const CORE_ORDER = ['math', 'english', 'hebrew', 'history', 'civics', 'literature', 'tanach'];
   const CORE_ALIASES = [
     ['מתמטיקה', 'חשבון'], ['אנגלית'], ['עברית', 'הבעה', 'לשון'],
@@ -42,8 +43,16 @@
     return rank >= 0 ? rank : CORE_ALIASES.findIndex(aliases => Util.matchKeywords(name, aliases));
   };
   const validRiskRules = rules => rules && Number.isInteger(rules.minFails) && rules.minFails >= 0 && rules.minFails <= 5 &&
-    Number.isInteger(rules.minMissed) && rules.minMissed >= 0 && rules.minMissed <= 5 &&
-    (rules.minFails > 0 || rules.minMissed > 0);
+    Number.isInteger(rules.minMissed) && rules.minMissed >= 0 && rules.minMissed <= 5;
+  function riskRuleCaption(rules) {
+    const f = rules.minFails, m = rules.minMissed;
+    if (f === 0 && m === 0) return 'מציג את כל החניכים הפעילים בשוטף (ללא סינון סף)';
+    if (f === 1 && m === 0) return 'מציג חניכים עם נכשל אחד לפחות';
+    if (f > 1 && m === 0) return `מציג חניכים עם ${f} נכשלים לפחות`;
+    if (f === 0 && m === 1) return 'מציג חניכים עם החמצה אחת לפחות';
+    if (f === 0 && m > 1) return `מציג חניכים עם ${m} החמצות לפחות`;
+    return `מציג חניכים עם ${f}+ נכשלים וגם ${m}+ החמצות`;
+  }
   function weaknessRiskRules(app) {
     const st = app.state.sadin;
     if (st.weakRiskRules) return st.weakRiskRules;
@@ -62,7 +71,7 @@
       }
       if (!validRiskRules(saved)) app.toast('הגדרת הסיכון השמורה אינה תקינה; נעשה שימוש בברירת המחדל.', 'warn');
     }
-    st.weakRiskRules = validRiskRules(saved) ? { minFails: saved.minFails, minMissed: saved.minMissed } : { minFails: 1, minMissed: 1 };
+    st.weakRiskRules = validRiskRules(saved) ? { minFails: saved.minFails, minMissed: saved.minMissed } : { ...DEFAULT_RISK_RULES };
     return st.weakRiskRules;
   }
 
@@ -84,7 +93,7 @@
       <h2 id="weak-risk-heading">מתי חניך נחשב בסיכון?</h2>
       ${stepper('minFails', 'נכשל לפחות ב-', 'מקצועות')}
       ${stepper('minMissed', 'הוחמצו לו לפחות', 'הערכות')}
-      <p class="weak-risk-help">מספיק שאחד התנאים יתקיים. ההגדרה חלה על כל המסך.</p>
+      <p class="weak-risk-help">שני התנאים חייבים להתקיים יחד (וגם). ההגדרה חלה על כל המסך.</p>
       <div class="weak-risk-preview" role="status" aria-live="polite"></div>
       <div class="weak-risk-actions"><button type="button" class="btn btn-primary btn-sm" data-act="weaknessRiskApply">החל</button>
       <button type="button" class="weak-risk-reset" data-act="weaknessRiskReset">איפוס לברירת מחדל</button></div></div>`;
@@ -99,7 +108,7 @@
     if (shift) pop.style.transform = `translateX(${shift}px)`;
     pop.querySelectorAll('.weak-risk-value').forEach(el => {
       const value = rules[el.dataset.key];
-      el.textContent = value === 0 ? 'ללא' : String(value);
+      el.textContent = `${value}+`;
     });
     pop.querySelectorAll('[data-act="weaknessRiskAdjust"]').forEach(el => {
       const key = el.dataset.key, step = Number(el.dataset.step);
@@ -183,7 +192,7 @@
     let missedTotal = 0, uncertain = false;
     GroupAnalyzer.sadinSheet(roster, st).forEach(row => Config.withRulesForGrade(row.t.gradeKey, () => {
       const hasGroups = prereqs.get(row.t.gradeKey).hasGroups, scores = [], classScores = [];
-      let fails = 0, missedForStudent = 0;
+      let fails = 0, missedForStudent = 0, activeSubjectCount = 0;
       row.subjects.forEach(s => {
         if (s.avg != null) scores.push(s.avg);
         if (excludedWeaknessSubject(s)) return;
@@ -195,6 +204,7 @@
         missedForStudent += missed;
         missedTotal += missed;
         if (!missed && (s.avg == null || (s.avg === 0 && !fail && s.missed.size))) return;
+        activeSubjectCount++;
         if (s.avg != null) classScores.push(s.avg);
         const key = JSON.stringify([row.t.classKey, s.name]);
         if (!cells.has(key)) cells.set(key, { cls: row.t.classKey, subject: s.name, students: [], scores: [], teachers: new Set(), missed: 0, uncertain: false });
@@ -223,7 +233,7 @@
       if (scores.length) averages.push(scores.reduce((a, b) => a + b, 0) / scores.length);
       const cls = classes.get(row.t.classKey);
       if (classScores.length) cls.scores.push(classScores.reduce((a, b) => a + b, 0) / classScores.length);
-      if ((rules.minFails > 0 && fails >= rules.minFails) || (rules.minMissed > 0 && missedForStudent >= rules.minMissed)) { cls.risk++; riskTzs.add(row.t.tz); }
+      if (activeSubjectCount > 0 && fails >= rules.minFails && missedForStudent >= rules.minMissed) { cls.risk++; riskTzs.add(row.t.tz); }
     }));
     const list = [...cells.values()];
     list.forEach(c => { c.risk = c.students.filter(s => s.risk).length; c.rate = c.risk / c.students.length * 100; });
@@ -437,7 +447,7 @@
           if (fails > 0) cls.studentsWithFail++;
         }
 
-        const meetsRisk = (rules.minFails > 0 && fails >= rules.minFails) || (rules.minMissed > 0 && missedForStudent >= rules.minMissed);
+        const meetsRisk = fails >= rules.minFails && missedForStudent >= rules.minMissed;
         if (meetsRisk) {
           edgeStudents.push({
             t, overallAvg: studentMean, fails, missedCount: missedForStudent,
@@ -672,12 +682,12 @@
   weaknessRiskReset() {
     const st = this.state.sadin;
     if ($('weak-risk-popover')) {
-      st.weakRiskDraft = { minFails: 1, minMissed: 1 };
+      st.weakRiskDraft = { ...DEFAULT_RISK_RULES };
       updateRiskPopover(this);
       return;
     }
     st.weakRiskDraft = null;
-    saveWeaknessRiskRules(this, { minFails: 1, minMissed: 1 });
+    saveWeaknessRiskRules(this, { ...DEFAULT_RISK_RULES });
     if (st.mode !== 'full' && st.weakLens === 'students' && Store.loaded.grades) {
       SadinView.renderWeakness.call(this, this.filtered(), st);
     }
@@ -1371,6 +1381,10 @@
     /* סיווג חניכי הקצה הפעילים ל-3 שכבות עיטוף גליות רכות (שכבה ריקה מוסתרת) */
     const tierImmediate = [], tierReach = [], tierWatch = [];
     shown.forEach(s => {
+      if (s.fails === 0 && s.missedCount === 0) {
+        tierWatch.push(s);
+        return;
+      }
       const severe = (s.fails > 0 && s.missedCount > 0) || s.distinctFailTeachers >= 2 || s.fails >= 2 || (s.overallAvg != null && s.overallAvg < 52);
       const medium = s.missedCount >= 2 || (s.overallAvg != null && s.overallAvg < 65);
       if (severe) tierImmediate.push(s);
@@ -1412,6 +1426,9 @@
     }).join('');
 
     const pedagogicalMeaning = s => {
+      if (s.fails === 0 && s.missedCount === 0) {
+        return 'ללא נכשלים או החמצות בשוטף — תמונת מצב תקינה.';
+      }
       if (s.fails > 0 && s.missedCount > 0 && s.distinctFailTeachers >= 2) {
         return `צבירה שקטה אצל ${s.distinctFailTeachers} מורים לצד החמצות — כדאי ליזום שיחה אישית ועיטוף.`;
       }
@@ -1443,6 +1460,8 @@
         ? `<span class="weak-reason-chip is-miss" title="${E(missTip)}">${selected.missedCount} החמצות</span>` : '';
       const spreadChip = selected.distinctFailTeachers >= 2
         ? `<span class="weak-reason-chip is-spread">${selected.distinctFailTeachers} מורים</span>` : '';
+      const calmChip = !failChips && !missChip && !spreadChip
+        ? '<span class="weak-reason-chip is-calm">תמונת מצב תקינה</span>' : '';
       spotlightHtml = `<aside class="card weak-card weak-spotlight-card" aria-label="מבט אישי ועוטף">
         ${cornerLeafSvg}
         <span class="weak-spotlight-kicker">מבט אישי ועוטף</span>
@@ -1452,7 +1471,7 @@
           <strong>${avgTxt}</strong>
           <span>ממוצע שוטף</span>
         </div>
-        <div class="weak-radar-tags weak-spotlight-tags">${failChips}${missChip}${spreadChip}</div>
+        <div class="weak-radar-tags weak-spotlight-tags">${failChips}${missChip}${spreadChip}${calmChip}</div>
         ${selected.missedCount > 0 && missTip ? `<p class="weak-spotlight-miss-note">החמצות ב: ${E(missTip)}</p>` : ''}
         <div class="weak-spotlight-meaning">${E(pedagogicalMeaning(selected))}</div>
         <button type="button" class="btn btn-primary weak-spotlight-cta" data-act="openProfile" data-tz="${E(selected.t.tz)}">פתח כרטיס 360°</button>
@@ -1468,34 +1487,31 @@
         </ul>
       </details>` : '';
 
-    const inlineStepper = (key, value, labelPrefix, labelSuffix) => {
-      const canDec = validRiskRules({ ...activeRules, [key]: value - 1 });
-      const canInc = validRiskRules({ ...activeRules, [key]: value + 1 });
+    const inlineStepper = (key, value, label) => {
+      const canDec = value > 0;
+      const canInc = value < 5;
       return `<div class="weak-inline-step">
-        <span>${labelPrefix}</span>
+        <span class="weak-inline-lbl">${label}</span>
         <div class="weak-risk-stepper">
-          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="-1" ${canDec ? '' : 'disabled'} aria-label="הפחתת ${labelSuffix}">−</button>
-          <span class="weak-risk-value" data-key="${key}">${value === 0 ? 'ללא' : value}</span>
-          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="1" ${canInc ? '' : 'disabled'} aria-label="הגדלת ${labelSuffix}">+</button>
+          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="-1" ${canDec ? '' : 'disabled'} aria-label="הפחתת ${label}">−</button>
+          <span class="weak-risk-value" data-key="${key}">${value}+</span>
+          <button type="button" data-act="weaknessRiskAdjust" data-key="${key}" data-step="1" ${canInc ? '' : 'disabled'} aria-label="הגדלת ${label}">+</button>
         </div>
-        <span>${labelSuffix}</span>
       </div>`;
     };
 
-    const riskSummaryLabel = [
-      activeRules.minFails ? `נכשל ${activeRules.minFails}+` : '',
-      activeRules.minMissed ? `החמצה ${activeRules.minMissed}+` : ''
-    ].filter(Boolean).join(' או ');
+    const captionText = riskRuleCaption(activeRules);
 
     setHtml('sadin-table', `<div class="weak-students-lens weak-lens-enter" data-weak-lens="students">
       <div class="weak-inline-risk">
         <div class="weak-inline-risk-controls">
-          ${inlineStepper('minFails', activeRules.minFails, 'נכשל ב־', 'מקצועות')}
-          <span class="weak-inline-or">או</span>
-          ${inlineStepper('minMissed', activeRules.minMissed, 'החמיץ', 'הערכות')}
-          <span class="weak-risk-control"><button type="button" class="sr-only" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!(st.weakRiskDraft && $('weak-risk-popover'))}">${E(riskSummaryLabel)}</button></span>
+          ${inlineStepper('minFails', activeRules.minFails, 'נכשלים')}
+          <span class="weak-inline-or">וגם</span>
+          ${inlineStepper('minMissed', activeRules.minMissed, 'החמצות')}
+          <span class="weak-risk-control"><button type="button" class="sr-only" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!(st.weakRiskDraft && $('weak-risk-popover'))}">${E(captionText)}</button></span>
         </div>
       </div>
+      <p class="weak-risk-caption" role="status" aria-live="polite">${E(captionText)}</p>
       <div class="weak-radar-bar">
         <span class="weak-muted">מאותרים <strong>${allEdge.length}</strong> חניכי קצה${incompleteGroups && activeRules.minMissed > 0 ? ' · החמצות דורשות קובץ קבוצות' : ''}</span>
         <div class="flex flex-wrap gap-1.5" role="group" aria-label="סינון חניכי קצה">${pills}</div>

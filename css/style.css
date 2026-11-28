@@ -494,8 +494,8 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-risk-stepper button:focus-visible, .weak-risk-reset:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
 .weak-risk-value {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 2.8rem; text-align: center; font-weight: 800; color: var(--forest);
-  font-variant-numeric: tabular-nums;
+  width: 2.6rem; flex: 0 0 2.6rem; text-align: center;
+  font-weight: 800; color: var(--forest); font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .weak-risk-popover { position: absolute; top: calc(100% + .5rem); left: 0; z-index: 40; width: min(24rem, calc(100vw - 2rem)); max-height: 75vh; overflow-y: auto; padding: 1rem; text-align: right; }
 .weak-risk-popover h2 { margin: 0 0 .75rem; color: var(--forest); font-size: 1rem; font-weight: 700; }
@@ -789,8 +789,13 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
   display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
   gap: .5rem .85rem; font-size: .85rem; color: var(--ink); font-weight: 600;
 }
-.weak-inline-step { display: inline-flex; align-items: center; gap: .4rem; }
-.weak-inline-or { padding: .14rem .6rem; border-radius: 999px; background: #F2F5F1; color: var(--forest); font-size: .74rem; font-weight: 700; }
+.weak-inline-step { display: inline-flex; align-items: center; gap: .45rem; flex-shrink: 0; white-space: nowrap; }
+.weak-inline-lbl { flex-shrink: 0; white-space: nowrap; }
+.weak-inline-or { padding: .14rem .62rem; border-radius: 999px; background: #F2F5F1; color: var(--forest); font-size: .75rem; font-weight: 700; flex-shrink: 0; white-space: nowrap; }
+.weak-risk-caption {
+  margin: .45rem 0 0; min-height: 1.5rem; line-height: 1.5rem;
+  text-align: center; color: var(--muted); font-size: .8rem; font-weight: 600;
+}
 .weak-radar-bar {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   gap: .6rem; margin-top: .95rem; padding: 0 .25rem;
@@ -873,6 +878,7 @@ body.sadin-active.sadin-weak-active #localControls { display: none; }
 .weak-reason-chip.is-fail { background: #FCE5DA; color: #9F3E17; }
 .weak-reason-chip.is-spread { background: #ECE4F6; color: #54387A; }
 .weak-reason-chip.is-miss { background: #FCEEC9; color: #7C510E; cursor: help; }
+.weak-reason-chip.is-calm { background: #E3F1E6; color: #2B4D3C; }
 .weak-nogrades {
   padding: .8rem 1.15rem; border: none; border-radius: 22px; background: #F4EFE3;
 }
