@@ -998,7 +998,7 @@ window.fetch = (input, options) => {
 
           click(rowEl(T(109)).children[1]);
           click(pop().querySelector('.sm-tile-missing'));
-          check(modalOpen() && $id('modal-root').textContent.includes('בדיקת קבוצות יעד במקצוע') && !!pop(), 'Clicking a tile opens the group comparison above the map without closing it');
+          check(modalOpen() && !!$id('modal-root').querySelector('.ti-card') && !$id('modal-root').textContent.includes('אין חניכים מכיתתו') && !$id('modal-root').textContent.includes('כיתות יעד') && !!pop(), 'Clicking a tile opens the cleaned group comparison above the map without closing it');
           $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           check(!modalOpen() && !!pop(), 'Escape closes the comparison modal first and keeps the map');
           $id('stage').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -2067,13 +2067,16 @@ window.fetch = (input, options) => {
       check(sheetAction && sheetAction.textContent.includes('פתח בסדין'), 'Selected heatmap cell offers open in sheet');
       sheetAction.click();
       same([app.state.sadin.mode, app.state.sadin.view, app.state.sadin.subject, app.state.sadin.teacher, app.state.filters.cls],
-        ['full', 'sheet', 'אנגלית', 'all', 'יא1'], 'Cell opens the matching class and subject without stale teacher filter');
+        ['full', 'sheet', 'אנגלית', 'מיכל בדיקה', 'יא1'], 'Cell opens the matching class, subject and single teacher in sheet');
+      const backBtn = $id('sadin-mode') && $id('sadin-mode').querySelector('[data-back-weakness="1"]');
+      if (backBtn) check(backBtn.classList.contains('nav-back') && backBtn.textContent.includes('→'), 'Back to weakness button uses unified RTL nav-back style');
       check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true',
         'Cell opens sheet matrix and selects sheet navigation');
       same(tzsIn($id('sadin-table')), [T(1), T(2)], 'Sheet contains the selected homeroom');
       check($id('sadin-table').querySelector('[data-ck="subj:אנגלית"]') && !$id('sadin-table').querySelector('[data-ck="subj:מתמטיקה"]'),
         'Sheet is filtered to the selected subject');
       app.state.sadin.subject = 'all';
+      app.state.sadin.teacher = 'all';
       app.state.filters.cls = 'all';
       app.renderSadinPanel();
       const overview = app.overviewModel();

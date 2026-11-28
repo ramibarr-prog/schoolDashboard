@@ -284,6 +284,19 @@
 
   sadinMode(el, preserveFilter = false) {
     if (el.dataset.mode === 'full') SadinView.weaknessRiskClose.call(this);
+    if (el.dataset.mode === 'early' && el.dataset.backWeakness && this._weaknessBackState) {
+      const prev = this._weaknessBackState;
+      this._weaknessBackState = null;
+      this.state.filters.grade = prev.grade;
+      this.state.filters.cls = prev.cls;
+      this.state.filters.track = prev.track;
+      Object.assign(this.state.sadin, { mode: 'early', strip: 'all', subject: prev.subject, teacher: prev.teacher });
+      this.syncFilters();
+      this.onFilterChange();
+      this.showTab('sadin');
+      return;
+    }
+    if (el.dataset.mode === 'early') this._weaknessBackState = null;
     this.state.sadin.mode = el.dataset.mode;
     if (el.dataset.mode === 'full') this.state.sadin.view = 'sheet';
     if (!preserveFilter) this.state.sadin.strip = 'all';
@@ -381,10 +394,19 @@
   },
 
   openWeaknessSheet(el) {
+    this._weaknessBackState = {
+      grade: this.state.filters.grade, cls: this.state.filters.cls, track: this.state.filters.track,
+      subject: this.state.sadin.subject, teacher: this.state.sadin.teacher
+    };
+    let teachers = [];
+    try { teachers = el.dataset.teachers ? JSON.parse(el.dataset.teachers) : []; } catch (e) { teachers = []; }
+    const teacher = this.state.sadin.teacher && this.state.sadin.teacher !== 'all'
+      ? this.state.sadin.teacher
+      : teachers.length === 1 ? teachers[0] : 'all';
     this.rememberScreenFilters();
     this.resetOverviewDrillFilters();
     this.state.filters.cls = el.dataset.class;
-    Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: el.dataset.subject, teacher: 'all' });
+    Object.assign(this.state.sadin, { mode: 'full', view: 'sheet', strip: 'all', subject: el.dataset.subject, teacher });
     this.onFilterChange();
     this.showTab('sadin');
   },
@@ -528,8 +550,8 @@
     modeBox.innerHTML = early
       ? `<div class="weak-title"><h1>מוקדי חולשה</h1><p>${grade === 'all' ? 'כל השכבות' : `שכבה ${E(Util.gl(grade))}`}</p></div><div class="weak-controls">
         <div class="weak-risk-control"><button type="button" class="weak-risk-trigger" data-act="weaknessRiskToggle" aria-haspopup="dialog" aria-controls="weak-risk-popover" aria-expanded="${!!st.weakRiskDraft}">${E(riskLabel)} <span aria-hidden="true">▾</span></button>${st.weakRiskDraft ? riskPopover() : ''}</div></div>
-        <button type="button" class="btn btn-ghost btn-sm weak-sheet-button" data-act="sadinMode" data-mode="full">סדין מלא</button><span class="weak-quality-slot"></span>`
-      : `<button type="button" class="btn btn-ghost btn-sm" data-act="sadinMode" data-mode="early">חזרה למוקדי חולשה</button>`;
+        <span class="weak-quality-slot"></span>`
+      : `<button type="button" class="nav-back" data-act="sadinMode" data-mode="early" data-back-weakness="1">→ חזרה למוקדי חולשה</button>`;
     if (early && home) {
       const controls = modeBox.querySelector('.weak-controls');
       const riskControl = controls.querySelector('.weak-risk-control');
@@ -661,7 +683,7 @@
       return `<h3>${E(selected.subject)} · ${E(Config.classLabel(selected.cls))}</h3><p class="weak-muted">מורים: ${E([...selected.teachers].sort(natural).join(', ') || 'לא ידוע')}</p>
         <div class="weak-metrics"><div><span>ממוצע</span><strong>${mean(selected.scores)}</strong></div><div><span>בסיכון</span><strong>${selected.risk} מתוך ${selected.students.length}</strong></div><div><span>הוחמצו</span><strong>${selected.uncertain && !selected.missed ? '—' : selected.missed}</strong></div></div>
         <h4>חניכים בסיכון</h4><ul class="weak-students">${list || '<li>אין חניכים בסיכון בתא</li>'}</ul>${students.length > 10 ? `<p class="weak-muted">ועוד ${students.length - 10} חניכים</p>` : ''}
-        <div class="weak-detail-actions"><button type="button" class="btn btn-primary weak-primary" data-act="sadinCellSheet" ${attrs(selected)}>פתח בסדין</button>
+        <div class="weak-detail-actions"><button type="button" class="btn btn-primary weak-primary" data-act="sadinCellSheet" ${attrs(selected)} data-teachers="${E(JSON.stringify([...selected.teachers].sort(natural)))}">פתח בסדין</button>
         <button type="button" class="btn btn-ghost" data-act="sadinCellAlerts" ${attrs(selected)} data-teachers="${E(JSON.stringify([...selected.teachers].sort(natural)))}" ${selected.teachers.size ? '' : 'disabled title="אין מורה מזוהה בתא"'}>שלח התראה למורה</button></div>`;
     })() : '<p class="weak-muted">אין נתונים זמינים לבחירת תא בסינון הנוכחי.</p>';
     const prereqs = [...prerequisitesByGrade(roster).values()];

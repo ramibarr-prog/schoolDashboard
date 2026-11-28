@@ -871,13 +871,14 @@
         const isSpec = Config.isSpecialEdClass(c);
         const nick = rawClassNames[c] || Config.nickname(c);
         const selected = this.state.hrOpenClass === c;
+        const flashed = this._hrFlashClass === c;
         const statusHtml = isGhost
           ? `<span class="hr-status is-ghost">${isDormant ? 'כיתת רפאים · ריקה' : 'כיתת רפאים'}</span>${isReview ? '<span class="hr-status is-warn">לתיקון</span>' : ''}`
           : isReview ? '<span class="hr-status is-warn">לתיקון</span>' : '<span class="hr-status is-ok">תקין</span>';
         const delBtn = isGhost && members.length === 0
           ? `<button type="button" class="hr-pebble-del" data-act="hrDeleteGhostClass" data-class="${E(c)}" title="מחיקת כיתת רפאים ריקה" aria-label="${E(`מחיקת כיתת רפאים ${c}`)}">✕</button>`
           : '';
-        return `<div class="hr-pebble${isGhost ? ' is-ghost' : ''}${isDormant ? ' is-dormant' : ''}${isReview ? ' is-review' : ''}${selected ? ' is-selected' : ''}"
+        return `<div class="hr-pebble${isGhost ? ' is-ghost' : ''}${isDormant ? ' is-dormant' : ''}${isReview ? ' is-review' : ''}${selected ? ' is-selected' : ''}${flashed ? ' is-just-updated' : ''}"
           role="button" tabindex="0" data-act="hrOpenClass" data-class="${E(c)}" data-drop-class="${E(c)}" aria-expanded="${String(selected)}">
           <div class="hr-pebble-top">
             <div>
@@ -1221,6 +1222,14 @@
     RulesView.hrSelectedSet.call(this).clear();
     const pulled = RulesView.hrPulledSet.call(this);
     items.forEach(item => pulled.delete(item.tz));
+    if (target !== '__hide__') {
+      this._hrFlashClass = target;
+      clearTimeout(this._hrFlashTimer);
+      this._hrFlashTimer = setTimeout(() => {
+        this._hrFlashClass = null;
+        document.querySelectorAll('#hrLanesHost .hr-pebble.is-just-updated').forEach(el => el.classList.remove('is-just-updated'));
+      }, 1200);
+    }
     this.afterDataChange();
     const label = target === '__hide__' ? 'הועברו למוסתרים' : `שויכו לכיתה ${Config.classLabel(target)}`;
     this.toast(`${res.applied} חניכים ${label}`, 'ok');

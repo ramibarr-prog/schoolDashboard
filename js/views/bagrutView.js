@@ -1292,9 +1292,9 @@
     const cohort = gk => ` • ${E(Config.getCohortNameForGrade(gk))}`;
     const grade = this.state.filters.grade;
     box.innerHTML = `<div class="bagrut-toolbar${this.state.tab === 'bagrut' ? '' : ' hidden'}" data-bagrut-only>
-      <div class="bagrut-title"><h1>זכאות לבגרות</h1><span class="bagrut-grade">${grade === 'all' ? 'כל השכבות' : `שכבת ${E(Util.gl(grade))}`}</span></div>
+      <div class="bagrut-title">${this.state.bagrut.targets ? '<button type="button" class="nav-back" data-act="bagrutTargets" aria-pressed="true">→ חזרה לזכאות</button>' : ''}<h1>זכאות לבגרות</h1><span class="bagrut-grade">${grade === 'all' ? 'כל השכבות' : `שכבת ${E(Util.gl(grade))}`}</span></div>
       <div class="bagrut-controls"><span class="bagrut-subject-slot"></span>
-        <button type="button" class="btn btn-ghost btn-sm bagrut-tool" data-act="bagrutTargets" aria-pressed="${!!this.state.bagrut.targets}">${this.state.bagrut.targets ? 'חזרה לזכאות' : 'יעד 30% וייצוא'}</button>
+        ${this.state.bagrut.targets ? '' : '<button type="button" class="btn btn-ghost btn-sm bagrut-tool" data-act="bagrutTargets" aria-pressed="false">יעד 30% וייצוא</button>'}
         <span class="bagrut-simulation-slot"></span><span class="bagrut-quality-slot"></span></div></div>
       <div class="scope-bar bagrut-legacy-scope" role="group" aria-label="היקף שכבות בצפי הזכאות" hidden>
       ${pill('12', `🎓 שכבת י"ב${cohort('יב')}`)}${pill('11', `📈 שכבת י"א${cohort('יא')}`)}${pill('10', `🌱 שכבת י'${cohort('י')}`)}${pill('all', '📋 כל השכבות')}</div>`;
@@ -1622,7 +1622,7 @@
   /** פס מוכנות למקצוע הנוכחי: חזרה, ממוצע שוטף, סינון מהיר, מתגים והשוואת כיתות – מחוץ לגלילת הטבלה */
   subjectReadinessKpis(d) {
     const st = this.state.bagrut, r = d.readiness, m = d.m;
-    const back = '<button type="button" class="btn btn-ghost btn-sm" data-act="bagrutDrillBack">← כל המקצועות</button>';
+    const back = '<button type="button" class="nav-back" data-act="bagrutDrillBack">→ כל המקצועות</button>';
     const toggle = (attrs, on, label) => `<label class="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"><input type="checkbox" class="w-4 h-4" ${attrs} ${on ? 'checked' : ''}>${label}</label>`;
     const toggles = `<div class="flex flex-wrap items-center gap-3">
       ${toggle('data-chg="sim" data-key="useCurrent"', (st.drillSim || (this.state.filters.grade === 'יב' ? finalOptions : this.state.sim)).useCurrent, 'שלב ציונים שוטפים')}

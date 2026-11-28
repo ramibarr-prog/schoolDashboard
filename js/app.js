@@ -1399,6 +1399,11 @@ const App = {
         e.preventDefault(); e.stopPropagation();
         return;
       }
+      if (this.state.bagrut.drawerTz && !modalOpen) {
+        BagrutView.bagrutDrawerClose.call(this, true);
+        e.preventDefault(); e.stopPropagation();
+        return;
+      }
       const active = document.activeElement;
       const typing = !!active && (/^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) || active.isContentEditable);
       this.closeModal(); this.hideMxPop(); this.hideSadinPop();

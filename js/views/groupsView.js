@@ -53,7 +53,7 @@
   groupTeacherChange(value) {
     const st = this.state.groups;
     st.teacher = value;
-    if (st.teacher !== 'all') { st.subjectKey = 'all'; st.strip = 'all'; st.missingSelected = false; }
+    if (st.teacher !== 'all') { st.strip = 'all'; st.missingSelected = false; }
     this.groupsRerender();
   },
 
@@ -193,7 +193,7 @@
     if (!box) return;
     const mode = this.state.groupsViewMode;
     const next = mode === 'explorer' ? 'anomalies' : 'explorer';
-    const label = mode === 'explorer' ? 'חזרה לשיבוצים לתיקון' : 'סייר קבוצות';
+    const label = mode === 'explorer' ? '→ חזרה לשיבוצים לתיקון' : 'סייר קבוצות';
     if (mode !== 'explorer') {
       const grade = this.state.filters.grade;
       box.innerHTML = `<div class="gm-row ga-toolbar">
@@ -202,8 +202,9 @@
           <button type="button" class="btn btn-ghost btn-sm ga-explorer" data-act="groupsMode" data-mode="${next}">${label}</button></div></div>`;
       return;
     }
-    box.innerHTML = `<div class="gm-row"><div class="flex items-center gap-3"><h2 class="font-bold text-lg text-[#355747]">${mode === 'explorer' ? 'סייר קבוצות' : 'שיבוצים לתיקון'}</h2>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="groupsMode" data-mode="${next}">${label}</button></div><div id="groups-mode-extra" class="gm-extra">${GroupsView.studentMapButton.call(this)}</div></div>`;
+    box.innerHTML = `<div class="gm-row"><div class="flex items-center gap-3">
+      <button type="button" class="nav-back" data-act="groupsMode" data-mode="${next}">${label}</button>
+      <h2 class="font-bold text-lg text-[#355747]">סייר קבוצות</h2></div><div id="groups-mode-extra" class="gm-extra">${GroupsView.studentMapButton.call(this)}</div></div>`;
   },
 
   /** מוקד חריגי שיבוץ: כרטיסי קטגוריה, סינון מקצוע וטבלת חריגים */
@@ -360,34 +361,38 @@
     if (!m) return;
     const t = m.t, room = Config.classLabel(t.classKey);
     const groupTxt = g => `<span dir="ltr">[${E(g.groupId)}]</span> ${E(g.teacher || 'ללא מורה')}`;
-    const banner = (m.current.length ? `כרגע רשום ב: ${m.current.map(groupTxt).join(', ')}` : m.isMajor ? 'כרגע: ללא מגמה רשומה' : 'כרגע: ללא שיבוץ') +
+    const statusLine = (m.current.length ? `רשום כיום ב: ${m.current.map(groupTxt).join(', ')}` : m.isMajor ? 'ללא מגמה רשומה' : 'ללא שיבוץ') +
       (m.sadin.length ? ` · ציונים בסדין ב: ${m.sadin.map(groupTxt).join(', ')}` : '');
     const card = g => {
       const comp = g.composition.map(c => `<bdi dir="rtl">${E(Config.classLabel(c.classKey))}</bdi> (${c.n})`).join(', ');
       const roster = g.members.map(x => `<li class="${x.sameRoom ? 'ti-same' : ''} ${x.self ? 'font-bold' : ''}">${E(x.t.name)} <span class="text-slate-500"><bdi dir="rtl">${E(Config.classLabel(x.t.classKey))}</bdi></span>${x.self ? ' (החניך)' : ''}${x.diag.length ? ` ${x.diag[0].kind === 'sadin-other' ? UI.signalBadge('data.sadin_not_enrolled', x.diag[0].text) : `<span class="an-k an-k-suspect">${E(x.diag[0].text)}</span>`}` : ''}</li>`).join('');
       return `<article class="ti-card ${g.enrolled ? 'is-current' : ''}">
         <div class="flex flex-wrap items-start justify-between gap-2">
-          <div class="min-w-0"><div class="font-bold text-[#355747]">${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span dir="ltr">[${E(g.groupId)}]</span></div>
-            ${g.targetClasses ? `<div class="text-xs text-slate-500">כיתות יעד: <bdi dir="rtl">${E(g.targetClasses)}</bdi></div>` : ''}
-            ${g.enrolled ? '<span class="ti-tag">הקבוצה הרשומה כיום</span>' : g.inSadin ? '<span class="ti-tag sadin">מקבל בה ציונים בסדין</span>' : ''}</div>
-          <div class="text-sm font-semibold text-[#355747] whitespace-nowrap">תפוסה: ${g.total} חניכים רשומים</div>
+          <div class="min-w-0">
+            <div class="font-bold text-[#355747]">${E(g.subject)} • ${E(g.teacher || 'ללא מורה')} <span dir="ltr">[${E(g.groupId)}]</span></div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-1">
+              ${g.homeroomN > 0 ? `<span class="ti-match">★ ${g.homeroomN} מכיתתו</span>` : ''}
+              ${g.enrolled ? '<span class="ti-tag">הקבוצה הרשומה כיום</span>' : g.inSadin ? '<span class="ti-tag sadin">מקבל בה ציונים בסדין</span>' : ''}
+            </div>
+          </div>
+          <div class="text-sm font-semibold text-[#355747] whitespace-nowrap">${g.total} חניכים</div>
         </div>
-        <div class="mt-2">${g.homeroomN > 0 ? `<span class="ti-match">★ ${g.homeroomN} חניכים מכיתתו (<bdi dir="rtl">${E(room)}</bdi>) בקבוצה זו</span>` : `<span class="text-xs text-slate-500">אין חניכים מכיתתו (<bdi dir="rtl">${E(room)}</bdi>) בקבוצה זו</span>`}</div>
-        <div class="text-xs text-slate-600 mt-1">הרכב: ${comp || '—'}</div>
+        ${comp ? `<div class="text-xs text-slate-600 mt-1.5">הרכב: ${comp}</div>` : ''}
         <div class="flex flex-wrap items-start justify-between gap-2 mt-2">
-          <details class="ti-roster grow"><summary>הצג רשימת חניכים בקבוצה</summary><ul class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 text-xs leading-5">${roster || '<li class="text-slate-500">אין חניכים</li>'}</ul></details>
+          <details class="ti-roster grow"><summary>רשימת חניכים בקבוצה</summary><ul class="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 text-xs leading-5">${roster || '<li class="text-slate-500">אין חניכים</li>'}</ul></details>
           <button type="button" class="btn btn-ghost btn-sm" data-act="inspectOpenGroup" data-id="${E(g.groupId)}">פתח בסייר הקבוצות</button>
         </div></article>`;
     };
-    const others = m.otherGrades.length ? `<details class="mt-3"><summary class="cursor-pointer font-semibold text-[#355747]">${m.isMajor ? 'קבוצות מגמה' : 'קבוצות במקצוע'} בשכבות אחרות (${m.otherGrades.length} קבוצות)</summary><div class="space-y-2 mt-2">${m.otherGrades.map(card).join('')}</div></details>` : '';
+    const others = m.otherGrades.length ? `<details class="mt-3"><summary class="cursor-pointer font-semibold text-[#355747]">${m.isMajor ? 'קבוצות מגמה' : 'קבוצות במקצוע'} בשכבות אחרות (${m.otherGrades.length})</summary><div class="space-y-2 mt-2">${m.otherGrades.map(card).join('')}</div></details>` : '';
     this.openModal(`
       <div class="flex items-start justify-between gap-3">
-        <h3 class="text-lg font-bold text-[#355747]">בדיקת קבוצות יעד במקצוע: ${E(m.subject)} • עבור ${E(t.name)} (<bdi dir="rtl">${E(room)}</bdi>)</h3>
+        <div>
+          <h3 class="text-lg font-bold text-[#355747]">${E(m.subject)} • ${E(t.name)} (<bdi dir="rtl">${E(room)}</bdi>)</h3>
+          <div class="text-xs text-slate-600 mt-0.5">${statusLine}</div>
+        </div>
         <button type="button" class="btn btn-ghost btn-sm" data-act="closeModal" aria-label="סגירה">סגירה</button>
       </div>
-      <div class="ti-banner mt-3">${banner}</div>
-      <h4 class="font-semibold text-[#355747] mt-4 mb-2">${m.isMajor ? 'קבוצות מגמה' : 'קבוצות'} בשכבת ${E(Util.gl(t.gradeKey))} (${m.sameGrade.length} קבוצות) · ממוין לפי התאמה לכיתת האם</h4>
-      <div class="space-y-2">${m.sameGrade.map(card).join('') || `<div class="text-sm text-slate-500">${m.isMajor ? 'לא נמצאו קבוצות מגמה בשכבת החניך' : 'לא נמצאו קבוצות במקצוע זה בשכבת החניך'}</div>`}</div>
+      <div class="space-y-2 mt-3">${m.sameGrade.map(card).join('') || `<div class="text-sm text-slate-500">${m.isMajor ? 'לא נמצאו קבוצות מגמה בשכבת החניך' : 'לא נמצאו קבוצות במקצוע זה בשכבת החניך'}</div>`}</div>
       ${others}`, true);
   },
 
@@ -511,8 +516,9 @@
     const population = lockT ? [lockT] : this.filtered(false), populationIds = new Set(population.map(t => t.tz));
     const scoped = !!lockT || f.grade !== 'all' || f.cls !== 'all';
     const visible = groups.filter(g => !scoped || g.members.some(m => populationIds.has(m.t.tz)));
+    /* סינון מדורג (Cascading): מקצועות נגזרים מהשכבה/כיתה המסוננת, ומורים נגזרים גם מהמקצוע הנבחר */
     const cats = new Map();
-    groups.forEach(g => { const c = cats.get(g.cat.key) || { ...g.cat, n: 0 }; c.n++; cats.set(c.key, c); });
+    visible.forEach(g => { if (!cats.has(g.cat.key)) cats.set(g.cat.key, { ...g.cat }); });
     const opt = (v, label, current) => `<option value="${E(v)}" ${v === current ? 'selected' : ''}>${E(label)}</option>`;
     const labels = { core: 'מקצועות ליבה', major: 'מגמות', internal: 'פנימי ואחר', other: 'פנימי ואחר' };
     const catList = [...cats.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'he'));
@@ -520,13 +526,15 @@
     setHtml('groupSubjectSelect', opt('all', 'כל המקצועות', st.subjectKey) +
       ['מקצועות ליבה', 'מגמות', 'פנימי ואחר'].map(label => {
         const items = catList.filter(c => labels[c.kind] === label);
-        return items.length ? `<optgroup label="${E(label)}">${items.map(c => opt(c.key, `${c.label} (${c.n})`, st.subjectKey)).join('')}</optgroup>` : '';
+        return items.length ? `<optgroup label="${E(label)}">${items.map(c => opt(c.key, c.label, st.subjectKey)).join('')}</optgroup>` : '';
       }).join(''));
-    const teachers = new Map();
-    groups.forEach(g => { if (g.teacher) teachers.set(g.teacher, (teachers.get(g.teacher) || 0) + 1); });
+    const teachers = new Set();
+    visible.forEach(g => {
+      if ((st.subjectKey === 'all' || g.cat.key === st.subjectKey) && g.teacher) teachers.add(g.teacher);
+    });
     if (st.teacher !== 'all' && !teachers.has(st.teacher)) st.teacher = 'all';
     setHtml('groupTeacherSelect', opt('all', 'כל המורים', st.teacher) +
-      [...teachers.keys()].sort((a, b) => a.localeCompare(b, 'he')).map(t => opt(t, `${t} (${teachers.get(t)})`, st.teacher)).join(''));
+      [...teachers].sort((a, b) => a.localeCompare(b, 'he')).map(t => opt(t, t, st.teacher)).join(''));
 
     const cat = cats.get(st.subjectKey);
     this._boardCategory = cat ? cat.label : '';
