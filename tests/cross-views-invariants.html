@@ -252,8 +252,8 @@ window.fetch = (input, options) => {
           return text === 'חינוך' || /^(?:מגדר|חנג|חינוך גופני)(?:$|[\s(/-])/.test(text);
         }));
       const facts = subjects.map(s => sheetRiskFacts(row, s));
-      return facts.filter(f => f.fail).length >= rules.minFails ||
-        rules.minMissed > 0 && facts.reduce((n, f) => n + f.missed, 0) >= rules.minMissed;
+      return (rules.minFails > 0 && facts.filter(f => f.fail).length >= rules.minFails) ||
+        (rules.minMissed > 0 && facts.reduce((n, f) => n + f.missed, 0) >= rules.minMissed);
     }).map(r => r.t.tz).sort();
   };
   const kpiCounts = () => [...$id('bagrut-kpis').querySelectorAll('button.gstat[data-chip]')].map(b => ({ value: b.dataset.chip, n: Number(b.querySelector('span:last-child').textContent) }));
@@ -2119,10 +2119,18 @@ window.fetch = (input, options) => {
       same(tzsIn(noGradesDetails), [T(7), T(8)], 'Exactly the two students with no current grades appear in the zero-grade section');
       const radarGrid = () => $id('sadin-table').querySelector('.weak-radar-grid');
       same(tzsIn(radarGrid()), [T(1), T(3)], 'Active students above default risk threshold (1+ fail) appear in radar cards without zero-grade students');
+      check(!$id('sadin-table').querySelector('[data-act="weaknessRiskApply"], [data-act="weaknessRiskReset"]'),
+        'Inline risk pill has no save or reset buttons — every +/- click is live');
+      const prevToastCount = app.toasts.length;
       $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="1"]').click();
-      same(tzsIn(radarGrid()), [T(1)], 'Inline minFails stepper (2+) immediately updates the live radar cards (only T(1) has 2 fails)');
-      SadinView.weaknessRiskClose.call(app);
-      same(tzsIn(radarGrid()), [T(1), T(3)], 'Resetting/closing draft restores saved threshold');
+      same(tzsIn(radarGrid()), [T(1)], 'Inline minFails stepper (2+) immediately updates and persists the live radar cards');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]').click();
+      same(tzsIn(radarGrid()), [T(1), T(3)], 'Inline minFails stepper (1+) immediately restores live radar cards');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="-1"]').click();
+      const decFailsAtFloor = $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minFails"][data-step="-1"]');
+      check(decFailsAtFloor && decFailsAtFloor.disabled === true, 'Decrementing minFails is disabled when minMissed is 0 so (0, 0) cannot be selected');
+      $id('sadin-table').querySelector('.weak-inline-risk [data-act="weaknessRiskAdjust"][data-key="minMissed"][data-step="1"]').click();
+      same(app.toasts.length, prevToastCount, 'Rapid inline risk threshold adjustments produce zero error toasts');
 
       sheetNav.click();
       check($id('sadin-table').querySelector('table.sadin-sheet') && sheetNav.getAttribute('aria-selected') === 'true' &&
